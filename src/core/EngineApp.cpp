@@ -7,11 +7,19 @@
  */
 
 
- class EngineApp{
-public:
-    void Run();
-private:
-    void Init();
-    void MainLoop();
-    void Shutdown();
- };
+void EngineApp::Run(){
+    Init();
+    MainLoop();
+    Shutdown();
+}
+
+void EngineApp::Init(){
+    m_Window = std::make_shared<Window>(1280,720,"MiniBCG");
+    m_Window->Init();
+}
+
+void EngineApp::MainLoop(){
+    while(!m_Window->ShouldClose()){
+        
+    }
+}
