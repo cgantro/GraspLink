@@ -80,6 +80,8 @@ add_executable(MiniBCG
     src/scene/TextElement.cpp
     src/scene/LowerThird.cpp
     src/media/VideoSource.cpp
+    include/graphics/Texture.h
+    src/graphics/Texture.cpp
 )
 
 # Project Root

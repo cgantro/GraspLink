@@ -7,6 +7,7 @@
 class Shader;
 class VertexBuffer;
 class VertexArray;
+class Texture;
 class Scene;
 /**
  * @brief 렌더러
@@ -25,7 +26,7 @@ public:
     // 반드시 Window/OpenGL Context가 생성된 이후 호출해야 한다.
     Renderer();
     ~Renderer();
-    
+
     void Init();
     void BeginFrame();
 
@@ -39,4 +40,9 @@ private:
     std::shared_ptr<Shader> m_Shader;
     std::unique_ptr<VertexBuffer> m_VertexBuffer;
     std::unique_ptr<VertexArray> m_VertexArray;
+
+    // 현재 테스트용 2×2 Texture.
+    // 이후에는 VideoSource에서 전달받은 Frame을
+    // 이 Texture에 Update하게 된다.
+     std::unique_ptr<Texture> m_Texture;
 };
