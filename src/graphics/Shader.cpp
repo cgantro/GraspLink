@@ -103,7 +103,7 @@ std::string Shader::ReadFile(const std::string& filepath){
     return stream.str();
 }
 
-std::unordered_map<unsigned int, std::string> PreProcess(const std::string& source){
+std::unordered_map<unsigned int, std::string> Shader::PreProcess(const std::string& source){
     std::unordered_map<unsigned int, std::string> shaderSources;
 
     std::istringstream stream(source); // 한 줄씩 읽는다.
