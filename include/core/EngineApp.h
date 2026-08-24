@@ -16,6 +16,7 @@ private:
 
     float m_LastFrameTime; // 
     std::shared_ptr<Window> m_Window;
+    std::shared_ptr<Shader> m_Shader
     /*
     Window m_window;
     Renderer m_renderer;

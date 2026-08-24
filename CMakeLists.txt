@@ -71,6 +71,8 @@ add_executable(MiniBCG
     src/core/EngineApp.cpp
     src/core/Window.cpp
     src/graphics/Shader.cpp
+    src/graphics/VertexBuffer.cpp
+    src/graphics/VertexArray.cpp
 )
 
 # Project Root
