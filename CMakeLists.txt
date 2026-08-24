@@ -53,7 +53,14 @@ FetchContent_Declare(
     GIT_SHALLOW TRUE
 )
 
-FetchContent_MakeAvailable(glfw)
+FetchContent_Declare(
+    glm
+    GIT_REPOSITORY https://github.com/g-truc/glm.git
+    GIT_TAG 1.0.1
+    GIT_SHALLOW TRUE
+)
+
+FetchContent_MakeAvailable(glfw glm)
 find_package(OpenGL REQUIRED)
 
 # MiniBCG
@@ -63,6 +70,7 @@ add_executable(MiniBCG
 
     src/core/EngineApp.cpp
     src/core/Window.cpp
+    src/graphics/Shader.cpp
 )
 
 # Project Root
@@ -78,6 +86,7 @@ target_link_libraries(MiniBCG
     PRIVATE
         glad
         glfw
+        glm::glm
         OpenGL::GL
         ${CMAKE_DL_LIBS}
 )
