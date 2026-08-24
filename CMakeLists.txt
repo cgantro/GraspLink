@@ -70,9 +70,16 @@ add_executable(MiniBCG
 
     src/core/EngineApp.cpp
     src/core/Window.cpp
+    src/graphics/Renderer.cpp
     src/graphics/Shader.cpp
     src/graphics/VertexBuffer.cpp
     src/graphics/VertexArray.cpp
+    src/scene/Scene.cpp
+    src/scene/GraphicElement.cpp
+    src/scene/ImageElement.cpp
+    src/scene/TextElement.cpp
+    src/scene/LowerThird.cpp
+    src/media/VideoSource.cpp
 )
 
 # Project Root

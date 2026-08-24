@@ -1,31 +1,28 @@
 #pragma once
 
-#include<memory>
-#include "core/Window.h"
-#include "graphics/Shader.h"
-#include "graphics/VertexBuffer.h"
-#include "graphics/VertexArray.h"
+#include <memory>
 
-
+class Renderer;
+class Scene;
+class VideoSource;
 class Window;
-class EngineApp{
+
+// Owns the top-level application objects and coordinates their lifecycle.
+// Rendering details stay behind Renderer so application flow does not depend on OpenGL objects.
+class EngineApp {
 public:
+    EngineApp();
     void Run();
+    ~EngineApp();
+
 private:
     void Init();
     void MainLoop();
     void Shutdown();
 
-
-    float m_LastFrameTime; // 
-    std::shared_ptr<Window> m_Window;
-
-    // Shader / VAO / VBO는 GL Context 생성 후 만들어야 함
-    // 생성자에서 바로 만들지 않는다.
-    // Window init후 EngineApp Init에서 생성
-    // 따라서 포인터를 사용해야 한다.
-    std::shared_ptr<Shader> m_Shader;
-
-    std::unique_ptr<VertexBuffer> m_VertexBuffer;
-    std::unique_ptr<VertexArray> m_VertexArray;
+    float m_LastFrameTime;
+    std::unique_ptr<Window> m_Window;
+    std::unique_ptr<Renderer> m_Renderer;
+    std::unique_ptr<Scene> m_Scene;
+    std::unique_ptr<VideoSource> m_VideoSource;
 };
