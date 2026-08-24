@@ -1,0 +1,20 @@
+#pragma once
+
+#include<memory>
+#include "core/Window.h"
+
+class EngineApp{
+public:
+    void Run();
+private:
+    void Init();
+    void MainLoop();
+    void Shutdown();
+
+    std::shared_ptr<Window> m_Window;
+    /*
+    Window m_window;
+    Renderer m_renderer;
+    Scene   m_Scene
+    */
+};
