@@ -1,111 +1,52 @@
 cmake_minimum_required(VERSION 3.20)
+project(PoseLink VERSION 0.1.0 LANGUAGES C CXX)
 
-#glad.c가 C파일이기 때문에 C, CXX 둘 다 활성화
-project(MiniBCG
-    VERSION 0.1.0
-    LANGUAGES C CXX
-)
-
-#C++ 17
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+option(POSELINK_BUILD_VIEWER "Enable OpenGL viewer mode" ON)
+option(POSELINK_BUILD_VISION "Enable OpenCV when installed" ON)
 
+include(cmake/Dependencies.cmake)
 
-# -----------------
-# GLAD
-# -----------------
+add_library(poselink_pose INTERFACE)
+target_include_directories(poselink_pose INTERFACE modules/pose/include)
 
-# GLAD는 OpenGL 함수의 주소를 런타임에 가져오기 위한 Loader
+add_library(poselink_transport STATIC modules/transport/src/Protocol.cpp modules/transport/src/UdpSocket.cpp)
+target_include_directories(poselink_transport PUBLIC modules/transport/include)
+target_link_libraries(poselink_transport PUBLIC poselink_pose)
+if(WIN32)
+  target_link_libraries(poselink_transport PUBLIC ws2_32)
+endif()
 
-# Window에서 OpenGL 함수들을 바로 호출할 수 없다.
-# glCreateShader와 같은 OpenGL 3.x 함수 주소를 실행 시점에 가져와야 한다.
+add_library(poselink_streaming STATIC modules/streaming/src/PoseBuffer.cpp modules/streaming/src/PoseReceiver.cpp)
+target_include_directories(poselink_streaming PUBLIC modules/streaming/include)
+target_link_libraries(poselink_streaming PUBLIC poselink_pose poselink_transport)
 
-# external/glad/src/glad.c를 별도의 정적 라이브러리로 만든다.
-add_library(glad STATIC
-    external/glad/src/glad.c
-)
+add_library(poselink_vision STATIC modules/vision/src/SyntheticPoseSource.cpp modules/vision/src/ArUcoPoseSource.cpp)
+target_include_directories(poselink_vision PUBLIC modules/vision/include)
+target_link_libraries(poselink_vision PUBLIC poselink_pose)
 
-# glad/glad.h를 다른 타깃에서도 include 가능하도록 경로 공개
-target_include_directories(glad
-    PUBLIC
-        external/glad/include
-)
+add_executable(poselink
+  apps/poselink/src/main.cpp
+  apps/poselink/src/VisionMode.cpp
+  apps/poselink/src/ProxyMode.cpp)
+target_include_directories(poselink PRIVATE apps/poselink/include)
+target_link_libraries(poselink PRIVATE poselink_transport poselink_streaming poselink_vision)
 
-# GLFW / OpenGL
+if(POSELINK_BUILD_VISION)
+  find_package(OpenCV QUIET COMPONENTS core calib3d aruco videoio imgcodecs)
+  if(OpenCV_FOUND)
+    target_compile_definitions(poselink PRIVATE POSELINK_WITH_OPENCV=1)
+    target_link_libraries(poselink_vision PUBLIC ${OpenCV_LIBS})
+  endif()
+endif()
 
-# GLFW
-# - Window 생성
-# - OpenGL Context 생성
-# - 키보드/마우스 이벤트 등을 담당한다
+if(POSELINK_BUILD_VIEWER)
+  poselink_enable_viewer(poselink)
+endif()
 
-include(FetchContent)
-
-set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
-set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
-
-FetchContent_Declare(
-    glfw
-    GIT_REPOSITORY https://github.com/glfw/glfw.git
-    GIT_TAG 3.4
-    GIT_SHALLOW TRUE
-)
-
-FetchContent_Declare(
-    glm
-    GIT_REPOSITORY https://github.com/g-truc/glm.git
-    GIT_TAG 1.0.1
-    GIT_SHALLOW TRUE
-)
-
-FetchContent_MakeAvailable(glfw glm)
-find_package(OpenGL REQUIRED)
-
-# MiniBCG
-
-add_executable(MiniBCG
-    src/main.cpp
-
-    src/core/EngineApp.cpp
-    src/core/Window.cpp
-    src/graphics/Renderer.cpp
-    src/graphics/Shader.cpp
-    src/graphics/VertexBuffer.cpp
-    src/graphics/VertexArray.cpp
-    src/scene/Scene.cpp
-    src/scene/GraphicElement.cpp
-    src/scene/ImageElement.cpp
-    src/scene/TextElement.cpp
-    src/scene/LowerThird.cpp
-    src/media/VideoSource.cpp
-    include/graphics/Texture.h
-    src/graphics/Texture.cpp
-)
-
-# Project Root
-
-target_include_directories(MiniBCG
-    PRIVATE
-        include
-)
-
-target_compile_definitions(MiniBCG PRIVATE GLFW_INCLUDE_NONE)
-
-target_link_libraries(MiniBCG
-    PRIVATE
-        glad
-        glfw
-        glm::glm
-        OpenGL::GL
-        ${CMAKE_DL_LIBS}
-)
-
-add_custom_command(TARGET MiniBCG POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        ${CMAKE_SOURCE_DIR}/assets
-        $<TARGET_FILE_DIR:MiniBCG>/assets
-)
-
-
+enable_testing()
+add_executable(poselink_tests tests/test_main.cpp)
+target_link_libraries(poselink_tests PRIVATE poselink_streaming)
+add_test(NAME poselink_tests COMMAND poselink_tests)

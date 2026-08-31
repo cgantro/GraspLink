@@ -1,4 +1,4 @@
-#include "graphics/VertexBuffer.h"
+#include "poselink/graphics/VertexBuffer.h"
 
 #include <glad/glad.h> // OpenGL 함수 포인터 연결
 // GLES는 OpenGL 표준 규격(임베디드)

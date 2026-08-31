@@ -8,7 +8,6 @@ class Shader;
 class VertexBuffer;
 class VertexArray;
 class Texture;
-class Scene;
 /**
  * @brief 렌더러
  * Shader, VAO, VBO 구성
@@ -30,10 +29,9 @@ public:
     void Init();
     void BeginFrame();
 
-    // Scene을 화면에 렌더링한다.
-    // 지금은 실제 사용은 안함
-    // 이후 Scene의 imageElement, TextElement, LowerThird 등을 순회한다.
-    void Render(const Scene& scene);
+    // 현재 바인드된 pose/texture visualization을 화면에 렌더링한다.
+    // PoseLink는 방송 Scene 계층을 사용하지 않는다.
+    void Render();
     void EndFrame();
 
 private:
@@ -41,8 +39,6 @@ private:
     std::unique_ptr<VertexBuffer> m_VertexBuffer;
     std::unique_ptr<VertexArray> m_VertexArray;
 
-    // 현재 테스트용 2×2 Texture.
-    // 이후에는 VideoSource에서 전달받은 Frame을
-    // 이 Texture에 Update하게 된다.
+    // 초기화 검증과 추후 pose visualization texture에 사용하는 RGBA texture.
      std::unique_ptr<Texture> m_Texture;
 };

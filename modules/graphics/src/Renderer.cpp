@@ -1,9 +1,9 @@
-#include "graphics/Renderer.h"
+#include "poselink/graphics/Renderer.h"
 
-#include "graphics/Shader.h"
-#include "graphics/VertexBuffer.h"
-#include "graphics/VertexArray.h"
-#include "graphics/Texture.h"
+#include "poselink/graphics/Shader.h"
+#include "poselink/graphics/VertexBuffer.h"
+#include "poselink/graphics/VertexArray.h"
+#include "poselink/graphics/Texture.h"
 #include <glad/glad.h>
 
 #include <memory>
@@ -105,7 +105,7 @@ void Renderer::Init() {
         reinterpret_cast<void*>(2 * sizeof(float))
     );
 
-    m_Shader = Shader::Create("assets/shaders/Quad.glsl");
+    m_Shader = Shader::Create("shaders/Quad.glsl");
     m_Shader->Bind();
 
     // uniform sampler2D u_Texture;
@@ -133,14 +133,11 @@ void Renderer::BeginFrame() {
     );
 }
 
-void Renderer::Render(const Scene& scene) {
-    // TODO: Render the Scene without exposing OpenGL details to EngineApp.
-    (void)scene;
+void Renderer::Render() {
 
     m_Shader->Bind();
 
     // Texture Unit에 Object 연결
-    
     m_Texture->Bind(0);
     m_VertexArray->Bind();
     glDrawArrays(

@@ -2,9 +2,13 @@
 /build/
 /out/
 /cmake-build-*/
+/build-*/
+/Build/
+/CMakeBuild/
 
 # CMake generated files
 CMakeCache.txt
+CMakeScripts/
 CMakeFiles/
 cmake_install.cmake
 CTestTestfile.cmake

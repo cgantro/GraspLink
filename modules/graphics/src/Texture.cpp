@@ -1,4 +1,4 @@
-#include "graphics/Texture.h"
+#include "poselink/graphics/Texture.h"
 #include <glad/glad.h>
 #include <stdexcept>
 

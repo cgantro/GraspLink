@@ -1,4 +1,4 @@
-#include "graphics/Shader.h"
+#include "poselink/graphics/Shader.h"
 
 #include <glad/glad.h>
 #include <glm/glm.hpp>
