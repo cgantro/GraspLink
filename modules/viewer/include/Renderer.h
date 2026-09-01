@@ -10,17 +10,10 @@ class Shader;
 class VertexBuffer;
 class VertexArray;
 class Texture;
+class IndexBuffer;
 /**
  * @brief 렌더러
- * Shader, VAO, VBO 구성
- * 현재 단계에서는 Fullscreen Quad만 렌더링
- * 
- * 이후 추가
- * - Texture
- * - Video Frame rendering
- * - Overlay Rendering
- * - FrameBuffer
- * - Post Processing
+ * Shader, VAO, VBO, EBO, Texture 구성
  */
 class Renderer {
 public:
@@ -40,6 +33,7 @@ private:
     std::shared_ptr<Shader> m_Shader;
     std::unique_ptr<VertexBuffer> m_VertexBuffer;
     std::unique_ptr<VertexArray> m_VertexArray;
+    std::unique_ptr<IndexBuffer> m_IndexBuffer;
 
     // 초기화 검증과 추후 pose visualization texture에 사용하는 RGBA texture.
      std::unique_ptr<Texture> m_Texture;

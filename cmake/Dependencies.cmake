@@ -20,6 +20,7 @@ function(poselink_add_graphics_library)
     modules/viewer/src/Mesh.cpp
     modules/viewer/src/Camera.cpp
     modules/viewer/src/Texture.cpp
+    modules/viewer/src/IndexBuffer.cpp
     modules/viewer/src/VertexArray.cpp
     modules/viewer/src/VertexBuffer.cpp)
   target_include_directories(poselink_graphics PUBLIC modules/viewer/include)
