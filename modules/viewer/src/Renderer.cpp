@@ -14,92 +14,19 @@ Renderer::Renderer() = default;
 Renderer::~Renderer() = default;
 
 void Renderer::Init() {
-    // TODO: Initialize renderer-owned resources after an OpenGL context exists.
-    const float vertices[] = {
-
-        // Position      // UV
-
-        /*
-                        Vertex 0
-            ┌────────────────────────────┐
-            │  x  │  y  │  u  │  v      │
-            └────────────────────────────┘
-               ↑           ↑
-            position       texture coord
-            location 0     location 1
-
-            3 ---------------- 2
-            |                  |
-            |                  |
-            |                  |
-            |                  |
-            0 ---------------- 1
-        */
-         // 0: Left Bottom
-        -1.0f, -1.0f,      0.0f, 0.0f,
-
-        // 1: Right Bottom
-         1.0f, -1.0f,      1.0f, 0.0f,
-
-        // 2: Right Top
-         1.0f,  1.0f,      1.0f, 1.0f,
-
-        // 3: Left Top
-        -1.0f,  1.0f,      0.0f, 1.0f
-    };
-
-    // Index 배열
-    const uint32_t indices[] = {
-        // Triangle 1
-        0,1,2,
-        // Triangle 2
-        2,3,0
-    };
-    /*
-    * 2×2 RGBA 테스트 Texture.
-    *
-    * 메모리는 1차원 배열이지만,
-    * 논리적으로는 다음과 같은 2차원 이미지다.
-    *
-    * R = Red
-    * G = Green
-    * B = Blue
-    * Y = Yellow
-    *
-    *     x →
-    *
-    *   R   G
-    *
-    *   B   Y
-    *
-    *
-    * Pixel 하나:
-    *
-    * [R][G][B][A]
-    *
-    * 각 Channel은 unsigned char 1byte.
-    */
-    const unsigned char pixels[] = {
-
-        // 첫 번째 Pixel - Red
-        255,   0,   0, 255,
-        // 두 번째 Pixel - Green
-          0, 255,   0, 255,
-        // 세 번째 Pixel - Blue
-          0,   0, 255, 255,
-        // 네 번째 Pixel - Yellow
-        255, 255,   0, 255
-    };
-
+   
 
     /*
         Mesh가 VAO/VBO/EBO 생성과 Vertex Layout까지 책임
     */
-    m_Mesh = std::make_unique<Mesh>(
-        vertices,sizeof(vertices),
-        indices,6
-    );
+    m_Mesh = Mesh::CreateCube();
 
+    const unsigned char pixels[] = {
+    255,   0,   0, 255,
+      0, 255,   0, 255,
+      0,   0, 255, 255,
+    255, 255,   0, 255
+    };
     m_Texture = std::make_unique<Texture>(2,2);
     m_Texture->Update(pixels);
 
