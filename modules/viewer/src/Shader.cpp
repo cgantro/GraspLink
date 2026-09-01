@@ -11,6 +11,8 @@
 #include <stdexcept>
 #include <filesystem>
 
+namespace PoseLink {
+
 // #type vertex와 같은 문자열을 OpenGL Shader Type으로 변환
 static GLenum ShaderTypeFromString(const std::string& type){
     if(type == "vertex") return GL_VERTEX_SHADER;
@@ -291,4 +293,6 @@ void Shader::SetFloat3(const std::string& name, const glm::vec3& value){glUnifor
 void Shader::SetFloat4(const std::string& name, const glm::vec4& value){glUniform4fv(GetUniformLocation(name),1,glm::value_ptr(value));}
 void Shader::SetMat3(const std::string& name, const glm::mat3& value){glUniformMatrix3fv(GetUniformLocation(name),1,GL_FALSE,glm::value_ptr(value));}
 void Shader::SetMat4(const std::string& name, const glm::mat4& value){glUniformMatrix4fv(GetUniformLocation(name),1,GL_FALSE,glm::value_ptr(value));}
+
+} // namespace PoseLink
 

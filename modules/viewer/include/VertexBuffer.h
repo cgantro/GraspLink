@@ -2,6 +2,8 @@
 
 #include <cstdint>
 
+namespace PoseLink {
+
 /**
  * @brief 정점 데이터를 GPU Buffer에 업로드 한다.
  * @author 홍윤표
@@ -47,3 +49,5 @@ private:
     // glGenBuffers()가 생성한 OpenGL Buffer ID
     uint32_t m_RendererID = 0;
 };
+
+} // namespace PoseLink

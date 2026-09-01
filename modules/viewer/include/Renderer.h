@@ -2,6 +2,8 @@
 
 #include <memory>
 
+namespace PoseLink {
+
 //헤더에서는 실제 정의가 필요하지 않으므로 전방 선언.
 // 불필요하게 Shader.h, VertexBuffer.h 등을 포함하지 않아도 된다.
 class Shader;
@@ -42,3 +44,5 @@ private:
     // 초기화 검증과 추후 pose visualization texture에 사용하는 RGBA texture.
      std::unique_ptr<Texture> m_Texture;
 };
+
+} // namespace PoseLink

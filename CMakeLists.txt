@@ -5,6 +5,10 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+if(MSVC)
+  add_compile_options(/utf-8)
+endif()
+
 option(POSELINK_BUILD_GRAPHICS "Build the existing OpenGL graphics module" ON)
 
 if(POSELINK_BUILD_GRAPHICS)
@@ -13,7 +17,9 @@ if(POSELINK_BUILD_GRAPHICS)
 
   add_executable(poselink_viewer
     apps/viewer/main.cpp
-    apps/viewer/ViewerApp.cpp)
+    apps/viewer/ViewerApp.cpp
+    modules/viewer/include/IndexBuffer.h
+    modules/viewer/src/IndexBuffer.cpp)
 
   target_include_directories(poselink_viewer PRIVATE
     apps/viewer)

@@ -30,7 +30,7 @@ public:
     void PollEvents() const;
     void SwapBuffers() const;
 private:
-    void Init(const Properties properties);
+    void Init(const Properties& properties);
     void Shutdown();
 
     static void FramebufferSizeCallback(
@@ -42,4 +42,4 @@ private:
     // 실제 GLFW window와 OpenGL Context를 나타내는 핸들
     GLFWwindow* m_Handle = nullptr;
 };
-};
+} // namespace PoseLink

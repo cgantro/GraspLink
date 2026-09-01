@@ -10,14 +10,14 @@ namespace PoseLink {
 
 Window::Window(const Properties& properties){
     Init(properties);
-};
+}
 
 // 소멸자
 Window::~Window(){
     Shutdown();
 }
 
-void Window::Init(const Properties properties){
+void Window::Init(const Properties& properties){
     // 1. GLFW 초기화
     // Window 생성, 키보드/마우스 입력, GL Context 생성
     // 위의 작업들을 OS별 코드로 대신 처리해주는 라이브러리
@@ -32,7 +32,7 @@ void Window::Init(const Properties properties){
     // 아래 조건의 Context를 만들어달라는 요청
     // 3.3버전 사용
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR,3);
-    glfwWindowHint(GLFW_VERSION_MINOR,3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR,3);
 
     // 오래된 방식인 glBegin(), end()와 같은 레거시 API를 제외한다
     // 왜 제거? -> 정점을 정의할 때 마다 CPU가 GPU에게 데이터를 전달한다.
@@ -170,5 +170,4 @@ void Window::FramebufferSizeCallback(GLFWwindow* window, int width, int height){
     glViewport(0,0,width,height);
     
 }
-};
-
+} // namespace PoseLink

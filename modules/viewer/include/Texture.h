@@ -2,6 +2,8 @@
 
 #include <cstdint>
 
+namespace PoseLink {
+
 class Texture
 {
 public:
@@ -33,3 +35,5 @@ private:
     int m_Width = 0;
     int m_Height = 0;
 };
+
+} // namespace PoseLink

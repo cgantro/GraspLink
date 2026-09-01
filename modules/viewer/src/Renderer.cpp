@@ -8,6 +8,8 @@
 
 #include <memory>
 
+namespace PoseLink {
+
 Renderer::Renderer() = default;
 Renderer::~Renderer() = default;
 
@@ -154,3 +156,5 @@ void Renderer::Render() {
 void Renderer::EndFrame() {
     // TODO: Finalize the frame and present renderer output.
 }
+
+} // namespace PoseLink

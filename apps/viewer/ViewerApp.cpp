@@ -1,8 +1,12 @@
 #include "ViewerApp.h"
 
 #include "Window.h"
+#include "Renderer.h"
 
 #include <glad/glad.h>
+
+ViewerApp::ViewerApp() = default;
+ViewerApp::~ViewerApp() = default;
 
 int ViewerApp::Run(){
     if(!Init()) return -1;
@@ -23,7 +27,9 @@ bool ViewerApp::Init(){
                 1280,720,"PoseLink Viewer",true
             }
         );
-
+    
+    m_Renderer = std::make_unique<PoseLink::Renderer>();
+    m_Renderer->Init();
     return true;
 }
 
@@ -35,14 +41,18 @@ void ViewerApp::MainLoop(){
     while(!m_Window->ShouldClose()){
         m_Window->PollEvents();
 
-        glClearColor(0.1f,0.1f,0.1f,1.0f); // 추후 렌더러 만들고 BeginFrame
+        m_Renderer->BeginFrame();
 
-        glClear(GL_COLOR_BUFFER_BIT);
+        m_Renderer->Render();
+
+        m_Renderer->EndFrame();
 
         m_Window->SwapBuffers();
     }
 }
 
 void ViewerApp::Shutdown(){
+    // OpenGL객체는 Context가 살아있을 때 삭제하는 게 안전 -> 렌더러 먼저 삭제
+    m_Renderer.reset(); 
     m_Window.reset();
 }

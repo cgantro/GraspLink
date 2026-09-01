@@ -8,6 +8,9 @@
  */
 
 #include <cstdint>
+
+namespace PoseLink {
+
 class VertexArray{
 public:
     VertexArray();
@@ -21,3 +24,5 @@ public:
 private:
     uint32_t m_RendererID = 0;
 };
+
+} // namespace PoseLink
