@@ -1,10 +1,8 @@
 #include "Renderer.h"
 
 #include "Shader.h"
-#include "VertexBuffer.h"
-#include "VertexArray.h"
 #include "Texture.h"
-#include "IndexBuffer.h"
+#include "Mesh.h"
 
 #include <glad/glad.h>
 
@@ -93,61 +91,17 @@ void Renderer::Init() {
         255, 255,   0, 255
     };
 
-    // VAO 바인딩
-    m_VertexArray = std::make_unique<VertexArray>();
-    m_VertexArray->Bind();
 
-    // VBO
-    m_VertexBuffer = std::make_unique<VertexBuffer>(vertices,sizeof(vertices));
-    m_VertexBuffer->Bind();
-
-    // EBO
-    m_IndexBuffer = std::make_unique<IndexBuffer>(indices,6);
+    /*
+        Mesh가 VAO/VBO/EBO 생성과 Vertex Layout까지 책임
+    */
+    m_Mesh = std::make_unique<Mesh>(
+        vertices,sizeof(vertices),
+        indices,6
+    );
 
     m_Texture = std::make_unique<Texture>(2,2);
     m_Texture->Update(pixels);
-
-     /*
-        location 0:
-        Vertex의 position 영역을 어떻게 읽을지 설정.
-
-        한 Vertex:
-
-        [pos.x][pos.y][uv.x][uv.y]
-         ↑
-        여기서 시작
-
-        stride = float 4개
-    */
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(
-        0,
-        2,
-        GL_FLOAT,
-        GL_FALSE,
-        4 * sizeof(float), // 다음 정점까지
-        nullptr
-    );
-
-    /*
-        location 1:
-        Texture Coordinate 영역.
-
-        같은 Vertex에서 float 2개를 건너뛴 위치부터 읽는다.
-
-        [pos.x][pos.y][uv.x][uv.y]
-                       ↑
-                    여기서 시작
-    */
-    glEnableVertexAttribArray(1);
-    glVertexAttribPointer(
-        1,
-        2,
-        GL_FLOAT,
-        GL_FALSE,
-        4*sizeof(float),
-        reinterpret_cast<void*>(2 * sizeof(float))
-    );
 
     m_Shader = Shader::Create("shaders/Quad.glsl");
     m_Shader->Bind();
@@ -155,9 +109,6 @@ void Renderer::Init() {
     // uniform sampler2D u_Texture;
     // 아래의 0은 GL_TEXTURE0을 의미한다.
     m_Shader->SetInt("u_Texture", 0);
-
-    m_VertexArray->UnBind();
-    m_VertexBuffer->UnBind();
     m_Shader->UnBind();
 }
 
@@ -185,44 +136,19 @@ void Renderer::Render() {
     m_Texture->Bind(0);
 
     /*
-        VAO를 Bind하면 Init()에서 저장해둔:
-
-        - Vertex Attribute 설정
-        - EBO Binding
-
-        을 다시 사용할 수 있다.
+        Mesh::Bind()는 내부 VAO를 Bind
+        VAO가 VBO의 Layout과, EBO 연결 상태를 기억하고 있음
     */
-    m_VertexArray->Bind();
-
-    
-    // glDrawArrays(
-    //     GL_TRIANGLES,
-    //     0,
-    //     6
-    // );
-    /*
-        glDrawElements는 Vertex를 순서대로 읽지 않고
-        EBO에 들어있는 Index를 먼저 읽는다.
-
-        EBO:
-            0, 1, 2,
-            2, 3, 0
-
-        따라서 VBO의 4개 Vertex를 이용해
-        총 두 개의 Triangle을 그린다.
-    */
+    m_Mesh->Bind();
     glDrawElements(
         GL_TRIANGLES,
-        // EBO에서 읽을 Index 개수
-        m_IndexBuffer->GetCount(), 
-        // Index 하나의 자료형 32_t -> 4byte Uint
+        m_Mesh->GetIndexCount(),
         GL_UNSIGNED_INT,
-        nullptr // EBO 시작위치로부터 얼마나 떨어진 위치부터 읽나, 처음부터 읽음 -> nullptr = offset 0
+        nullptr
     );
-    m_VertexArray->UnBind();
+    m_Mesh->UnBind();
     m_Texture->UnBind();
     m_Shader->UnBind();
-
 }
 
 void Renderer::EndFrame() {

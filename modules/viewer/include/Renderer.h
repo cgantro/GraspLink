@@ -7,10 +7,8 @@ namespace PoseLink {
 //헤더에서는 실제 정의가 필요하지 않으므로 전방 선언.
 // 불필요하게 Shader.h, VertexBuffer.h 등을 포함하지 않아도 된다.
 class Shader;
-class VertexBuffer;
-class VertexArray;
 class Texture;
-class IndexBuffer;
+class Mesh;
 /**
  * @brief 렌더러
  * Shader, VAO, VBO, EBO, Texture 구성
@@ -30,10 +28,8 @@ public:
     void EndFrame();
 
 private:
+    std::unique_ptr<Mesh> m_Mesh;
     std::shared_ptr<Shader> m_Shader;
-    std::unique_ptr<VertexBuffer> m_VertexBuffer;
-    std::unique_ptr<VertexArray> m_VertexArray;
-    std::unique_ptr<IndexBuffer> m_IndexBuffer;
 
     // 초기화 검증과 추후 pose visualization texture에 사용하는 RGBA texture.
      std::unique_ptr<Texture> m_Texture;
