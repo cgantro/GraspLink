@@ -4,49 +4,28 @@ project(PoseLink VERSION 0.1.0 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
-option(POSELINK_BUILD_VIEWER "Enable OpenGL viewer mode" ON)
-option(POSELINK_BUILD_VISION "Enable OpenCV when installed" ON)
 
-include(cmake/Dependencies.cmake)
+option(POSELINK_BUILD_GRAPHICS "Build the existing OpenGL graphics module" ON)
 
-add_library(poselink_pose INTERFACE)
-target_include_directories(poselink_pose INTERFACE modules/pose/include)
+if(POSELINK_BUILD_GRAPHICS)
+  include(cmake/Dependencies.cmake)
+  poselink_add_graphics_library()
 
-add_library(poselink_transport STATIC modules/transport/src/Protocol.cpp modules/transport/src/UdpSocket.cpp)
-target_include_directories(poselink_transport PUBLIC modules/transport/include)
-target_link_libraries(poselink_transport PUBLIC poselink_pose)
-if(WIN32)
-  target_link_libraries(poselink_transport PUBLIC ws2_32)
+  add_executable(poselink_viewer
+    apps/viewer/main.cpp
+    apps/viewer/ViewerApp.cpp)
+
+  target_include_directories(poselink_viewer PRIVATE
+    apps/viewer)
+
+  target_link_libraries(poselink_viewer PRIVATE
+    poselink_graphics)
+
+  add_custom_command(TARGET poselink_viewer POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+      ${CMAKE_SOURCE_DIR}/assets/shaders
+      $<TARGET_FILE_DIR:poselink_viewer>/shaders)
 endif()
 
-add_library(poselink_streaming STATIC modules/streaming/src/PoseBuffer.cpp modules/streaming/src/PoseReceiver.cpp)
-target_include_directories(poselink_streaming PUBLIC modules/streaming/include)
-target_link_libraries(poselink_streaming PUBLIC poselink_pose poselink_transport)
-
-add_library(poselink_vision STATIC modules/vision/src/SyntheticPoseSource.cpp modules/vision/src/ArUcoPoseSource.cpp)
-target_include_directories(poselink_vision PUBLIC modules/vision/include)
-target_link_libraries(poselink_vision PUBLIC poselink_pose)
-
-add_executable(poselink
-  apps/poselink/src/main.cpp
-  apps/poselink/src/VisionMode.cpp
-  apps/poselink/src/ProxyMode.cpp)
-target_include_directories(poselink PRIVATE apps/poselink/include)
-target_link_libraries(poselink PRIVATE poselink_transport poselink_streaming poselink_vision)
-
-if(POSELINK_BUILD_VISION)
-  find_package(OpenCV QUIET COMPONENTS core calib3d aruco videoio imgcodecs)
-  if(OpenCV_FOUND)
-    target_compile_definitions(poselink PRIVATE POSELINK_WITH_OPENCV=1)
-    target_link_libraries(poselink_vision PUBLIC ${OpenCV_LIBS})
-  endif()
-endif()
-
-if(POSELINK_BUILD_VIEWER)
-  poselink_enable_viewer(poselink)
-endif()
-
-enable_testing()
-add_executable(poselink_tests tests/test_main.cpp)
-target_link_libraries(poselink_tests PRIVATE poselink_streaming)
-add_test(NAME poselink_tests COMMAND poselink_tests)
+# Add poselink_vision_node and the networking modules only after the local
+# Synthetic Pose -> Viewer vertical slice is complete.

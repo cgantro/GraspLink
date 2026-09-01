@@ -1,6 +1,6 @@
 include(FetchContent)
 
-function(poselink_enable_viewer app_target)
+function(poselink_add_graphics_library)
   add_library(poselink_glad STATIC third_party/glad/src/glad.c)
   target_include_directories(poselink_glad PUBLIC third_party/glad/include)
 
@@ -14,18 +14,16 @@ function(poselink_enable_viewer app_target)
   find_package(OpenGL REQUIRED)
 
   add_library(poselink_graphics STATIC
-    modules/graphics/src/Renderer.cpp
-    modules/graphics/src/Shader.cpp
-    modules/graphics/src/Texture.cpp
-    modules/graphics/src/VertexArray.cpp
-    modules/graphics/src/VertexBuffer.cpp)
-  target_include_directories(poselink_graphics PUBLIC modules/graphics/include)
-  target_link_libraries(poselink_graphics PUBLIC poselink_glad glm::glm OpenGL::GL)
+    modules/viewer/src/Window.cpp
+    modules/viewer/src/Renderer.cpp
+    modules/viewer/src/Shader.cpp
+    modules/viewer/src/Mesh.cpp
+    modules/viewer/src/Camera.cpp
+    modules/viewer/src/Texture.cpp
+    modules/viewer/src/VertexArray.cpp
+    modules/viewer/src/VertexBuffer.cpp)
+  target_include_directories(poselink_graphics PUBLIC modules/viewer/include)
+  target_link_libraries(poselink_graphics PUBLIC poselink_glad glfw glm::glm OpenGL::GL)
+  target_compile_definitions(poselink_graphics PUBLIC GLFW_INCLUDE_NONE)
 
-  target_sources(${app_target} PRIVATE apps/poselink/src/ViewerMode.cpp)
-  target_link_libraries(${app_target} PRIVATE poselink_graphics glfw)
-  target_compile_definitions(${app_target} PRIVATE POSELINK_WITH_VIEWER=1 GLFW_INCLUDE_NONE)
-  add_custom_command(TARGET ${app_target} POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-      ${CMAKE_SOURCE_DIR}/modules/graphics/shaders $<TARGET_FILE_DIR:${app_target}>/shaders)
 endfunction()
