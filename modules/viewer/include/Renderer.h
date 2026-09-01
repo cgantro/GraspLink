@@ -9,6 +9,7 @@ namespace PoseLink {
 class Shader;
 class Texture;
 class Mesh;
+class Camera;
 /**
  * @brief 렌더러
  * Shader, VAO, VBO, EBO, Texture 구성
@@ -33,6 +34,8 @@ private:
 
     // 초기화 검증과 추후 pose visualization texture에 사용하는 RGBA texture.
      std::unique_ptr<Texture> m_Texture;
+     // Viewer가 사용할 3D Camera.
+    std::unique_ptr<Camera> m_Camera;
 };
 
 } // namespace PoseLink
