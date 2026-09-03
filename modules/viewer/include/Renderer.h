@@ -1,7 +1,7 @@
 #pragma once
 
 #include <memory>
-#include "Pose.h"
+#include <flecs.h>
 
 namespace PoseLink {
 
@@ -26,15 +26,18 @@ public:
 
     // 현재 바인드된 pose/texture visualization을 화면에 렌더링한다.
     // PoseLink는 방송 Scene 계층을 사용하지 않는다.
-    void Render(const Pose& pose);
+    /*
+        Renderer는 world를 소유하지 않는다.
+
+        ViewerApp이 entity의 생성/제거와 world의 수명을 관리하고,
+        Renderer는 현재 world 안에서 Transform + Renderable을 가진 entity만 찾아
+        기존 OpenGL draw call을 수행한다.
+    */
+    void Render(flecs::world& world);
     void EndFrame();
 
 private:
-    std::unique_ptr<Mesh> m_Mesh;
-    std::shared_ptr<Shader> m_Shader;
-
     // 초기화 검증과 추후 pose visualization texture에 사용하는 RGBA texture.
-     std::unique_ptr<Texture> m_Texture;
      // Viewer가 사용할 3D Camera.
     std::unique_ptr<Camera> m_Camera;
 };
