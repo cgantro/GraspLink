@@ -14,6 +14,7 @@ function(poselink_add_graphics_library)
   find_package(OpenGL REQUIRED)
 
   add_library(poselink_graphics STATIC
+    modules/common/include/Pose.h
     modules/viewer/src/Window.cpp
     modules/viewer/src/Renderer.cpp
     modules/viewer/src/Shader.cpp
@@ -23,7 +24,9 @@ function(poselink_add_graphics_library)
     modules/viewer/src/IndexBuffer.cpp
     modules/viewer/src/VertexArray.cpp
     modules/viewer/src/VertexBuffer.cpp)
-  target_include_directories(poselink_graphics PUBLIC modules/viewer/include)
+  target_include_directories(poselink_graphics PUBLIC
+    modules/common/include
+    modules/viewer/include)
   target_link_libraries(poselink_graphics PUBLIC poselink_glad glfw glm::glm OpenGL::GL)
   target_compile_definitions(poselink_graphics PUBLIC GLFW_INCLUDE_NONE)
 

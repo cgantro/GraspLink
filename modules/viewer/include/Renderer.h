@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include "Pose.h"
 
 namespace PoseLink {
 
@@ -25,7 +26,7 @@ public:
 
     // 현재 바인드된 pose/texture visualization을 화면에 렌더링한다.
     // PoseLink는 방송 Scene 계층을 사용하지 않는다.
-    void Render();
+    void Render(const Pose& pose);
     void EndFrame();
 
 private:

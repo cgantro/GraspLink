@@ -2,6 +2,7 @@
 #pragma once
 
 #include <memory>
+#include "Pose.h"
 
 namespace PoseLink
 {
@@ -23,4 +24,6 @@ private:
     // 생명주기 연결, Window 하나를 단독 소유
     std::unique_ptr<PoseLink::Window> m_Window;
     std::unique_ptr<PoseLink::Renderer> m_Renderer;
+
+    PoseLink::Pose m_Pose;
 };

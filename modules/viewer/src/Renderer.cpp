@@ -7,6 +7,8 @@
 
 #include <glad/glad.h>
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include <memory>
 
@@ -87,7 +89,7 @@ void Renderer::BeginFrame() {
     );
 }
 
-void Renderer::Render() {
+void Renderer::Render(const Pose& pose) {
 
     m_Shader->Bind();
 
@@ -97,7 +99,53 @@ void Renderer::Render() {
             위치 이동, 회전, 크기 변경 x
         -> 단위 행렬 사용
     */
-    const glm::mat4 model(1.0f);
+
+    /*
+        Pose의 위치 데이터를 GLM 벡터로 변환
+        common의 Pose는 OpenGL/GLM을 모르게 만들었음
+            ㄴ 그래픽 계층에서 필요한 타입으로 변환한다.
+    */
+
+    const glm::vec3 position(
+        pose.position.x,
+        pose.position.y,
+        pose.position.z
+    );
+
+    /*
+        GLM Quaternion 순서
+        (w,x,y,z)
+    */
+    glm::quat orientation(
+        pose.orientation.w,
+        pose.orientation.x,
+        pose.orientation.y,
+        pose.orientation.z
+    );
+
+    // 쿼터니언은 길이가 1이어야 순수한 회전을 나타낸다, 따라서 미리 정규화
+    orientation = glm::normalize(orientation);
+
+    /*
+        Translation Matrix
+        단위 행렬에 pos만큼의 이동 추가
+    */
+    const glm::mat4 translation = glm::translate(glm::mat4(1.0f),position);
+
+    /*
+        쿼터니언을 OpenGL에서 사용할 수 있는 4X4 회전 행렬로 변환
+    */
+    const glm::mat4 rotation = glm::mat4_cast(orientation);
+
+    /*
+        Model Matrix: Translation x Rotation
+        Vertex에 실제 적용되는 순서
+            Vertex -> Rotation -> Translation
+        
+        물체를 자신의 원점을 기준으로 회전 시킨 뒤 world 위치로 이동
+
+    */
+    const glm::mat4 model = translation * rotation;
     /*
         View Matrix:
             카메라의 위치와 바라보는 방향 기준
@@ -109,7 +157,6 @@ void Renderer::Render() {
     */
     const glm::mat4 projection = m_Camera->GetProjectionMatrix();
     
-
     /*
         Shader의 uniform으로 Matrix를 전달한다.
 

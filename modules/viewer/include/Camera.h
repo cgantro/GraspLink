@@ -53,7 +53,7 @@ private:
         카메라의 위쪽 방향
         보통 +y 방향을 위쪽으로 사용
     */
-    glm::vec3 m_Up{0.0f,1.0f,0.0f};
+    glm::vec3 m_Up{0.0f,0.0f,1.0f};
 
     float m_AspectRatio;
     float m_Fov;

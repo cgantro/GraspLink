@@ -30,6 +30,22 @@ bool ViewerApp::Init(){
     
     m_Renderer = std::make_unique<PoseLink::Renderer>();
     m_Renderer->Init();
+
+    /*
+        테스트용 Pose.
+
+        Cube를 원점에서 X축으로 1m 이동
+        회전은 없음
+    */
+
+    m_Pose.position.x = 1.0f;
+    m_Pose.position.y = 0.0f;
+    m_Pose.position.z = 0.0f;
+
+    m_Pose.orientation.w = 1.0f;
+    m_Pose.orientation.x = 0.0f;
+    m_Pose.orientation.y = 0.0f;
+    m_Pose.orientation.z = 0.0f;
     return true;
 }
 
@@ -43,7 +59,7 @@ void ViewerApp::MainLoop(){
 
         m_Renderer->BeginFrame();
 
-        m_Renderer->Render();
+        m_Renderer->Render(m_Pose);
 
         m_Renderer->EndFrame();
 
