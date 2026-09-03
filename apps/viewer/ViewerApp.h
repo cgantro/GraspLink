@@ -8,6 +8,8 @@ namespace PoseLink
 {
 class Window;
 class Renderer;
+class Camera;
+class RenderSystem;
 } // namespace PoseLink
 
 class ViewerApp
@@ -21,7 +23,7 @@ private:
     bool Init();
     void MainLoop();
     void Shutdown();
-
+private:
     std::unique_ptr<PoseLink::Window> m_Window;
     std::unique_ptr<PoseLink::Renderer> m_Renderer;
 
@@ -32,4 +34,9 @@ private:
         Mesh/Shader/Texture를 해제할 때 OpenGL context(Window)가 아직 살아 있어야 하기 때문이다.
     */
     std::unique_ptr<flecs::world> m_World;
+
+    // 단일 카메라
+    std::unique_ptr<PoseLink::Camera> m_Camera;
+
+    std::unique_ptr<PoseLink::RenderSystem> m_RenderSystem;
 };

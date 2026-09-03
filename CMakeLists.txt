@@ -1,5 +1,10 @@
 cmake_minimum_required(VERSION 3.20)
-project(PoseLink VERSION 0.1.0 LANGUAGES C CXX)
+
+project(
+  PoseLink
+  VERSION 0.1.0
+  LANGUAGES C CXX
+)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -9,29 +14,69 @@ if(MSVC)
   add_compile_options(/utf-8)
 endif()
 
-option(POSELINK_BUILD_GRAPHICS "Build the existing OpenGL graphics module" ON)
+option(
+  POSELINK_BUILD_GRAPHICS
+  "Build PoseLink OpenGL viewer"
+  ON
+)
 
 if(POSELINK_BUILD_GRAPHICS)
+
   include(cmake/Dependencies.cmake)
+
   poselink_add_graphics_library()
 
-  add_executable(poselink_viewer
+
+  # --------------------------------------------------
+  # Viewer Application
+  # --------------------------------------------------
+
+  add_executable(
+    poselink_viewer
+
     apps/viewer/main.cpp
     apps/viewer/ViewerApp.cpp
-    modules/viewer/include/IndexBuffer.h
-    modules/viewer/src/IndexBuffer.cpp)
+    apps/viewer/ViewerApp.h
 
-  target_include_directories(poselink_viewer PRIVATE
-    apps/viewer)
+    # ECS wrapper
+    modules/viewer/include/Entity.h
 
-  target_link_libraries(poselink_viewer PRIVATE
-    poselink_graphics)
+    # Viewer ECS System
+    modules/viewer/include/systems/RenderSystem.h
+    modules/viewer/src/systems/RenderSystem.cpp
+  )
 
-  add_custom_command(TARGET poselink_viewer POST_BUILD
+
+  target_include_directories(
+    poselink_viewer
+    PRIVATE
+      apps/viewer
+      modules/viewer/include
+      modules/viewer/include/components
+      modules/viewer/include/graphics
+      modules/viewer/include/systems
+  )
+
+
+  target_link_libraries(
+    poselink_viewer
+    PRIVATE
+      poselink_graphics
+      flecs::flecs_static
+  )
+
+
+  # --------------------------------------------------
+  # Runtime Assets
+  # --------------------------------------------------
+
+  add_custom_command(
+    TARGET poselink_viewer
+    POST_BUILD
+
     COMMAND ${CMAKE_COMMAND} -E copy_directory
       ${CMAKE_SOURCE_DIR}/assets/shaders
-      $<TARGET_FILE_DIR:poselink_viewer>/shaders)
-endif()
+      $<TARGET_FILE_DIR:poselink_viewer>/shaders
+  )
 
-# Add poselink_vision_node and the networking modules only after the local
-# Synthetic Pose -> Viewer vertical slice is complete.
+endif()
