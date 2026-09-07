@@ -8,7 +8,7 @@
 
 ---
 
-## 2. 전송 대상
+## 2. 전송 대상과 Frame 의미
 
 초기 전송 대상은 robot joint state가 아니라 **tracked object의 6DoF Pose**다.
 
@@ -21,11 +21,41 @@ Vision/Synthetic Source
 → Simulation Object
 ```
 
+실제 Vision 단계에서 payload의 의미는 다음으로 고정한다.
+
+```text
+T_camera_object
+```
+
+즉 **camera frame을 기준으로 표현한 object pose**를 전송한다.
+
+Vision Node는 robot base/world 위치를 알 필요가 없다. Viewer/Simulator가 `T_base_camera`와 좌표계 변환을 적용해 robot/world frame으로 옮긴다.
+
+```text
+Vision Node
+T_camera_object
+      ↓ UDP
+Simulator
+T_base_camera × T_camera_object
+```
+
+Synthetic sender도 같은 의미를 재현하도록 camera/reference frame 기준 Pose를 만든다.
+
 Robot IK/FK는 Viewer/Simulator에서 수행한다.
 
 ---
 
-## 3. 요구 field
+## 3. 단위와 회전 표현
+
+- position unit: meter
+- orientation: unit quaternion
+- current domain type field order: `(w, x, y, z)`
+
+OpenCV의 camera frame convention과 Viewer convention 변환은 receiver/application boundary에서 처리한다. wire decoder 내부에서 임의로 축을 뒤집지 않는다.
+
+---
+
+## 4. 요구 field
 
 최소 field 후보:
 
@@ -37,13 +67,13 @@ Robot IK/FK는 Viewer/Simulator에서 수행한다.
 | sequence | loss/reorder 분석 | 단계 2부터 넣는 것을 권장, 최종 확정 필요 |
 | timestamp | sample 생성 시점 | 단계 2부터 넣는 것을 권장, 최종 확정 필요 |
 | object ID | multi-object 확장 | 초기 포함 여부 결정 필요 |
-| position x/y/z | object 위치 | 필요 |
-| quaternion | object 방향 | 필요 |
+| position x/y/z | `T_camera_object` translation | 필요 |
+| quaternion | `T_camera_object` rotation | 필요 |
 | valid/status | detection 상태 전달 | ArUco 단계 전에 확정 |
 
 ---
 
-## 4. Quaternion 순서
+## 5. Quaternion 순서
 
 현재 C++ domain type `PoseLink::Quaternion`은:
 
@@ -59,7 +89,7 @@ Wire format은 encode/decode가 명시적이면 다른 순서도 가능하지만
 
 ---
 
-## 5. Serialization 원칙
+## 6. Serialization 원칙
 
 하지 않는 것:
 
@@ -88,7 +118,7 @@ Decoder는 역순으로 각 field를 검증한다.
 
 ---
 
-## 6. Endianness
+## 7. Endianness
 
 정수 field는 network byte order(big-endian)를 기본 후보로 한다.
 
@@ -105,7 +135,7 @@ known values
 
 ---
 
-## 7. Packet Validation
+## 8. Packet Validation
 
 Decoder는 최소 다음을 확인한다.
 
@@ -121,7 +151,7 @@ invalid packet은 Viewer state를 직접 수정하지 않는다.
 
 ---
 
-## 8. Sequence
+## 9. Sequence
 
 Sequence Number는 마지막 network experiment만을 위한 값이 아니라 receiver correctness 검증에도 유용하다.
 
@@ -143,7 +173,7 @@ Sequence Number는 마지막 network experiment만을 위한 값이 아니라 re
 
 ---
 
-## 9. Timestamp
+## 10. Timestamp
 
 Timestamp는 Pose가 생성된 시점을 표현한다.
 
@@ -160,7 +190,7 @@ Timestamp는 Pose가 생성된 시점을 표현한다.
 
 ---
 
-## 10. 단계 2 완료 기준
+## 11. 단계 2 완료 기준
 
 `UDP Object Pose` 단계에서는 최소 다음을 검증한다.
 
@@ -183,7 +213,7 @@ Synthetic Pose
 
 ---
 
-## 11. 구현 전에 결정할 항목
+## 12. 구현 전에 결정할 항목
 
 1. exact packet byte layout
 2. packet 전체 크기
