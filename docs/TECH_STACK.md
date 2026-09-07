@@ -2,32 +2,37 @@
 
 ## 1. 기술 선택 원칙
 
-PoseLink의 기술 스택은 다음 순서로 선택한다.
+PoseLink의 기술 스택은 기능 목록보다 **프로그램별 책임과 의존 경계**를 기준으로 정한다.
 
-1. C++ 실시간 응용 소프트웨어의 데이터 흐름이 드러날 것
-2. Viewer와 Vision Node를 별도 process로 유지할 것
-3. Linux / Windows에서 동일 core를 최대한 재사용할 것
-4. 네트워크/렌더링/비전 계층을 서로 강하게 결합하지 않을 것
-5. Vision Node의 핵심 책임은 Pose 생성과 송신으로 제한할 것
-6. benchmark와 자동 실험을 위해 GUI 없이 실행 가능할 것
-7. 기능보다 framework 학습량이 더 커지는 선택은 피할 것
-
----
-
-# 2. 공통 기술
-
-| 영역 | 선택 | 용도 |
-|---|---|---|
-| Language | C++17 | 모든 native application / module |
-| Build | CMake 3.20+ | target/의존성 구성 |
-| Test | CTest + C++ test target | protocol/buffer/interpolation 검증 |
-| Version Control | Git/GitHub | 소스 및 실험 기록 |
-| Time | `std::chrono::steady_clock` | `dt`, monotonic timestamp |
-| Network | BSD Socket / WinSock abstraction | Pose packet 송수신 |
+1. Vision Node와 Viewer/Simulator를 별도 process로 유지한다.
+2. Vision Node는 Pose 생성과 송신에 집중하고 graphics dependency를 갖지 않는다.
+3. Viewer/Simulator는 OpenGL과 Flecs를 사용해 scene과 robot을 표현한다.
+4. Robot kinematics 계산은 rendering API와 분리한다.
+5. Windows/Linux에서 공통 core를 최대한 재사용한다.
+6. 아직 필요하지 않은 대형 framework는 먼저 추가하지 않는다.
+7. 성능 수치는 실제 구현 후 Release build에서 측정한다.
 
 ---
 
-# 3. Viewer 프로그램
+## 2. 현재 실제 사용 기술
+
+| 영역 | 기술 | 현재 사용 여부 | 코드/설정 근거 |
+|---|---|---:|---|
+| Language | C++17 | 사용 | root `CMakeLists.txt` |
+| Build | CMake 3.20+ | 사용 | root `CMakeLists.txt` |
+| Rendering | OpenGL | 사용 | `modules/viewer/src/graphics/*` |
+| Window / Context | GLFW 3.4 | 사용 | `cmake/Dependencies.cmake` |
+| OpenGL Loader | GLAD | 사용 | `third_party/glad`, `cmake/Dependencies.cmake` |
+| Math | GLM 1.0.1 | 사용 | `cmake/Dependencies.cmake`, Viewer code |
+| ECS | Flecs 4.1.5 | 사용 | `cmake/Dependencies.cmake`, `RenderSystem` |
+| Domain Pose | 자체 `Pose` type | 사용 | `modules/common/include/Pose.h` |
+| OpenCV | 예정 | 미사용 | CMake dependency 없음 |
+| UDP | 예정 | 미사용 | `Protocol/UdpSocket` 파일은 현재 빈 골격 |
+| Robot kinematics | 예정 | 미사용 | module/path 미정 |
+
+---
+
+## 3. Viewer / Simulator
 
 실행 파일:
 
@@ -35,485 +40,258 @@ PoseLink의 기술 스택은 다음 순서로 선택한다.
 poselink_viewer
 ```
 
-## 핵심 스택
+현재 stack:
 
-| 영역 | 기술 | 선택 이유 |
+| 영역 | 기술 | 역할 |
 |---|---|---|
-| Window / Context | GLFW | 작은 API, Windows/Linux 지원, OpenGL과 직접 결합하기 쉬움 |
-| OpenGL Loader | GLAD | OpenGL function loading |
-| Rendering | OpenGL 3.3 Core | graphics pipeline을 직접 제어 |
-| Math | GLM | matrix/quaternion, OpenGL convention과 결합 |
-| ECS | flecs | Viewer scene state와 반복 system 관리 |
-| GUI (선택) | Dear ImGui | Viewer diagnostics/debug tooling |
-| Asset | 초기에는 직접 Mesh/Shader/Texture | graphics abstraction을 직접 이해하기 위함 |
+| Window | GLFW | window, event, OpenGL context |
+| Rendering | OpenGL Core profile | scene draw |
+| Loader | GLAD | OpenGL function loading |
+| Math | GLM | matrix/quaternion |
+| ECS | Flecs | Entity/Component/System 관리 |
+| Build | CMake | target 구성 |
 
-Viewer에서 ImGui는 core renderer를 대체하지 않는다.
+현재 `RenderSystem`은 Flecs module/system으로 등록되고 `world.progress(dt)`에서 실행된다.
 
-```text
-OpenGL Renderer
-→ 3D Scene
+향후 Viewer에 필요한 기술:
 
-Dear ImGui (optional)
-→ Metrics / Controls / Diagnostics Overlay
-```
+| 단계 | 예정 기술 | 용도 |
+|---|---|---|
+| UDP Object Pose | OS UDP socket wrapper | Pose 수신 |
+| Simulation Object | Flecs Entity + `Transform` | tracked object 표현 |
+| Robot Model | mesh + joint/link description | 다관절 모델 구성 |
+| FK/IK | 자체 C++ math 또는 검증된 linear algebra 보조 | kinematics 계산 |
+| Diagnostics | Dear ImGui 선택 | viewer metrics/debug overlay |
 
-Dear ImGui는 Viewer가 이미 GLFW + OpenGL context를 가지므로 추가 graphics architecture를 만들지 않고 붙일 수 있다.
+Dear ImGui는 Viewer가 이미 graphics application이기 때문에 필요 시 diagnostics 용도로만 검토한다.
 
 ---
 
-# 4. Vision Node 프로그램
+## 4. Vision Node
 
-실행 파일:
+목표 실행 파일:
 
 ```text
 poselink_vision_node
 ```
 
-## 핵심 스택
+목표 stack:
 
-| 영역 | 기술 | 선택 이유 |
+| 영역 | 기술 | 역할 |
 |---|---|---|
-| Camera / CV | OpenCV | VideoCapture, calibration, ArUco, solvePnP |
-| Calibration | ChArUco | corner 기반 camera calibration |
-| Pose Estimation | ArUco + solvePnP | 크기를 아는 marker의 6DoF 추정 |
-| Network | UDP | 최신 상태 우선, 손실을 application에서 측정 가능 |
-| Serialization | Custom binary protocol | padding/ABI에 독립적인 packet |
-| UI | **없음** | Vision Node의 책임을 Pose 생성/송신에 집중 |
-| Debug Preview (선택) | OpenCV HighGUI | 개발 중 camera/detection 결과 확인 |
-| Runtime Configuration | CLI arguments / config | headless 실행 및 자동 실험에 적합 |
+| Camera / CV | OpenCV | `VideoCapture`, calibration, ArUco, `solvePnP` |
+| Calibration | ChArUco | camera intrinsic/distortion 추정 |
+| Runtime Tracking | ArUco + `solvePnP` | known object의 6DoF Pose 추정 |
+| Network | UDP | object pose publish |
+| Serialization | custom binary protocol | ABI/endianness 독립 wire format |
+| Runtime UI | 없음 | headless producer 유지 |
+| Debug Preview | OpenCV HighGUI 선택 | 개발 중 marker/axis 확인 |
 
-기본 실행 구조:
+Vision Node는 다음을 링크하지 않는 것을 기본 원칙으로 한다.
 
 ```text
-Camera / Synthetic Source
-        ↓
-Pose Estimation
-        ↓
-PoseSample
-        ↓
-Protocol Encode
-        ↓
-UDP Sender
+OpenGL
+GLFW
+GLAD
+Flecs
+Dear ImGui
+Qt
+MFC
 ```
-
-Vision Node는 OpenGL, GLFW, flecs, Dear ImGui에 의존하지 않는다.
 
 ---
 
-# 5. Vision Node GUI 후보 검토
+## 5. Vision Node GUI 검토 결과
 
-Vision Node에 별도 GUI를 붙일 수 있는 후보로 Dear ImGui, Qt, MFC, OpenCV HighGUI를 비교했지만 **현재 프로젝트에서는 정식 GUI를 사용하지 않는다.**
+### Dear ImGui
 
-이유는 Vision Node가 다음 역할의 프로그램이기 때문이다.
+장점:
+- C++ 친화적
+- 실시간 diagnostics에 적합
+- GLFW/OpenGL backend 존재
 
-```text
-Camera Input
-→ Pose Estimation
-→ Network Publish
-```
+단점:
+- Vision Node에 window/graphics lifecycle이 새로 생김
+- `cv::Mat` preview를 texture로 올리는 추가 경로 필요
 
-별도 UI framework를 넣으면 Vision Node에 window/event/rendering lifecycle이 추가되어 핵심 pipeline보다 application framework의 비중이 커진다.
-
----
-
-## 5.1 Dear ImGui
-
-### 장점
-
-- C++ 중심
-- 실시간 diagnostics 표시에 편리
-- GLFW / SDL / Win32 등 platform backend 제공
-- OpenGL / DirectX / Vulkan renderer backend 제공
-- Viewer에서는 기존 GLFW + OpenGL 환경에 쉽게 통합 가능
-
-### 단점
-
-- Vision Node에 사용하려면 결국 window + graphics backend가 필요
-- camera preview를 표시하려면 `cv::Mat → GPU texture` 경로가 추가됨
-- Pose 생성/UDP 송신 프로그램에 OpenGL context lifecycle이 생김
-- headless node라는 구조적 장점이 약해짐
-
-### PoseLink 결정
+결론:
 
 ```text
-Viewer diagnostics: 적합
 Vision Node: 사용하지 않음
+Viewer diagnostics: 필요 시 사용 가능
 ```
 
----
+### Qt
 
-## 5.2 Qt Widgets
+장점:
+- 복잡한 desktop tool, calibration wizard, persistent settings에 적합
 
-### 장점
+단점:
+- 현재 범위에는 dependency/framework 비중이 큼
 
-- 완성도 높은 desktop UI toolkit
-- Windows/Linux/macOS cross-platform
-- layout, dialog, menu, file picker, table, model/view 제공
-- Qt Designer 사용 가능
-- 카메라 설정 프로그램이 제품 수준으로 커질 경우 적합
-
-### 단점
-
-- 현재 PoseLink 규모에는 dependency와 framework 비중이 큼
-- event loop, deployment/runtime plugin 관리가 추가됨
-- 핵심 실시간 pipeline보다 GUI application 구현 비중이 커질 수 있음
-
-### PoseLink 결정
+결론:
 
 ```text
-현재: 사용하지 않음
-향후 별도 운영/설정 도구가 필요해질 때 재검토
+향후 별도 운영 도구가 필요할 때 재검토
 ```
 
-예를 들어 향후 아래 요구가 생기면 Qt를 고려할 수 있다.
+### MFC
 
-```text
-여러 Camera Profile 관리
-Calibration Wizard
-Persistent Settings
-복잡한 장비 설정 화면
-운영자용 Desktop Tool
-```
+장점:
+- Windows native industrial application에 적합
 
-이 경우에도 Vision Core와 Qt GUI는 별도 계층으로 분리한다.
-
----
-
-## 5.3 MFC
-
-### 장점
-
-- Windows native desktop C++ 개발 경험
-- Win32/MFC 기반 산업용 기존 코드베이스와 연결 시 실용적
-- Visual Studio ecosystem과 결합
-
-### 단점
-
+단점:
 - Windows 전용
-- Linux 목표와 충돌
-- 현재 OpenCV/UDP core의 cross-platform 구조에 플랫폼 분기가 생김
-- 프로젝트의 핵심 기술 목표와 직접 관련이 적음
+- 현재 cross-platform 목표와 충돌
 
-### PoseLink 결정
+결론:
 
 ```text
 사용하지 않음
 ```
 
-MFC 자체 학습이 목표인 별도 Windows application이라면 의미가 있지만 PoseLink에 넣을 이유는 약하다.
+### OpenCV HighGUI
+
+장점:
+- OpenCV dependency 안에서 camera frame을 즉시 확인 가능
+
+단점:
+- 제품 GUI가 아님
+
+결론:
+
+```text
+--preview 같은 개발용 optional 기능으로만 사용
+```
 
 ---
 
-## 5.4 OpenCV HighGUI
+## 6. Robot Model / Kinematics 기술 선택
 
-### 장점
+Robot 단계는 아직 구현되지 않았으므로 library를 확정하지 않는다.
 
-- 이미 사용하는 OpenCV 안에서 camera frame을 바로 표시 가능
-- 별도 GUI framework가 필요 없음
-- ArUco corner, marker ID, axis 등의 detection debugging에 충분
+필요 정보:
 
-예:
+```text
+Robot Base
+Joint origin
+Joint axis
+Joint limits
+Link mesh
+End Effector frame
+```
+
+초기 후보:
+
+- UR5/UR5e 계열
+- Franka Panda
+- xArm 계열
+
+선정 기준:
+
+1. simulation에 사용할 mesh/robot description을 합법적으로 구할 수 있는가
+2. joint origin/axis/limit 정보가 공개되어 있는가
+3. 6DoF grasp target을 표현하기 적절한 자유도를 갖는가
+4. 직접 FK 결과를 외부 reference와 비교할 수 있는가
+
+### URDF
+
+Robot model 데이터 원본으로 URDF를 사용할 수 있다. 다만 처음부터 full URDF parser를 만드는 것은 필수로 두지 않는다.
+
+초기 구현은 특정 robot 하나에 필요한 joint/link parameter만 명시적으로 읽거나 config로 고정할 수 있다.
+
+### FK / IK
+
+FK는 직접 구현해 transform chain을 이해하는 것을 우선한다.
+
+IK는 다음 단계에서 선택한다.
+
+- analytic IK: 선택한 robot에 적절하고 구현 범위가 감당 가능할 때
+- numerical IK: Jacobian 기반, pseudo-inverse 또는 Damped Least Squares 후보
+
+현재는 solver를 확정하지 않는다.
+
+---
+
+## 7. Network Stack
+
+UDP 선택 이유:
+
+```text
+Object Pose = 지속적으로 갱신되는 상태
+```
+
+오래된 packet을 반드시 복구하는 것보다 최신 상태 반영이 중요하다.
+
+다만 UDP를 선택했다고 reliability 문제를 무시하지 않는다. 마지막 단계에서 sequence/timestamp와 network impairment를 추가해 loss/reorder/jitter를 관측한다.
+
+---
+
+## 8. Binary Protocol
+
+초기 wire format은 명시적 serialization을 사용한다.
+
+피하는 방식:
 
 ```cpp
-cv::imshow("PoseLink Vision Debug", frame);
-cv::waitKey(1);
-```
-
-### 단점
-
-- 일반적인 application GUI toolkit이 아님
-- 복잡한 설정/상태 UI에 부적합
-- 자동 실험 환경에서는 window 자체가 불필요
-
-### PoseLink 결정
-
-```text
-정식 GUI: 아님
-개발용 optional debug preview: 사용 가능
-```
-
-`--preview` 같은 option으로 켜고 끌 수 있게 하는 정도가 적절하다.
-
----
-
-# 6. GUI 최종 결정
-
-## Vision Node
-
-```text
-GUI 없음
-```
-
-기본 실행:
-
-```bash
-poselink_vision_node \
-  --camera 0 \
-  --calibration camera.yml \
-  --marker-size 0.05 \
-  --host 192.168.0.10 \
-  --port 5000 \
-  --rate 30
-```
-
-선택적 debugging:
-
-```bash
-poselink_vision_node ... --preview
-```
-
-`--preview`가 켜진 경우에만 OpenCV HighGUI로 raw/detection frame을 표시한다.
-
-### 표시 가능한 debug 정보
-
-```text
-Camera Image
-Detected Marker Corners
-Marker ID
-Pose Axis
-Capture FPS
-Detection FPS
-Current Pose
-```
-
-Target host/port, calibration path, marker size 같은 설정은 CLI/configuration으로 전달한다.
-
-## Viewer
-
-```text
-OpenGL + GLFW
-+
-Dear ImGui diagnostics (optional)
-```
-
-Viewer는 애초에 graphics application이므로 ImGui를 붙여도 새로운 graphics dependency boundary가 생기지 않는다.
-
-표시 후보:
-
-```text
-Receive Rate
-Loss / Reorder / Duplicate
-Packet Age
-PoseBuffer Occupancy
-Interpolation Delay
-Render FPS
-```
-
----
-
-# 7. Vision Core와 Debug Preview 분리
-
-OpenCV HighGUI 호출을 `ArUcoPoseSource`의 핵심 처리 코드 안에 직접 박지 않는다.
-
-피해야 할 구조:
-
-```cpp
-ArUcoPoseSource::Update()
-{
-    ...
-    cv::imshow(...);
-}
-```
-
-권장 구조:
-
-```text
-ArUcoPoseSource
-├─ Pose 결과
-└─ optional debug frame / detection result
-          ↓
-VisionNodeApp
-          ↓
-DebugPreview (optional)
-```
-
-즉:
-
-```text
-Vision Core
-= Camera / Detection / Pose
-
-Application
-= CLI / Loop / Publisher
-
-Debug Preview
-= 개발 보조 기능
-```
-
-으로 분리한다.
-
----
-
-# 8. Network Stack
-
-## UDP
-
-선택 이유:
-
-- 최신 Pose가 과거 Pose보다 중요
-- transport-level retransmission으로 지연을 숨기지 않음
-- loss/reorder를 application에서 직접 관찰 가능
-- 작은 fixed-size Pose packet에 적합
-
-TCP 대비 의도:
-
-```text
-TCP
-→ reliable ordered byte stream
-
-PoseLink UDP
-→ freshness 우선 state update stream
-```
-
-UDP가 항상 우월해서가 아니라 프로젝트 요구가 다르기 때문에 선택한다.
-
----
-
-# 9. Binary Protocol
-
-목표 packet은 명시적 field serialization을 사용한다.
-
-```text
-Magic
-Version
-Flags
-Sequence
-Timestamp
-Position XYZ
-Quaternion WXYZ
-Reserved / Check
-```
-
-하지 않는 것:
-
-```cpp
-sendto(socket, &cppStruct, sizeof(cppStruct), ...);
+sendto(socket, &poseStruct, sizeof(poseStruct), ...);
 ```
 
 이유:
 
 - padding
 - alignment
-- ABI
+- compiler ABI
 - endianness
-- compiler 차이
 
-프로토콜 상세는 `protocol.md`를 따른다.
-
----
-
-# 10. OpenCV Stack
-
-## Calibration
-
-```text
-ChArUco board
-→ corner observations
-→ camera matrix K
-→ distortion coefficients
-```
-
-## Runtime pose
-
-```text
-VideoCapture
-→ ArUco Detect
-→ Marker Corners
-→ solvePnP
-→ rvec / tvec
-→ Quaternion / Position
-```
-
-OpenCV의 역할은 **Pose 생성**까지다.
-
-네트워크와 rendering 정책을 OpenCV class 안에 넣지 않는다.
+프로토콜의 exact byte layout은 `docs/protocol.md`를 source of truth로 사용한다.
 
 ---
 
-# 11. Viewer의 flecs 사용 범위
+## 9. 좌표계 / 수학
 
-사용:
+프로젝트에서 필요한 수학 영역:
 
-- Entity identity
-- `Transform`
-- `Renderable`
-- component query
-- render system
-- 향후 hierarchy / tracked tags
+- 3D vector/matrix
+- quaternion
+- rigid transform
+- homogeneous coordinate
+- coordinate frame conversion
+- FK transform chain
+- Jacobian / numerical IK
+- position/orientation error metric
 
-사용하지 않는 곳:
-
-- UDP protocol encode/decode
-- OpenCV pose estimation
-- socket wrapper
-- binary serialization
-- Vision Node
-
-ECS를 프로젝트 전체 framework로 강제하지 않는다.
+Viewer의 GLM 타입을 domain/robot core 전체에 강제하지 않는다. Robot kinematics module을 만들 때 API 경계를 별도로 결정한다.
 
 ---
 
-# 12. 의존성 경계
+## 10. 단계별 dependency 도입
 
-최종 목표:
+| 단계 | 새 dependency/기술 |
+|---|---|
+| Synthetic Pose → Cube | 현재 OpenGL/GLM/Flecs |
+| UDP Object Pose | OS socket API, serialization |
+| ArUco Object Detection | OpenCV |
+| Simulation Object | 기존 Viewer/Flecs |
+| Robot Model | robot description + mesh resource |
+| FK | transform-chain math |
+| Grasp Pose | frame composition |
+| IK | Jacobian/solver math |
+| Tracking / Attach | 기존 scene/kinematics |
+| Network experiment | `tc netem` 또는 별도 UDP proxy |
 
-```text
-poselink_vision_node
-├─ C++17
-├─ OpenCV
-├─ transport/common modules
-└─ OS socket API
-
-poselink_viewer
-├─ C++17
-├─ GLFW
-├─ GLAD
-├─ OpenGL
-├─ GLM
-├─ flecs
-├─ optional Dear ImGui
-└─ streaming/transport/common modules
-```
-
-Vision Node가 다음을 링크하지 않는 상태를 유지한다.
-
-```text
-OpenGL
-GLFW
-GLAD
-GLM (필요 없다면)
-flecs
-Dear ImGui
-```
+새 library는 해당 단계에 실제 필요가 생길 때 추가한다.
 
 ---
 
-# 13. 의존성 추가 원칙
+## 11. 참고 자료
 
-새 library는 아래 중 하나가 명확할 때만 추가한다.
-
-```text
-직접 구현 가치보다 검증된 library 사용 가치가 큰가?
-platform abstraction이 필요한가?
-현재 코드에서 실제 중복/복잡성이 발생했는가?
-```
-
-초기에는 다음을 추가하지 않는다.
-
-- 대형 rendering engine
-- full scene editor
-- physics engine
-- generic event bus
-- service locator
-- DI framework
-- Vision Node용 desktop GUI framework
-- Assimp/glTF abstraction before model requirement
-
----
-
-# 14. 참고 자료
-
+- Flecs: https://www.flecs.dev/flecs/
+- OpenGL Wiki: https://wikis.khronos.org/opengl/Main_Page
+- GLFW: https://www.glfw.org/docs/latest/
+- GLM: https://github.com/g-truc/glm
+- OpenCV ArUco: https://docs.opencv.org/4.x/d5/dae/tutorial_aruco_detection.html
+- OpenCV solvePnP: https://docs.opencv.org/4.x/d5/d1f/calib3d_solvePnP.html
 - Dear ImGui backends: https://github.com/ocornut/imgui/blob/master/docs/BACKENDS.md
-- Qt 6 Widgets: https://doc.qt.io/qt-6/qtwidgets-index.html
-- MFC overview: https://learn.microsoft.com/en-us/cpp/mfc/mfc-desktop-applications
-- OpenCV HighGUI: https://docs.opencv.org/4.x/d7/dfc/group__highgui.html
+- ROS URDF tutorials: https://docs.ros.org/en/rolling/Tutorials/Intermediate/URDF/URDF-Main.html
+- Modern Robotics: https://modernrobotics.northwestern.edu/
