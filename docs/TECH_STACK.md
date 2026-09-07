@@ -8,8 +8,9 @@ PoseLink의 기술 스택은 다음 순서로 선택한다.
 2. Viewer와 Vision Node를 별도 process로 유지할 것
 3. Linux / Windows에서 동일 core를 최대한 재사용할 것
 4. 네트워크/렌더링/비전 계층을 서로 강하게 결합하지 않을 것
-5. benchmark와 debugging을 위해 GUI 없이도 core가 실행 가능할 것
-6. 기능보다 framework 학습량이 더 커지는 선택은 피할 것
+5. Vision Node의 핵심 책임은 Pose 생성과 송신으로 제한할 것
+6. benchmark와 자동 실험을 위해 GUI 없이 실행 가능할 것
+7. 기능보다 framework 학습량이 더 커지는 선택은 피할 것
 
 ---
 
@@ -19,12 +20,10 @@ PoseLink의 기술 스택은 다음 순서로 선택한다.
 |---|---|---|
 | Language | C++17 | 모든 native application / module |
 | Build | CMake 3.20+ | target/의존성 구성 |
-| Math | GLM | Viewer vector/matrix/quaternion |
-| ECS | flecs | Viewer scene state와 systems |
 | Test | CTest + C++ test target | protocol/buffer/interpolation 검증 |
 | Version Control | Git/GitHub | 소스 및 실험 기록 |
 | Time | `std::chrono::steady_clock` | `dt`, monotonic timestamp |
-| Network | BSD/WinSock UDP abstraction | Pose packet 송수신 |
+| Network | BSD Socket / WinSock abstraction | Pose packet 송수신 |
 
 ---
 
@@ -42,10 +41,10 @@ poselink_viewer
 |---|---|---|
 | Window / Context | GLFW | 작은 API, Windows/Linux 지원, OpenGL과 직접 결합하기 쉬움 |
 | OpenGL Loader | GLAD | OpenGL function loading |
-| Rendering | OpenGL 3.3 Core | 직접 graphics pipeline 학습 및 제어 |
-| Math | GLM | OpenGL convention과 잘 맞는 matrix/quaternion API |
-| ECS | flecs | Entity/Component query 및 반복 system 관리 |
-| GUI (선택) | Dear ImGui | diagnostics/debug tooling |
+| Rendering | OpenGL 3.3 Core | graphics pipeline을 직접 제어 |
+| Math | GLM | matrix/quaternion, OpenGL convention과 결합 |
+| ECS | flecs | Viewer scene state와 반복 system 관리 |
+| GUI (선택) | Dear ImGui | Viewer diagnostics/debug tooling |
 | Asset | 초기에는 직접 Mesh/Shader/Texture | graphics abstraction을 직접 이해하기 위함 |
 
 Viewer에서 ImGui는 core renderer를 대체하지 않는다.
@@ -54,9 +53,11 @@ Viewer에서 ImGui는 core renderer를 대체하지 않는다.
 OpenGL Renderer
 → 3D Scene
 
-Dear ImGui
+Dear ImGui (optional)
 → Metrics / Controls / Diagnostics Overlay
 ```
+
+Dear ImGui는 Viewer가 이미 GLFW + OpenGL context를 가지므로 추가 graphics architecture를 만들지 않고 붙일 수 있다.
 
 ---
 
@@ -77,41 +78,41 @@ poselink_vision_node
 | Pose Estimation | ArUco + solvePnP | 크기를 아는 marker의 6DoF 추정 |
 | Network | UDP | 최신 상태 우선, 손실을 application에서 측정 가능 |
 | Serialization | Custom binary protocol | padding/ABI에 독립적인 packet |
-| GUI | **Dear ImGui + GLFW + OpenGL3** | engineering/debug UI에 적합 |
-| Headless | GUI optional | 자동 실험 / benchmark 가능 |
+| UI | **없음** | Vision Node의 책임을 Pose 생성/송신에 집중 |
+| Debug Preview (선택) | OpenCV HighGUI | 개발 중 camera/detection 결과 확인 |
+| Runtime Configuration | CLI arguments / config | headless 실행 및 자동 실험에 적합 |
+
+기본 실행 구조:
+
+```text
+Camera / Synthetic Source
+        ↓
+Pose Estimation
+        ↓
+PoseSample
+        ↓
+Protocol Encode
+        ↓
+UDP Sender
+```
+
+Vision Node는 OpenGL, GLFW, flecs, Dear ImGui에 의존하지 않는다.
 
 ---
 
-# 5. Vision Node GUI 후보 조사
+# 5. Vision Node GUI 후보 검토
 
-Vision Node GUI에 필요한 것은 일반 소비자용 desktop application UI가 아니다.
+Vision Node에 별도 GUI를 붙일 수 있는 후보로 Dear ImGui, Qt, MFC, OpenCV HighGUI를 비교했지만 **현재 프로젝트에서는 정식 GUI를 사용하지 않는다.**
 
-필수 화면:
-
-```text
-Camera Preview
-Marker Detection Overlay
-Current Position / Quaternion
-Detection Status
-Camera / Source FPS
-UDP Send Rate
-Sequence Counter
-Target IP / Port
-Calibration File
-Marker Size
-Start / Stop
-Queue / Drop Metrics
-```
-
-즉 성격은:
+이유는 Vision Node가 다음 역할의 프로그램이기 때문이다.
 
 ```text
-Camera engineering console
-+
-real-time diagnostics tool
+Camera Input
+→ Pose Estimation
+→ Network Publish
 ```
 
-에 가깝다.
+별도 UI framework를 넣으면 Vision Node에 window/event/rendering lifecycle이 추가되어 핵심 pipeline보다 application framework의 비중이 커진다.
 
 ---
 
@@ -120,31 +121,24 @@ real-time diagnostics tool
 ### 장점
 
 - C++ 중심
-- immediate-mode 방식이라 실시간 상태를 표시하기 쉽다
-- 기존 GLFW + OpenGL3 backend가 공식 제공된다
-- 작은 dependency와 빠른 integration
-- camera/pose/network metric처럼 매 frame 바뀌는 debug data에 적합
-- Viewer에도 같은 GUI stack을 재사용할 수 있다
-- MIT license
-- Windows/Linux 양쪽에서 사용 가능
-- headless core와 UI를 분리하기 쉽다
-
-Dear ImGui의 공식 backend 문서에는 GLFW platform backend와 OpenGL3 renderer backend가 표준 backend로 제공된다고 명시되어 있다.
+- 실시간 diagnostics 표시에 편리
+- GLFW / SDL / Win32 등 platform backend 제공
+- OpenGL / DirectX / Vulkan renderer backend 제공
+- Viewer에서는 기존 GLFW + OpenGL 환경에 쉽게 통합 가능
 
 ### 단점
 
-- native desktop widget toolkit이 아니다
-- 접근성, 복잡한 국제화, OS-native UX는 Qt보다 약하다
-- `cv::Mat` camera frame을 ImGui에 표시하려면 texture upload 경로가 필요하다
-- 일반 소비자용 application 수준의 polished UI에는 추가 작업이 많다
+- Vision Node에 사용하려면 결국 window + graphics backend가 필요
+- camera preview를 표시하려면 `cv::Mat → GPU texture` 경로가 추가됨
+- Pose 생성/UDP 송신 프로그램에 OpenGL context lifecycle이 생김
+- headless node라는 구조적 장점이 약해짐
 
-### PoseLink 적합도
+### PoseLink 결정
 
 ```text
-★★★★★
+Viewer diagnostics: 적합
+Vision Node: 사용하지 않음
 ```
-
-현재 목적과 가장 잘 맞는다.
 
 ---
 
@@ -156,25 +150,32 @@ Dear ImGui의 공식 backend 문서에는 GLFW platform backend와 OpenGL3 rende
 - Windows/Linux/macOS cross-platform
 - layout, dialog, menu, file picker, table, model/view 제공
 - Qt Designer 사용 가능
-- CMake 공식 지원
-- camera configuration tool이 커지고 UI 복잡도가 높아질 때 유리
-- native desktop application에 가까운 UX 구성 가능
+- 카메라 설정 프로그램이 제품 수준으로 커질 경우 적합
 
 ### 단점
 
-- PoseLink 규모에는 dependency가 크다
-- Qt event loop와 현재 GLFW/OpenGL application loop를 함께 고려해야 한다
-- 배포 시 Qt runtime/plugin 관리가 필요하다
-- Viewer와 Vision Node의 low-level OpenGL 학습 코드보다 Qt framework가 더 큰 비중을 차지할 수 있다
-- 라이선스 조건(LGPL/GPL 또는 commercial)을 프로젝트 배포 방식과 함께 확인해야 한다
+- 현재 PoseLink 규모에는 dependency와 framework 비중이 큼
+- event loop, deployment/runtime plugin 관리가 추가됨
+- 핵심 실시간 pipeline보다 GUI application 구현 비중이 커질 수 있음
 
-### PoseLink 적합도
+### PoseLink 결정
 
 ```text
-★★★☆☆
+현재: 사용하지 않음
+향후 별도 운영/설정 도구가 필요해질 때 재검토
 ```
 
-**제품화된 desktop tool**로 커진다면 좋은 선택이지만 현재 학습/엔지니어링 프로젝트에는 과하다.
+예를 들어 향후 아래 요구가 생기면 Qt를 고려할 수 있다.
+
+```text
+여러 Camera Profile 관리
+Calibration Wizard
+Persistent Settings
+복잡한 장비 설정 화면
+운영자용 Desktop Tool
+```
+
+이 경우에도 Vision Core와 Qt GUI는 별도 계층으로 분리한다.
 
 ---
 
@@ -182,142 +183,164 @@ Dear ImGui의 공식 backend 문서에는 GLFW platform backend와 OpenGL3 rende
 
 ### 장점
 
-- Windows native desktop C++ 개발 경험을 직접 보여줄 수 있다
-- Visual Studio Resource Editor와 Win32 ecosystem에 익숙한 조직에서는 실용적
-- Windows 전용 산업용/장비용 기존 코드베이스와 연결할 때 의미가 있다
+- Windows native desktop C++ 개발 경험
+- Win32/MFC 기반 산업용 기존 코드베이스와 연결 시 실용적
+- Visual Studio ecosystem과 결합
 
 ### 단점
 
 - Windows 전용
 - Linux 목표와 충돌
-- Visual Studio / Win32 중심
-- OpenGL + OpenCV cross-platform 구조와 결합 시 플랫폼 분기가 커진다
-- 신규 cross-platform engineering tool을 만들기 위한 선택으로는 비효율적
-- 본 프로젝트의 GUI는 제품 UI보다 debug/visualization tool 성격이라 MFC의 장점이 크게 살아나지 않는다
+- 현재 OpenCV/UDP core의 cross-platform 구조에 플랫폼 분기가 생김
+- 프로젝트의 핵심 기술 목표와 직접 관련이 적음
 
-### PoseLink 적합도
+### PoseLink 결정
 
 ```text
-★★☆☆☆
+사용하지 않음
 ```
 
-직무가 **Windows/MFC 유지보수 자체를 목표**로 할 때만 선택할 이유가 크다.
+MFC 자체 학습이 목표인 별도 Windows application이라면 의미가 있지만 PoseLink에 넣을 이유는 약하다.
 
 ---
 
 ## 5.4 OpenCV HighGUI
 
-비교 대상으로 함께 본다.
-
 ### 장점
 
-- 가장 빠르게 camera frame을 띄울 수 있다
-- OpenCV 외 추가 GUI dependency가 없다
+- 이미 사용하는 OpenCV 안에서 camera frame을 바로 표시 가능
+- 별도 GUI framework가 필요 없음
+- ArUco corner, marker ID, axis 등의 detection debugging에 충분
+
+예:
+
+```cpp
+cv::imshow("PoseLink Vision Debug", frame);
+cv::waitKey(1);
+```
 
 ### 단점
 
-- 복잡한 control panel / status / docking / metrics UI에 부적합
-- engineering console로 확장하기 어렵다
+- 일반적인 application GUI toolkit이 아님
+- 복잡한 설정/상태 UI에 부적합
+- 자동 실험 환경에서는 window 자체가 불필요
 
-### 용도
+### PoseLink 결정
 
 ```text
-첫 ArUco detection spike
+정식 GUI: 아님
+개발용 optional debug preview: 사용 가능
 ```
 
-까지만 유용하다.
-
-최종 Vision Node GUI로는 사용하지 않는다.
+`--preview` 같은 option으로 켜고 끌 수 있게 하는 정도가 적절하다.
 
 ---
 
 # 6. GUI 최종 결정
 
-## 선택: Dear ImGui
-
-Vision Node:
+## Vision Node
 
 ```text
-GLFW Window
-   ↓
-OpenGL3 Context
-   ├─ camera preview texture
-   └─ Dear ImGui UI
+GUI 없음
 ```
 
-Viewer:
+기본 실행:
 
-```text
-기존 GLFW + OpenGL3
-   ├─ 3D scene
-   └─ Dear ImGui diagnostics
+```bash
+poselink_vision_node \
+  --camera 0 \
+  --calibration camera.yml \
+  --marker-size 0.05 \
+  --host 192.168.0.10 \
+  --port 5000 \
+  --rate 30
 ```
 
-두 프로그램에서 동일한 backend 조합을 사용할 수 있다.
+선택적 debugging:
+
+```bash
+poselink_vision_node ... --preview
+```
+
+`--preview`가 켜진 경우에만 OpenCV HighGUI로 raw/detection frame을 표시한다.
+
+### 표시 가능한 debug 정보
 
 ```text
-imgui_impl_glfw
+Camera Image
+Detected Marker Corners
+Marker ID
+Pose Axis
+Capture FPS
+Detection FPS
+Current Pose
+```
+
+Target host/port, calibration path, marker size 같은 설정은 CLI/configuration으로 전달한다.
+
+## Viewer
+
+```text
+OpenGL + GLFW
 +
-imgui_impl_opengl3
+Dear ImGui diagnostics (optional)
 ```
 
-### 선택 이유 요약
+Viewer는 애초에 graphics application이므로 ImGui를 붙여도 새로운 graphics dependency boundary가 생기지 않는다.
+
+표시 후보:
 
 ```text
-Qt
-→ UI 제품을 만드는 데 강함
-
-MFC
-→ Windows native/legacy application에 강함
-
-Dear ImGui
-→ 실시간 C++ visualization/debug tool에 강함
+Receive Rate
+Loss / Reorder / Duplicate
+Packet Age
+PoseBuffer Occupancy
+Interpolation Delay
+Render FPS
 ```
-
-PoseLink의 GUI는 세 번째에 해당한다.
 
 ---
 
-# 7. GUI와 Core 분리
+# 7. Vision Core와 Debug Preview 분리
 
-GUI dependency가 core module로 전파되지 않게 한다.
+OpenCV HighGUI 호출을 `ArUcoPoseSource`의 핵심 처리 코드 안에 직접 박지 않는다.
 
-금지:
+피해야 할 구조:
 
 ```cpp
-// ArUcoPoseSource.h
-#include <imgui.h>
+ArUcoPoseSource::Update()
+{
+    ...
+    cv::imshow(...);
+}
 ```
 
-권장:
+권장 구조:
 
 ```text
 ArUcoPoseSource
-→ PoseResult / Diagnostics 반환
-
+├─ Pose 결과
+└─ optional debug frame / detection result
+          ↓
 VisionNodeApp
-→ ImGui에서 Diagnostics 표시
+          ↓
+DebugPreview (optional)
 ```
 
-향후 구조:
+즉:
 
 ```text
-apps/vision_node
-├─ VisionNodeApp
-└─ VisionNodeUI
+Vision Core
+= Camera / Detection / Pose
 
-apps/viewer
-├─ ViewerApp
-└─ ViewerDiagnosticsUI
+Application
+= CLI / Loop / Publisher
+
+Debug Preview
+= 개발 보조 기능
 ```
 
-공통 ImGui wrapper가 실제로 중복되기 시작한 뒤에만:
-
-```text
-modules/ui
-```
-
-를 만든다.
+으로 분리한다.
 
 ---
 
@@ -399,7 +422,6 @@ VideoCapture
 → solvePnP
 → rvec / tvec
 → Quaternion / Position
-→ Coordinate conversion
 ```
 
 OpenCV의 역할은 **Pose 생성**까지다.
@@ -425,12 +447,48 @@ OpenCV의 역할은 **Pose 생성**까지다.
 - OpenCV pose estimation
 - socket wrapper
 - binary serialization
+- Vision Node
 
 ECS를 프로젝트 전체 framework로 강제하지 않는다.
 
 ---
 
-# 12. 의존성 추가 원칙
+# 12. 의존성 경계
+
+최종 목표:
+
+```text
+poselink_vision_node
+├─ C++17
+├─ OpenCV
+├─ transport/common modules
+└─ OS socket API
+
+poselink_viewer
+├─ C++17
+├─ GLFW
+├─ GLAD
+├─ OpenGL
+├─ GLM
+├─ flecs
+├─ optional Dear ImGui
+└─ streaming/transport/common modules
+```
+
+Vision Node가 다음을 링크하지 않는 상태를 유지한다.
+
+```text
+OpenGL
+GLFW
+GLAD
+GLM (필요 없다면)
+flecs
+Dear ImGui
+```
+
+---
+
+# 13. 의존성 추가 원칙
 
 새 library는 아래 중 하나가 명확할 때만 추가한다.
 
@@ -440,7 +498,7 @@ platform abstraction이 필요한가?
 현재 코드에서 실제 중복/복잡성이 발생했는가?
 ```
 
-따라서 초기에는 다음을 추가하지 않는다.
+초기에는 다음을 추가하지 않는다.
 
 - 대형 rendering engine
 - full scene editor
@@ -448,11 +506,12 @@ platform abstraction이 필요한가?
 - generic event bus
 - service locator
 - DI framework
+- Vision Node용 desktop GUI framework
 - Assimp/glTF abstraction before model requirement
 
 ---
 
-# 13. 참고 자료
+# 14. 참고 자료
 
 - Dear ImGui backends: https://github.com/ocornut/imgui/blob/master/docs/BACKENDS.md
 - Qt 6 Widgets: https://doc.qt.io/qt-6/qtwidgets-index.html
