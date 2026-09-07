@@ -1,118 +1,113 @@
 # PoseLink
 
-PoseLink는 원격 Vision Node에서 추정한 객체의 6DoF Pose를 UDP로 전송하고, OpenGL Viewer에서 실시간으로 재현하는 C++ 프로젝트입니다.
+PoseLink는 **원격 카메라가 인식한 물체의 6DoF Pose를 시뮬레이터로 전송하고, 가상 다관절 로봇팔이 해당 물체의 grasp pose를 계산해 집는 과정을 재현하는 C++ 프로젝트**다.
 
-단순히 Pose를 화면에 표시하는 데 그치지 않고, 네트워크 지연·지터·손실·순서 변경이 원격 3D 시각화에 미치는 영향을 측정합니다. Timestamp 기반 Jitter Buffer와 보간을 적용하여 다음 질문에 답하는 것이 프로젝트의 핵심입니다.
+현재는 로봇 제어를 바로 구현하지 않고, 입력 Pose가 Viewer의 `Transform`으로 전달되어 정확히 렌더링되는 가장 작은 수직 경로부터 검증한다. 이후 UDP, 실제 Vision, 로봇 모델, FK/IK를 단계적으로 연결하고 마지막에 network jitter/loss가 target pose와 grasp 안정성에 미치는 영향을 측정한다.
 
-> 최신성을 유지하면서 네트워크 지터로 인한 원격 3D 시각화의 불안정을 얼마나 줄일 수 있는가?
+## 현재 상태
 
-ArUco는 실제 6DoF Pose를 만드는 입력 수단이고 OpenGL은 결과를 보여주는 출력 수단입니다. 프로젝트의 중심은 두 지점 사이의 실시간 상태 데이터 파이프라인을 직접 설계하고 구현하는 것입니다.
+현재 작업 기준 완료 단계는 **1. Synthetic Pose → Cube**다.
 
-## 전체 데이터 흐름
+| 단계 | 상태 | 목표 |
+|---|---|---|
+| 1. Synthetic Pose → Cube | ✅ 완료 | 결정적인 6DoF 입력이 Viewer `Transform`과 렌더링까지 전달되는 경로 검증 |
+| 2. UDP Object Pose | ▶ 다음 | Pose를 별도 process 사이에서 전송 |
+| 3. ArUco Object Detection | 예정 | 원격 카메라에서 known object의 6DoF Pose 추정 |
+| 4. Simulation에 Object 생성 | 예정 | 수신 Pose로 가상 물체 배치 |
+| 5. Robot Model 추가 | 예정 | 다관절 로봇 모델과 joint/link 구조 구성 |
+| 6. FK 구현 | 예정 | joint angle에서 각 link/end-effector pose 계산 |
+| 7. Grasp Pose 정의 | 예정 | object frame에서 end-effector가 도달할 목표 pose 정의 |
+| 8. IK 구현 | 예정 | grasp pose를 만족하는 joint angle 계산 |
+| 9. End Effector → Grasp Pose 추종 | 예정 | 움직이는 target에 대한 kinematic tracking |
+| 10. Grasp 성공 시 Object attach | 예정 | 성공 조건을 만족하면 object를 end-effector에 부착 |
+| 11. Network jitter/loss 실험 | 예정 | 지연·지터·손실이 target/grasp 안정성에 미치는 영향 측정 |
+
+## 최종 시스템 흐름
+
+```mermaid
+flowchart LR
+    A[Remote Camera] --> B[ArUco Detection]
+    B --> C[solvePnP]
+    C --> D[Object 6DoF Pose]
+    D --> E[UDP]
+    E --> F[Viewer / Simulator]
+    F --> G[Simulation Object Transform]
+    G --> H[Grasp Pose]
+    H --> I[IK]
+    I --> J[Joint Angles]
+    J --> K[FK]
+    K --> L[Robot Link Transforms]
+    L --> M[OpenGL + Flecs]
+    M --> N[Object Attach]
+
+    O[Network Impairment] -. delay / jitter / loss .-> E
+```
+
+초기 grasp 범위는 **known object + known grasp offset + kinematic grasp**로 제한한다. 물리 기반 접촉, 충돌 회피 motion planning, 임의 형상에 대한 grasp planning은 기본 완료 범위가 아니다.
+
+## 현재 코드 구조
 
 ```text
-                IPoseSource
-                     │
-          ┌──────────┴──────────┐
-          │                     │
-SyntheticPoseSource       ArUcoPoseSource
-          │                     │
-   Known Ground Truth       Real Camera
-          └──────────┬──────────┘
-                     ↓
-                  PoseSample
-                     ↓
-         Binary Serialization / UDP
-                     ↓
-       Validation / Sequence Analysis
-                     ↓
-          Timestamped Pose Buffer
-                     ↓
-             LERP / SLERP
-                     ↓
-             OpenGL 3D Viewer
+apps/
+├─ viewer/            # 현재 build되는 OpenGL Viewer
+└─ vision_node/       # 향후 camera/synthetic sender 실행 프로그램
+
+modules/
+├─ common/            # Pose domain type
+├─ vision/            # Synthetic / ArUco Pose source
+├─ transport/         # UDP / protocol 예정
+├─ streaming/         # receiver / buffer 예정
+└─ viewer/
+   ├─ components/     # Transform, Renderable
+   ├─ systems/        # RenderSystem
+   └─ graphics/       # Window, Camera, Renderer, Mesh, Shader ...
 ```
 
-Synthetic Pose는 network와 interpolation 오차를 독립적으로 측정하는 데 사용합니다. 실제 입력은 ChArUco로 camera calibration을 수행한 뒤, 크기를 알고 있는 단일 ArUco marker와 `solvePnP`로 생성할 계획입니다.
+Viewer는 `flecs::world`를 소유하고, `RenderContext`를 world context로 등록한 뒤 `RenderSystem`을 Flecs module/system으로 실행한다. `world.progress(dt)`가 등록된 system을 frame pipeline에서 실행하며 `Renderer`는 ECS나 Pose source를 직접 소유하지 않는다.
 
-## 핵심 설계
+## 빠른 빌드
 
-- C++17과 CMake 기반의 모듈식 구조
-- 최신 상태를 우선하는 UDP 전송
-- ABI와 endianness에 독립적인 64-byte custom binary protocol
-- Sequence Number를 이용한 loss/reorder/duplicate 분석
-- Timestamp를 이용한 packet age와 render timeline 관리
-- 크기가 제한된 timestamp 기반 pose buffer
-- 위치 LERP와 quaternion SLERP
-- OpenCV camera 좌표에서 OpenGL 좌표로의 명시적 변환
-- Synthetic ground truth와 network impairment를 이용한 정량 실험
-- Immediate rendering과 buffered interpolation의 latency/stability 비교
+현재 CMake에서 실제로 구성되는 실행 파일은 `poselink_viewer`다. OpenCV, UDP sender/receiver, robot kinematics target은 아직 CMake에 연결되어 있지 않다.
 
-## 목표 실행 프로그램
+요구 사항:
 
-구현이 완료되면 `VisionNodeApp`과 `ViewerApp`을 각각 독립 process로 실행합니다. 아래 명령은 현재 동작하는 기능이 아니라 직접 구현할 목표 CLI입니다.
+- C++17 compiler
+- CMake 3.20+
+- OpenGL development environment
+- 최초 configure 시 GLFW, GLM, Flecs를 가져올 네트워크 연결
 
 ```bash
-# Viewer
-poselink_viewer --port 5000 --buffer-ms 30
-
-# Synthetic Vision Node
-poselink_vision_node --source synthetic --host 127.0.0.1 --port 5000 --rate 30
+cmake -S . -B build -DPOSELINK_BUILD_GRAPHICS=ON
+cmake --build build --config Release
 ```
 
-Windows에서는 중간 UDP proxy로 delay, jitter, loss와 reorder를 재현할 계획입니다. 이때 Vision Node는 Viewer가 아니라 proxy port로 전송합니다.
+실행 경로와 shader working directory는 generator에 따라 다르다. 자세한 내용은 [빌드 및 실행](docs/build-and-run.md)을 따른다.
 
-```bash
-poselink_viewer --port 5000 --buffer-ms 30
-poselink_net_proxy --listen 5001 --target-port 5000 \
-  --delay-ms 50 --jitter-ms 20 --loss 1 --reorder 1 --seed 1
-poselink_vision_node --source synthetic --host 127.0.0.1 --port 5001 --rate 30
-```
+## 설계 원칙
 
-`--loss`와 `--reorder`의 단위는 백분율입니다. Linux network impairment 실험에는 `tc netem`을 사용할 계획입니다.
+- `Pose`는 Vision/Network domain data이고 `Transform`은 Viewer data로 분리한다.
+- Vision Node는 headless producer로 유지하며 OpenGL/Flecs를 의존하지 않는다.
+- Viewer에서만 Flecs와 OpenGL을 사용한다.
+- FK를 먼저 검증한 뒤 IK를 구현한다.
+- 물체 자체의 Pose와 실제로 잡아야 할 `grasp pose`를 구분한다.
+- 네트워크 robustness는 로봇 grasp 경로가 먼저 완성된 뒤 마지막 단계에서 측정한다.
+- 구현되지 않은 기능은 문서에서 `예정` 또는 `설계`로 표시한다.
 
-## 빌드
+## 문서
 
-요구 사항은 C++17, CMake 3.20 이상입니다. Viewer를 활성화한 최초 configure에서는 GLFW와 GLM을 가져오기 위한 네트워크 연결이 필요합니다.
-
-```bash
-cmake -S . -B build
-cmake --build build
-ctest --test-dir build --output-on-failure
-```
-
-현재 CMake는 보존한 graphics module만 구성합니다. 나머지 source/header는 학습용 빈 파일이며 [구현 가이드](docs/implementation/README.md)의 순서에 따라 target과 코드를 직접 추가합니다. OpenCV는 실제 camera pipeline 단계에서 선택 dependency로 추가합니다.
-
-## 구현 로드맵
-
-이 저장소는 학습을 위해 각 단계를 직접 구현하고 검증하는 방식으로 진행합니다.
-
-1. GLFW/GLAD/GLM으로 빈 창과 OpenGL Cube 구현
-2. `Pose{position, orientation}`로 Cube의 Model Matrix 제어
-3. `SyntheticPoseSource → Pose → Cube` 로컬 경로 구현
-4. `Synthetic Pose → UDP → Cube` 별도 process 경로 구현
-5. sequence/timestamp와 baseline network metrics 추가
-6. delay/jitter/loss/reorder를 재현하고 무보정 상태 측정
-7. Timestamped Pose Buffer와 LERP/SLERP 구현
-8. Immediate와 Buffered Interpolation 비교
-9. ChArUco camera calibration 구현
-10. ArUco detection과 `solvePnP` 구현
-11. `ArUcoPoseSource`를 기존 UDP publisher에 연결
-12. 최종 실험, buffer 정책 결정과 결과 문서화
-
-첫 번째 마일스톤이 끝날 때까지 UDP와 OpenCV는 추가하지 않습니다. 첫 기술 목표는 `Pose{position, quaternion}` 값을 바꾸면 Cube가 정확하게 이동·회전하는 것입니다.
-
-파일별 작성 순서는 [구현 가이드](docs/implementation/README.md)에서 확인할 수 있습니다. 설계 계약은 다음 문서에서 확인합니다.
-
-- [아키텍처와 스레드 수명](docs/ARCHITECTURE.md)
-- [UDP 바이너리 프로토콜](docs/protocol.md)
-- [Viewer buffer와 보간](docs/viewer_interpolation.md)
-- [Vision Pose와 calibration](docs/vision_pose.md)
-- [좌표계와 MVP](docs/coordinate_system.md)
-- [실험 계획](docs/experiments.md)
-- [설계 결정과 범위](docs/decisions.md)
-- [지원 플랫폼과 의존성](docs/platforms.md)
-
-## 프로젝트 완료 기준
-
-Synthetic Pose와 실제 ArUco Pose가 동일한 UDP 파이프라인을 통해 OpenGL 3D Viewer에 표시되고, delay·jitter·loss·buffer delay를 변화시킨 실험으로 Immediate Rendering과 Buffered Interpolation의 차이를 설명할 수 있으면 프로젝트를 완료한 것으로 봅니다.
+| 문서 | 내용 |
+|---|---|
+| [Project Background](docs/PROJECT_BACKGROUND.md) | 해결하려는 문제와 프로젝트 범위 |
+| [Architecture](docs/ARCHITECTURE.md) | 시스템, 모듈 책임, 데이터 흐름, 로봇 grasp 연결 |
+| [Technology Stack](docs/TECH_STACK.md) | 현재/예정 기술과 선택 이유 |
+| [Build & Run](docs/build-and-run.md) | 현재 빌드 가능한 target과 실행 방법 |
+| [Testing](docs/testing.md) | 로드맵 단계별 검증 방법 |
+| [Acceptance Criteria](docs/ACCEPTANCE_CRITERIA.md) | 프로젝트 완료 조건 |
+| [Design Decisions](docs/decisions.md) | 주요 설계 결정과 미결정 사항 |
+| [Flecs Adoption](docs/FLECS_ADOPTION.md) | Viewer ECS 도입 이유와 현재 실행 구조 |
+| [Coordinate System](docs/coordinate_system.md) | Camera/World/Robot/Object/Grasp frame 계약 |
+| [Vision Pose](docs/vision_pose.md) | ArUco 기반 known object pose 설계 |
+| [Protocol](docs/protocol.md) | UDP Object Pose protocol 설계 초안 |
+| [Viewer Interpolation](docs/viewer_interpolation.md) | 마지막 network robustness 단계의 시간축 복원 정책 |
+| [Experiments](docs/experiments.md) | jitter/loss 실험 설계 |
+| [Platforms](docs/platforms.md) | 현재 dependency와 플랫폼 범위 |
