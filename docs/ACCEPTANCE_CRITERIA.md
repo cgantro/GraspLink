@@ -214,10 +214,11 @@ alpha = 0.5 → 중간 Pose
 - camera open/close
 - calibration file load
 - ArUco marker detect
-- marker ID 표시
+- marker ID 확인
 - solvePnP
 - rvec/tvec → Position/Quaternion 변환
 - detection 실패 상태 표현
+- valid Pose만 publish
 
 ### 합격
 
@@ -225,63 +226,77 @@ alpha = 0.5 → 중간 Pose
 
 ---
 
-## FR-09 Vision Node GUI
+## FR-09 Vision Node Headless Runtime
 
-Dear ImGui 기반으로 최소 다음을 제공한다.
+Vision Node는 **정식 GUI 없이 실행 가능해야 한다.**
 
-### Preview
+최소 설정:
+
+```text
+camera index
+calibration file
+marker size
+target host
+target port
+send rate
+preview on/off
+```
+
+예:
+
+```bash
+poselink_vision_node \
+  --camera 0 \
+  --calibration camera.yml \
+  --marker-size 0.05 \
+  --host 127.0.0.1 \
+  --port 5000 \
+  --rate 30
+```
+
+### 합격
+
+- window 없이 실행 가능
+- camera → pose → UDP publish 전체 경로 동작
+- 잘못된 option은 명확한 오류를 출력
+- 자동 실험에서 사용자 입력 없이 실행 가능
+
+---
+
+## FR-10 Optional Vision Debug Preview
+
+개발 중 detection 확인을 위해 **OpenCV HighGUI 기반 preview를 선택적으로 제공할 수 있다.**
+
+예:
+
+```bash
+poselink_vision_node ... --preview
+```
+
+표시 후보:
 
 - camera image
 - detected marker corners
 - marker ID
-- axis 또는 pose overlay
+- axis/pose overlay
+- capture/detection FPS
 
-### Controls
+### 제약
 
-- camera index
-- calibration file
-- marker size
-- target host
-- target port
-- send rate
-- start/stop
-
-### Diagnostics
-
-- capture FPS
-- detection FPS
-- send rate
-- sequence
-- current position
-- current quaternion
-- queue depth/drop count
-- detection state
+- 정식 운영 GUI가 아님
+- OpenGL / GLFW / Dear ImGui를 Vision Node에 추가하지 않음
+- `ArUcoPoseSource` core logic가 HighGUI API에 의존하지 않음
+- preview를 꺼도 Pose publish 기능이 동일하게 동작
 
 ### 합격
 
-GUI 조작으로 process 재시작 없이 sender endpoint와 주요 runtime option을 확인/변경할 수 있다.
-
----
-
-## FR-10 Headless Mode
-
-GUI 없이:
-
-```bash
-poselink_vision_node --headless ...
-```
-
-형태로 실행 가능해야 한다.
-
-### 이유
-
-자동 benchmark에서 GUI render cost와 사용자 조작을 제거하기 위함.
+`--preview` 유무가 protocol/pose 결과와 sender 동작을 변경하지 않는다.
 
 ---
 
 ## FR-11 Viewer Diagnostics
 
-최소 표시:
+최소 표시 또는 logging 가능한 값:
 
 - receive rate
 - packet loss/reorder/duplicate
@@ -291,7 +306,9 @@ poselink_vision_node --headless ...
 - interpolation/extrapolation state
 - render FPS
 
-GUI는 선택 기능이며 core Viewer는 UI code에 의존하지 않는다.
+Viewer GUI는 선택 기능이다.
+
+Dear ImGui를 사용할 경우 core Viewer/network module이 `imgui.h`에 의존하지 않는다.
 
 ---
 
@@ -303,7 +320,7 @@ GUI는 선택 기능이며 core Viewer는 UI code에 의존하지 않는다.
 
 - receive queue
 - PoseBuffer
-- preview frame queue
+- optional preview snapshot/buffer
 - log buffer
 
 ### 목표
@@ -311,7 +328,7 @@ GUI는 선택 기능이며 core Viewer는 UI code에 의존하지 않는다.
 ```text
 PoseBuffer <= 256 samples
 network queue <= 256 samples
-preview queue = latest-frame 또는 <= 3 frames
+preview = latest-frame 또는 <= 3 frames
 ```
 
 10분 soak test에서 queue 크기가 계속 증가하지 않는다.
@@ -341,6 +358,7 @@ drop 수는 metric으로 기록한다.
 - UDP receive blocking
 - sender worker active
 - marker detection 중
+- optional HighGUI preview active
 
 ### 목표
 
@@ -356,10 +374,16 @@ worker detach 없이 join 완료.
 
 ## NFR-04 Thread Ownership
 
-- OpenGL / ImGui 호출은 UI/render thread
-- socket/capture worker의 ownership 명확화
+Viewer:
+
+- OpenGL / Dear ImGui 호출은 render thread
+
+Vision Node:
+
+- OpenGL context 없음
+- capture/vision/sender worker ownership 명확화
 - shared mutable data 최소화
-- 필요한 경우 mutex/atomic/queue 사용
+- 필요한 경우 mutex/atomic/bounded queue 사용
 
 ### 합격
 
@@ -374,11 +398,12 @@ AddressSanitizer/ThreadSanitizer를 적용 가능한 target에서 치명적 life
 - camera open failure
 - calibration file 없음
 - invalid marker size
-- socket bind failure
+- socket bind/send failure
 - malformed packet
 - unsupported protocol version
+- invalid CLI option
 
-오류 원인과 현재 state를 로그 또는 GUI에 표시한다.
+오류 원인과 현재 state를 로그에 표시한다.
 
 ---
 
@@ -390,8 +415,21 @@ AddressSanitizer/ThreadSanitizer를 적용 가능한 target에서 치명적 life
 common → OpenGL/OpenCV/flecs
 transport → viewer
 vision → Renderer
+vision → OpenGL/GLFW/Dear ImGui/flecs
 protocol → GUI
 ```
+
+Vision Node의 정상 build가 graphics dependency 없이 가능해야 한다.
+
+---
+
+## NFR-07 Headless Reproducibility
+
+정량 실험은 GUI/window state에 의존하지 않아야 한다.
+
+### 합격
+
+동일한 synthetic seed / network impairment seed / 설정값으로 반복 실행 시 동일한 입력 sequence와 측정 조건을 재현할 수 있다.
 
 ---
 
@@ -410,6 +448,10 @@ UDP publish target        = 30 Hz configurable
 ```
 
 카메라 자체가 30 FPS 미만이면 실제 입력 upper bound를 별도 기록한다.
+
+Debug preview 성능과 headless 성능은 별도로 측정한다.
+
+최종 성능 기준은 **headless 실행을 기준**으로 한다.
 
 ---
 
@@ -660,16 +702,18 @@ SyntheticPoseSource
 
 - Synthetic / ArUco가 같은 Pose publish interface 사용
 - 별도 Vision Node / Viewer process
+- Vision Node headless 기본 실행
+- optional OpenCV HighGUI debug preview
 - binary UDP protocol
 - sequence/timestamp metrics
 - bounded PoseBuffer
 - LERP/SLERP
 - OpenCV → OpenGL coordinate conversion
-- Vision Node ImGui preview/diagnostics
-- headless experiment mode
 - network impairment 실험
 - Immediate vs Buffered 결과 비교
 - 선택한 buffer delay의 근거를 수치로 설명
+
+Dear ImGui, Qt, MFC 기반 Vision Node GUI는 완료 조건에 포함하지 않는다.
 
 ---
 
@@ -684,5 +728,7 @@ SyntheticPoseSource
 - adaptive jitter buffer
 - recording/replay
 - protocol version compatibility test
+- Viewer Dear ImGui diagnostics panel
+- 별도 Qt 기반 camera/calibration operator tool
 
 Stretch 기능은 기본 완료 기준을 대체하지 않는다.
