@@ -1,8 +1,8 @@
 #include "ViewerApp.h"
 
 #include "Camera.h"
-#include "Entity.h"
 #include "Mesh.h"
+#include "RenderContext.h"
 #include "Renderable.h"
 #include "Renderer.h"
 #include "RenderSystem.h"
@@ -11,10 +11,12 @@
 #include "Transform.h"
 #include "Window.h"
 
+#include <GLFW/glfw3.h>
 
 #include <glm/glm.hpp>
 #include <iostream>
 #include <memory>
+
 
 ViewerApp::ViewerApp() = default;
 ViewerApp::~ViewerApp() = default;
@@ -49,16 +51,13 @@ bool ViewerApp::Init()
             1280.0f / 720.0f
         );
 
-    /*
-        Scene/Object 관리의 단일 진입점.
-        Renderer가 아니라 Application이 소유해야 entity 생성/제거와 OpenGL resource
-        파괴 순서를 한 곳에서 결정할 수 있다.
-    */
-    m_World = std::make_unique<flecs::world>();
-    // System
-    m_RenderSystem = std::make_unique<PoseLink::RenderSystem>(*m_World);
+    m_World.set<PoseLink::RenderContext>({
+        m_Renderer.get(),
+        m_Camera.get()
+    });
 
-    /*
+    m_World.import<PoseLink::RenderSystem>();
+    /*  
         기존 Renderer가 직접 만들던 Cube resource를 Application 초기화 단계로 옮긴다.
         Mesh::CreateCube()는 unique_ptr을 반환하지만, 같은 Cube를 여러 Entity가 공유해야 하므로
         여기서 shared_ptr로 전환한다.
@@ -90,15 +89,17 @@ bool ViewerApp::Init()
     */
     PoseLink::Transform cubeATransform;
     cubeATransform.position.x = -1.0f;
-    m_World->entity("CubeA")
-        .set<PoseLink::Transform>(cubeATransform)
-        .set<PoseLink::Renderable>(cubeRenderable);
+    m_World.entity("CubeA")
+    .set<PoseLink::Transform>(cubeATransform)
+    .set<PoseLink::Renderable>(cubeRenderable);
+
+   
 
     PoseLink::Transform cubeBTransform;
     cubeBTransform.position.x = 1.0f;
-    m_World->entity("CubeB")
-        .set<PoseLink::Transform>(cubeBTransform)
-        .set<PoseLink::Renderable>(cubeRenderable);
+    m_World.entity("CubeB")
+    .set<PoseLink::Transform>(cubeBTransform)
+    .set<PoseLink::Renderable>(cubeRenderable);
 
 
     return true;
@@ -106,14 +107,34 @@ bool ViewerApp::Init()
 
 void ViewerApp::MainLoop()
 {
-    while (!m_Window->ShouldClose()) {
+    m_LastFrameTime =
+        static_cast<float>(glfwGetTime());
+
+    while (!m_Window->ShouldClose())
+    {
+        const float currentTime =
+            static_cast<float>(glfwGetTime());
+
+        float dt =
+            currentTime - m_LastFrameTime;
+
+        m_LastFrameTime = currentTime;
+
+        if (dt > 0.1f) {
+            dt = 0.1f;
+        }
+
         m_Window->PollEvents();
+
+
+        // 나중에 SyntheticPoseSource 등의
+        // application-side update가 들어갈 위치
+        // Update(dt);
         m_Renderer->BeginFrame();
-        // Renderer는 Transform + Renderable query로 두 Cube를 모두 찾는다.
-        m_RenderSystem->Render(
-            *m_Renderer,
-            *m_Camera
-        );
+
+        // 등록된 flecs system 실행
+        m_World.progress(dt);
+
         m_Window->SwapBuffers();
     }
 }
@@ -124,7 +145,6 @@ void ViewerApp::Shutdown()
         flecs world가 먼저 파괴되면 Renderable component의 shared_ptr가 GPU resource를 해제한다.
         그 다음 Renderer, 마지막으로 OpenGL context를 가진 Window를 파괴한다.
     */
-    m_RenderSystem.reset();
     m_World.reset();
     m_Camera.reset();
     m_Renderer.reset();

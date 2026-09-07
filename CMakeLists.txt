@@ -24,7 +24,8 @@ if(POSELINK_BUILD_GRAPHICS)
 
   include(cmake/Dependencies.cmake)
 
-  poselink_add_graphics_library()
+  poselink_add_graphics_library(
+    modules/viewer/include/RenderContext.h)
 
 
   # --------------------------------------------------

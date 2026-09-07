@@ -27,12 +27,6 @@ void Renderer::Draw(
     const Renderable& renderable,
     const glm::mat4& view,
     const glm::mat4& projection){
-    std::cout << "Renderer::Draw\n";
-    std::cout
-    << renderable.mesh.get() << ' '
-    << renderable.shader.get() << ' '
-    << renderable.texture.get()
-    << '\n';
     /*
         잘못 구성된 Renderable은 Draw x
         현재는 Mesh, Shader, Texture 모두 필요

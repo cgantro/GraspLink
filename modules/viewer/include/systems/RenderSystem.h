@@ -23,8 +23,6 @@ public:
     */
 
     explicit RenderSystem(flecs::world& world);
-    // 현재 Cam 기준으로 Renderable Entity 그리기
-    void Render(Renderer& renderer, const Camera& camera);
 private:
     /*
         매 Frame마다 Query를 다시 정의하지 않고 한 번 생성해서 계속 사용
