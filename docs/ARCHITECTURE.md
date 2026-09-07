@@ -10,7 +10,7 @@ PoseLink는 **원격 Vision Node에서 추정한 6DoF Pose를 UDP로 전송하�
 - 모듈 간 의존 방향
 - thread / queue / lifetime 정책
 - Viewer의 ECS 사용 범위
-- GUI가 실시간 데이터 경로에 끼어들지 않는 방식
+- Vision Node를 graphics-free core로 유지하는 원칙
 - 현재 구현과 목표 구조의 차이
 
 > 문서의 수치 목표는 `ACCEPTANCE_CRITERIA.md`에서 별도로 정의한다.
@@ -65,8 +65,8 @@ Vision Node → poselink_net_proxy → Viewer
 - Pose에 sequence / monotonic timestamp 부여
 - binary protocol serialization
 - UDP publish
-- 카메라 preview, detection overlay, 송신 상태를 GUI로 표시
-- GUI 없이 실험할 수 있는 headless mode 지원
+- CLI/config 기반 runtime 설정
+- 선택적으로 OpenCV HighGUI debug preview 제공
 
 `poselink_viewer`
 
@@ -78,7 +78,7 @@ Vision Node → poselink_net_proxy → Viewer
 - OpenCV camera frame → OpenGL frame 좌표 변환
 - flecs Entity의 `Transform` 갱신
 - OpenGL 3D visualization
-- 선택적 ImGui diagnostics panel
+- 선택적 Dear ImGui diagnostics panel
 
 `poselink_net_proxy`
 
@@ -194,6 +194,7 @@ modules/
 - `common`이 OpenGL / OpenCV / flecs를 include
 - `transport`가 Viewer나 OpenGL을 참조
 - `vision`이 Viewer의 `Transform`을 직접 수정
+- `vision`이 GLFW / GLAD / flecs / Dear ImGui를 참조
 - `Renderer`가 UDP packet을 해석
 - `PoseBuffer`가 OpenGL draw를 호출
 
@@ -295,7 +296,7 @@ world.progress(dt)
     ↓
 RenderSystem
     ↓
-ImGui Diagnostics
+Dear ImGui Diagnostics (optional)
     ↓
 SwapBuffers
 ```
@@ -316,19 +317,21 @@ while (!window.ShouldClose())
 
     world.progress(dt);
 
-    DrawDiagnosticsUI();
+    DrawDiagnosticsUI(); // optional
 
     window.SwapBuffers();
 }
 ```
 
-OpenGL 호출은 render/main thread에 귀속한다.
+OpenGL / Dear ImGui 호출은 render/main thread에 귀속한다.
 
 ---
 
 ## 7. Vision Node architecture
 
-Vision Node는 ECS보다 **pipeline / worker ownership**이 중요하다.
+Vision Node는 **graphics application이 아니다.**
+
+핵심 구조:
 
 ```text
 Camera Capture
@@ -339,33 +342,74 @@ solvePnP
       ↓
 PoseSample
       ↓
-Bounded Pose Queue
+Protocol Encode
       ↓
 UDP Sender
 ```
 
-GUI가 활성화되면:
+기본 동작은 window 없이 실행된다.
 
-```text
-Capture/Vision Worker
-   ├─ latest preview frame
-   └─ latest pose / diagnostics
-              ↓
-        Main/UI Thread
-        Dear ImGui
+```bash
+poselink_vision_node \
+  --camera 0 \
+  --calibration camera.yml \
+  --marker-size 0.05 \
+  --host 192.168.0.10 \
+  --port 5000 \
+  --rate 30
 ```
 
-### 권장 thread 구성
+### Debug preview
 
-MVP에서는 먼저 단일 thread로 correctness를 검증하고, camera processing 때문에 UI나 송신 주기가 불안정해질 때 아래로 확장한다.
+ArUco detection을 개발할 때만 선택적으로 OpenCV HighGUI를 사용할 수 있다.
 
 ```text
-Thread 1: UI / OpenGL
-Thread 2: Capture + Vision
-Thread 3: UDP Sender
+Capture / Detection
+   ├─ PoseSample → UDP
+   └─ annotated cv::Mat → OpenCV HighGUI (optional)
 ```
 
-Thread 2 → Thread 3은 bounded queue를 사용한다.
+예:
+
+```bash
+poselink_vision_node ... --preview
+```
+
+이 preview는 제품 GUI가 아니라 debugging 기능이다.
+
+`ArUcoPoseSource` 내부에 `cv::imshow()`를 박지 않고 application/debug-view 경계에서 표시한다.
+
+---
+
+## 8. Vision Node 동시성
+
+MVP에서는 가능한 한 단순하게 시작한다.
+
+### 1단계
+
+```text
+Single Thread
+Capture
+→ Detect
+→ Pose
+→ Send
+```
+
+먼저 correctness와 처리시간을 측정한다.
+
+### 2단계
+
+실제 측정에서 capture/vision 처리 때문에 송신 주기나 입력 처리 지연이 문제가 될 때 분리한다.
+
+```text
+Capture + Vision Worker
+        ↓
+ bounded Pose Queue
+        ↓
+    UDP Sender
+```
+
+필요 시 main thread는 process control / optional HighGUI preview를 담당할 수 있다.
 
 ### Queue policy
 
@@ -378,58 +422,72 @@ overflow → DROP_OLDEST
 
 queue depth, dropped sample count를 metric으로 기록한다.
 
-Preview 영상은 frame queue를 길게 두지 않고 **latest-frame snapshot / double buffer**를 우선한다.
+Preview 영상은 긴 frame queue보다 latest-frame snapshot을 우선한다.
 
 ---
 
-## 8. GUI architecture
+## 9. GUI / Debug UI 경계
 
-GUI toolkit은 `TECH_STACK.md`의 비교 결과에 따라 **Dear ImGui를 기본 선택**한다.
-
-중요한 원칙:
+### Vision Node
 
 ```text
-GUI
-≠ core pipeline
+정식 GUI 없음
+```
+
+설정은 CLI/configuration으로 전달한다.
+
+```text
+Camera Index
+Calibration File
+Marker Size
+Target Host
+Target Port
+Send Rate
+Preview On/Off
+```
+
+선택적 preview는 OpenCV HighGUI만 사용한다.
+
+Vision Node가 링크하지 않아야 하는 것:
+
+```text
+OpenGL
+GLFW
+GLAD
+flecs
+Dear ImGui
+Qt
+MFC
+```
+
+### Viewer
+
+Viewer는 본래 graphics application이므로 선택적으로 Dear ImGui diagnostics를 사용한다.
+
+```text
+Receive Rate
+Loss / Reorder / Duplicate
+Packet Age
+PoseBuffer Occupancy
+Interpolation Delay
+Render FPS
 ```
 
 즉:
 
 ```text
-ArUcoPoseSource
-UdpPublisher
-PoseBuffer
-Protocol
+Vision Node
+→ headless producer
+
+Viewer
+→ graphics consumer + optional diagnostics UI
 ```
 
-은 ImGui를 몰라야 한다.
-
-GUI는 아래 상태를 읽고 command/configuration만 전달한다.
-
-```text
-Camera Preview
-Marker Overlay
-Current Pose
-Detection State
-Source FPS
-Send Rate
-Target Host / Port
-Calibration File
-Marker Size
-Packet Counters
-Queue Depth
-```
-
-이 구조 덕분에 동일 core를 다음 두 모드에서 실행할 수 있다.
-
-```text
-Interactive GUI mode
-Headless benchmark mode
-```
+으로 책임을 나눈다.
 
 ---
 
-## 9. Ownership / lifetime
+## 10. Ownership / lifetime
 
 ### Viewer
 
@@ -440,14 +498,14 @@ ViewerApp
 ├─ owns Camera
 ├─ owns flecs::world
 ├─ owns network receiver
-└─ owns UI context
+└─ owns optional ImGui context
 ```
 
 OpenGL resource는 OpenGL context보다 먼저 파괴한다.
 
 ```text
 ECS Renderable / Mesh / Texture
-→ Renderer/UI GPU resources
+→ Renderer / ImGui GPU resources
 → Window / OpenGL Context
 ```
 
@@ -458,8 +516,8 @@ VisionNodeApp
 ├─ owns Camera
 ├─ owns PoseSource
 ├─ owns Sender
-├─ owns worker threads
-└─ owns UI context
+├─ owns optional workers
+└─ owns optional DebugPreview helper
 ```
 
 종료 순서:
@@ -470,15 +528,16 @@ stop request
 → queue close
 → worker join
 → socket close
-→ GUI/OpenGL resource release
-→ window/context release
+→ optional HighGUI close
 ```
 
-RAII와 `std::jthread` 또는 명시적 join을 사용하며 detached worker는 사용하지 않는다.
+Vision Node에는 OpenGL context lifecycle이 없다.
+
+RAII와 명시적 join을 사용하며 detached worker는 사용하지 않는다.
 
 ---
 
-## 10. 시간 모델
+## 11. 시간 모델
 
 서로 다른 시간을 구분한다.
 
@@ -491,9 +550,8 @@ RAII와 `std::jthread` 또는 명시적 join을 사용하며 detached worker는 
 사용:
 
 - synthetic animation
-- camera controls
-- UI update
 - local simulation
+- Viewer camera/input
 
 ### Pose timestamp
 
@@ -520,7 +578,7 @@ wall clock
 
 ---
 
-## 11. 좌표계 경계
+## 12. 좌표계 경계
 
 Vision:
 
@@ -553,7 +611,7 @@ OpenCV Pose
 
 ---
 
-## 12. 향후 Robotics 확장 경계
+## 13. 향후 Robotics 확장 경계
 
 기본 PoseLink가 안정화된 뒤 선택적으로 확장한다.
 
