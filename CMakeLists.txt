@@ -20,6 +20,22 @@ option(
   ON
 )
 
+add_library(
+  poselink_vision
+  STATIC
+
+  modules/vision/include/IPoseSource.h
+  modules/vision/include/SyntheticPoseSource.h
+  modules/vision/src/SyntheticPoseSource.cpp
+)
+
+target_include_directories(
+  poselink_vision
+  PUBLIC
+    modules/common/include
+    modules/vision/include
+)
+
 if(POSELINK_BUILD_GRAPHICS)
 
   include(cmake/Dependencies.cmake)
@@ -63,6 +79,7 @@ if(POSELINK_BUILD_GRAPHICS)
     poselink_viewer
     PRIVATE
       poselink_graphics
+      poselink_vision
       flecs::flecs_static
   )
 

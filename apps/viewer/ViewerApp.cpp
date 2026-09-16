@@ -10,8 +10,42 @@
 #include "Texture.h"
 #include "Transform.h"
 #include "Window.h"
+#include "IPoseSource.h"
+#include "SyntheticPoseSource.h"
+#include "Pose.h"
 
 #include <GLFW/glfw3.h>
+
+namespace 
+{
+    PoseLink::Transform ToTransform(
+    const PoseLink::Pose& pose){
+    PoseLink::Transform transform;
+
+    transform.position = {
+        pose.position.x,
+        pose.position.y,
+        pose.position.z
+    };
+
+    /*
+        GLM quaternion 생성자 순서:
+
+        glm::quat(w, x, y, z)
+    */
+    transform.rotation =
+        glm::normalize(
+            glm::quat(
+                pose.orientation.w,
+                pose.orientation.x,
+                pose.orientation.y,
+                pose.orientation.z
+            )
+        );
+
+    return transform;
+}
+} // namespace 
 
 #include <glm/glm.hpp>
 #include <iostream>
@@ -51,6 +85,8 @@ bool ViewerApp::Init()
             1280.0f / 720.0f
         );
 
+    m_PoseSource = std::make_unique<PoseLink::SyntheticPoseSource>();
+
     m_World.set<PoseLink::RenderContext>({
         m_Renderer.get(),
         m_Camera.get()
@@ -88,21 +124,53 @@ bool ViewerApp::Init()
         디버깅과 식별을 위해 이름을 붙이고, 실제 렌더링 대상 여부는 component 조합으로 결정한다.
     */
     PoseLink::Transform cubeATransform;
-    cubeATransform.position.x = -1.0f;
+    cubeATransform.position.x = 0.0f;
+    m_TrackedEntity =
     m_World.entity("CubeA")
-    .set<PoseLink::Transform>(cubeATransform)
-    .set<PoseLink::Renderable>(cubeRenderable);
+        .set<PoseLink::Transform>(
+            cubeATransform
+        )
+        .set<PoseLink::Renderable>(
+            cubeRenderable
+        );
 
    
 
     PoseLink::Transform cubeBTransform;
-    cubeBTransform.position.x = 1.0f;
+    cubeBTransform.position.x = 1.5f;
     m_World.entity("CubeB")
     .set<PoseLink::Transform>(cubeBTransform)
     .set<PoseLink::Renderable>(cubeRenderable);
 
 
     return true;
+}
+
+void ViewerApp::Update(double elapsedSeconds)
+{
+    if (!m_PoseSource ||
+        !m_TrackedEntity.is_alive())
+    {
+        return;
+    }
+
+    const std::optional<PoseLink::Pose> pose =
+        m_PoseSource->Sample(elapsedSeconds);
+
+    if (!pose) {
+        return;
+    }
+
+    /*
+        PoseSource가 만든 domain Pose를
+        Viewer에서 사용하는 Transform으로 변환한다.
+
+        RenderSystem이나 Renderer는
+        PoseSource의 존재를 알 필요가 없다.
+    */
+    m_TrackedEntity.set<PoseLink::Transform>(
+        ToTransform(*pose)
+    );
 }
 
 void ViewerApp::MainLoop()
@@ -115,21 +183,21 @@ void ViewerApp::MainLoop()
         const float currentTime =
             static_cast<float>(glfwGetTime());
 
-        float dt =
-            currentTime - m_LastFrameTime;
+        float dt = static_cast<float>(currentTime - m_LastFrameTime);
 
         m_LastFrameTime = currentTime;
 
         if (dt > 0.1f) {
             dt = 0.1f;
         }
-
+        const double elapsedSeconds = currentTime - m_StartTime;
         m_Window->PollEvents();
 
 
         // 나중에 SyntheticPoseSource 등의
         // application-side update가 들어갈 위치
-        // Update(dt);
+        Update(elapsedSeconds);
+
         m_Renderer->BeginFrame();
 
         // 등록된 flecs system 실행
@@ -145,6 +213,9 @@ void ViewerApp::Shutdown()
         flecs world가 먼저 파괴되면 Renderable component의 shared_ptr가 GPU resource를 해제한다.
         그 다음 Renderer, 마지막으로 OpenGL context를 가진 Window를 파괴한다.
     */
+    m_TrackedEntity = flecs::entity::null();
+
+    m_PoseSource.reset();
     m_World.reset();
     m_Camera.reset();
     m_Renderer.reset();

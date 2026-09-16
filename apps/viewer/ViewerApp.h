@@ -10,6 +10,7 @@ class Window;
 class Renderer;
 class Camera;
 class RenderSystem;
+class IPoseSource;
 } // namespace PoseLink
 
 class ViewerApp
@@ -22,6 +23,7 @@ public:
 private:
     bool Init();
     void MainLoop();
+    void Update(double elapsedSeconds);
     void Shutdown();
 private:
     /*
@@ -34,8 +36,14 @@ private:
     std::unique_ptr<PoseLink::Renderer> m_Renderer;
     std::unique_ptr<PoseLink::Camera> m_Camera;
     
-
+    std::unique_ptr<PoseLink::IPoseSource> m_PoseSource;
+    
     flecs::world m_World;
 
-    float m_LastFrameTime = 0.0f;
+    
+    flecs::entity m_TrackedEntity{
+        flecs::entity::null()
+    };
+    double m_StartTime = 0.0;
+    double m_LastFrameTime = 0.0;
 };
