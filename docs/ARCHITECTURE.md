@@ -1,16 +1,50 @@
-# PoseLink Architecture
+# GraspLink Architecture
 
-## 1. 문서 목적
+## 1. 목적
 
-이 문서는 PoseLink의 **현재 구현 구조와 최종 목표 구조를 구분해서 설명하는 아키텍처 기준 문서**다.
+GraspLink는 **외부 임베디드 장치가 생성한 Target Position을 네트워크로 전달하고, C++ Simulator의 가상 로봇이 해당 목표로 이동해 물체를 파지한 뒤 결과를 다시 외부 장치에 반환하는 시스템**이다.
 
-코드와 문서가 충돌하면 코드를 우선한다. 아직 구현되지 않은 영역은 `예정`으로 표시한다.
+현재 구현과 목표 구조를 구분하며, 구현되지 않은 항목은 계획으로 취급한다.
 
 ---
 
-## 2. 현재 구현 구조
+## 2. 시스템 경계
 
-현재 repository에서 확인되는 실제 build target은 `poselink_viewer`다.
+```mermaid
+flowchart LR
+    subgraph E[Embedded Controller]
+        B[Button / ADC]
+        Z[Zephyr RTOS]
+        O[OLED / LED / Buzzer]
+        B --> Z
+        Z --> O
+    end
+
+    subgraph S[C++ Simulator]
+        R[UDP Receiver]
+        T[Target State]
+        OBJ[Simulation Object]
+        G[Grasp Pose]
+        IK[IK]
+        FK[FK]
+        ROBOT[Robot Model]
+        A[Object Attach]
+        V[OpenGL + Flecs]
+        R --> T --> OBJ --> G --> IK --> FK --> ROBOT --> V
+        ROBOT --> A
+    end
+
+    Z -- Target Command / UDP --> R
+    S -- Robot State / UDP --> Z
+```
+
+1차 입력원은 ESP32 + Zephyr Controller다. Camera/ArUco는 이후 동일한 Target Pose 경계에 연결하는 확장 입력원이다.
+
+---
+
+## 3. 현재 구현 구조
+
+현재 PC 쪽 실제 코드는 OpenGL/Flecs Viewer 기반이다.
 
 ```text
 ViewerApp
@@ -23,330 +57,197 @@ ViewerApp
    └─ RenderSystem
 ```
 
-현재 rendering loop:
+root CMake의 현재 executable 이름은:
 
-```mermaid
-flowchart TD
-    A[ViewerApp::MainLoop] --> B[PollEvents]
-    B --> C[Renderer::BeginFrame]
-    C --> D[world.progress dt]
-    D --> E[RenderSystem / PreStore]
-    E --> F[RenderContext 조회]
-    F --> G[Renderer::Draw]
-    G --> H[SwapBuffers]
+```text
+grasplink_simulator
 ```
 
-`RenderContext`는 `Renderer*`, `Camera*`를 world context로 제공하고, `RenderSystem`은 `Transform + Renderable` entity를 query한다.
-
-현재 `ViewerApp`에는 CubeA/CubeB 생성과 Flecs 기반 render loop가 구현되어 있다. `modules/vision`, `modules/transport`, `modules/streaming`, `apps/vision_node`의 주요 파일은 현재 master 기준으로 비어 있거나 CMake target에 연결되어 있지 않다.
-
-> 프로젝트 진행 상태는 `Synthetic Pose → Cube` 완료로 관리한다. 다만 연결된 GitHub master snapshot에는 `SyntheticPoseSource` 구현과 Viewer 연결이 아직 반영되어 있지 않아, 이 부분은 작업 결과의 코드/문서 불일치 항목으로 남긴다.
+Embedded 쪽은 `embedded/controller`에 Zephyr application skeleton을 두었다. 정확한 보드 모델과 핀맵을 확인한 뒤 DeviceTree overlay를 추가한다.
 
 ---
 
-## 3. 최종 시스템 구조
+## 4. Repository 책임
 
-```mermaid
-flowchart LR
-    subgraph V[Vision Node - 예정]
-        A[Camera]
-        B[ArUco Detection]
-        C[solvePnP]
-        D[Object Pose]
-        E[Protocol Encode]
-        F[UDP Sender]
-        A --> B --> C --> D --> E --> F
-    end
+| 영역 | 책임 |
+|---|---|
+| `embedded/controller` | ESP32 peripheral, Zephyr task/event, Target 생성, UDP 송수신, 상태 UI |
+| `modules/common` | Pose/Target/State 등 공통 domain type |
+| `modules/transport` | PC UDP socket, encode/decode |
+| `modules/streaming` | 최신 상태 적용, sequence/freshness 처리 |
+| `modules/viewer` | OpenGL/Flecs scene와 rendering |
+| robot kinematics module | Robot model, FK, IK, grasp 계산. 실제 구현 시 경로 확정 |
+| `modules/vision` | Synthetic 및 향후 ArUco 입력원 |
 
-    subgraph S[Viewer / Simulator]
-        G[UDP Receiver]
-        H[Object Pose]
-        I[Simulation Object]
-        J[Grasp Pose Generator]
-        K[IK Solver]
-        L[Joint Angles]
-        M[FK]
-        N[Robot Link Transforms]
-        O[Flecs Scene]
-        P[OpenGL Renderer]
-        Q[Object Attach]
-        G --> H --> I --> J --> K --> L --> M --> N --> O --> P
-        N --> Q
-    end
+---
 
-    F --> G
-```
+## 5. 핵심 경계
 
-최종 목적은 단순 remote pose viewer가 아니라:
+### Embedded와 Simulator
+
+Embedded는 joint angle이나 renderer 내부 구조를 알지 않는다.
 
 ```text
-Remote Object Pose
+Embedded
+→ Target Command
+→ Simulator
+```
+
+Simulator는 GPIO, ADC, OLED 구현을 알지 않는다.
+
+```text
+Simulator
+→ Robot State
+→ Embedded UI
+```
+
+### Target Source와 Robot
+
+Robot control은 입력원이 ESP32인지 Synthetic인지 Camera인지 구분하지 않는다.
+
+```text
+ITargetPoseSource
+├─ SyntheticTargetSource
+├─ UdpTargetSource
+└─ ArucoTargetSource
+```
+
+논리 경계는 다음과 같다.
+
+```text
+Target Pose
 → Simulation Object
 → Grasp Pose
 → IK
 → FK
-→ Robot Arm
-→ Kinematic Grasp
+→ Robot Transform
+→ Grasp
 ```
-
-까지 연결하는 것이다.
 
 ---
 
-## 4. 모듈 책임
+## 6. Embedded 실행 흐름
 
-| 모듈 | 현재 상태 | 책임 |
-|---|---|---|
-| `modules/common` | 일부 구현 | rendering/network에 종속되지 않는 domain type. 현재 `Pose.h` 존재 |
-| `modules/viewer` | 구현 중 | OpenGL resource, `Transform`, `Renderable`, Flecs render system |
-| `modules/vision` | 예정 | Synthetic/ArUco pose source |
-| `modules/transport` | 예정 | UDP socket과 binary protocol |
-| `modules/streaming` | 예정 | receiver, sequence 분석, pose buffer/interpolation |
-| Robot kinematics module | 미정 | robot model, FK, IK, grasp 관련 계산. 경로/이름은 아직 결정하지 않음 |
+목표 구조:
 
-현재 존재하지 않는 robot module 경로나 class 이름을 문서에서 확정하지 않는다.
+```text
+GPIO ISR / ADC
+      ↓
+Input Event
+      ↓
+Target State
+      ↓
+Network TX
+```
+
+반대 방향:
+
+```text
+Network RX
+      ↓
+Robot State
+      ↓
+Display / LED / Buzzer
+```
+
+원칙:
+
+- ISR에서는 최소 작업만 한다.
+- OLED와 socket 송수신 같은 무거운 작업은 ISR에서 처리하지 않는다.
+- 실제 필요성이 생긴 책임 단위로 thread/work/message queue를 사용한다.
+- stale target이 누적되지 않게 최신 상태 우선 정책을 사용한다.
 
 ---
 
-## 5. 의존 관계
+## 7. Simulator 실행 흐름
 
-기본 방향:
-
-```mermaid
-flowchart TD
-    Common[common]
-    Vision[vision - 예정]
-    Transport[transport - 예정]
-    Streaming[streaming - 예정]
-    Viewer[viewer]
-    Apps[apps]
-
-    Vision --> Common
-    Transport --> Common
-    Streaming --> Common
-    Streaming --> Transport
-    Viewer --> Common
-    Apps --> Vision
-    Apps --> Streaming
-    Apps --> Viewer
-```
-
-경계 원칙:
-
-- `common`은 OpenGL, OpenCV, Flecs를 알지 않는다.
-- `vision`은 Viewer `Transform`을 직접 수정하지 않는다.
-- `transport`는 OpenGL이나 robot model을 알지 않는다.
-- `Renderer`는 Pose protocol을 해석하지 않는다.
-- FK/IK는 rendering API에 종속시키지 않는다.
-- Vision Node는 OpenGL/Flecs를 링크하지 않는다.
-
----
-
-## 6. 데이터 모델 경계
-
-### Pose
-
-`modules/common/include/Pose.h`
+### Target 처리
 
 ```text
-Position3D
-Quaternion
-Pose
-```
-
-Vision/network domain에서 사용하는 6DoF 상태다.
-
-### Transform
-
-`modules/viewer/include/components/Transform.h`
-
-```text
-position : glm::vec3
-rotation : glm::quat
-scale    : glm::vec3
-```
-
-Viewer/world rendering 상태다.
-
-따라서 경계에서 명시적으로 변환한다.
-
-```text
-Pose
-→ Viewer/application boundary
-→ Transform
-```
-
-Robot 단계에서도 `Object Pose`, `Grasp Pose`, `End Effector Pose`, `Link Transform`을 같은 의미로 섞지 않는다.
-
----
-
-## 7. 로드맵별 데이터 흐름
-
-### 1. Synthetic Pose → Cube — 현재 단계
-
-```text
-Synthetic Pose
-→ Pose
-→ Viewer Transform
-→ Flecs Entity
-→ RenderSystem
-→ Renderer
-```
-
-목적: 외부 입력 Pose가 렌더링까지 전달되는 경로를 network/vision 없이 검증.
-
-### 2. UDP Object Pose — 다음 단계
-
-```text
-Synthetic Sender Process
-→ Encode
-→ UDP
+UDP Receiver
 → Decode
-→ Object Pose
-→ Viewer Transform
+→ sequence/freshness 확인
+→ Target State
+→ Object Transform
 ```
 
-목적: process/network 경계만 추가하고 기존 local 결과와 동일한지 확인.
-
-### 3. ArUco Object Detection
+### Robot 처리
 
 ```text
-Camera
-→ ArUco corners
-→ solvePnP
-→ Object Pose
-→ 기존 UDP Publisher
-```
-
-Synthetic과 ArUco가 동일한 이후 pipeline을 사용하게 한다.
-
-### 4. Simulation에 Object 생성
-
-수신 Pose를 단순 Cube 테스트가 아니라 실제 tracked object entity의 world transform으로 적용한다.
-
-### 5~6. Robot Model + FK
-
-```text
-Joint Configuration
-→ Local Link Transform
-→ Parent Transform 누적
-→ World Link Transform
-→ End Effector Pose
-```
-
-IK보다 먼저 FK correctness를 고정한다.
-
-### 7. Grasp Pose
-
-```text
-T_base_grasp
-=
-T_base_camera
-× T_camera_object
-× T_object_grasp
-```
-
-`T_object_grasp`는 known object에 대해 사전 정의한다.
-
-### 8~9. IK + Tracking
-
-```text
-Target Grasp Pose
+Object Pose
+→ Grasp Pose
 → IK
-→ Joint Angles
+→ Joint Target
 → FK
-→ End Effector Pose
-→ Error
+→ Link / End Effector Transform
 ```
 
-### 10. Object Attach
+### Grasp
 
-초기에는 physics contact가 아니라 kinematic 조건을 사용한다.
+초기에는 physics contact가 아닌 kinematic 조건을 사용한다.
 
 ```text
 position error <= threshold
 AND
 orientation error <= threshold
 → grasp success
-→ object follows end-effector transform
+→ Object Attach
 ```
-
-수치 threshold는 실제 구현 전에 `ACCEPTANCE_CRITERIA.md`에서 확정한다.
-
-### 11. Network Jitter/Loss
-
-robot grasp 경로가 ideal condition에서 정상 동작한 뒤 network impairment를 주입한다.
 
 ---
 
 ## 8. Flecs 사용 범위
 
-현재 Flecs는 Viewer object 관리와 system scheduling에 사용한다.
-
-실제 코드:
-
-- `apps/viewer/ViewerApp.cpp`
-- `modules/viewer/include/RenderContext.h`
-- `modules/viewer/include/components/Transform.h`
-- `modules/viewer/include/components/Renderable.h`
-- `modules/viewer/src/systems/RenderSystem.cpp`
-
-현재:
+Flecs는 Simulator scene의 entity/component 관리와 render system scheduling에 사용한다.
 
 ```text
-world.set<RenderContext>()
-world.import<RenderSystem>()
-world.progress(dt)
+Entity
++ Transform
++ Renderable
++ optional robot/object role component
 ```
 
-`RenderSystem`은 `PreStore` phase에서 실행된다.
-
-향후 robot link hierarchy에 Flecs relationship/`ChildOf`를 사용할 수 있지만, 실제 robot model 구조가 정해진 뒤 결정한다.
+FK/IK 계산 자체는 rendering API나 Flecs에 강하게 결합하지 않는다.
 
 ---
 
-## 9. Thread / ownership
+## 9. 1차 Prototype 순서
 
-### 현재 Viewer
+1. Synthetic Target Position → Object
+2. Robot Model
+3. FK
+4. Grasp Pose
+5. IK
+6. End Effector 추종
+7. Object Attach
+8. ESP32 + Zephyr bring-up
+9. Button / ADC / OLED Target Controller
+10. ESP32 → Simulator UDP Target Command
+11. Simulator → ESP32 Robot State
+12. RTOS task/event/message 흐름 정리
 
-현재 Viewer loop는 main thread에서 window event와 rendering을 수행한다.
-
-OpenGL context 생성/사용/해제도 동일 thread에 귀속한다.
-
-`ViewerApp::Shutdown()`은 world를 먼저 reset하여 `Renderable`이 가진 GPU resource가 OpenGL context가 살아 있는 동안 해제되게 한다.
-
-### 예정 Vision Node
-
-초기에는 단일 thread를 우선한다.
-
-```text
-Capture
-→ Detect
-→ Pose
-→ Send
-```
-
-성능 측정 후 필요할 때만 producer/consumer를 분리한다.
-
-```text
-Capture + Vision Worker
-→ bounded pose queue
-→ UDP Sender
-```
-
-오래된 Pose가 지연을 쌓지 않도록 bounded queue와 freshness-first drop policy를 검토한다.
+자세한 4일 작업 순서는 [ROADMAP.md](ROADMAP.md)를 따른다.
 
 ---
 
-## 10. 다음 단계 전에 확정해야 할 것
+## 10. 2차 확장
 
-`UDP Object Pose`를 구현하기 전에 최소 다음을 결정해야 한다.
+Prototype 이후 다음을 추가한다.
 
-1. UDP packet의 논리 field와 byte layout
-2. quaternion field 순서 (`w,x,y,z` 또는 `x,y,z,w`)
-3. timestamp를 이번 단계부터 넣을지, object pose payload만 먼저 보낼지
-4. object ID가 1단계부터 필요한지
-5. sender/receiver socket API를 Windows/Linux 공통 wrapper로 바로 만들지
-6. local loopback 테스트와 별도 process 테스트의 성공 기준
+```text
+Camera
+→ ArUco Detection
+→ Object Pose
+→ ArucoTargetSource
+→ 기존 Robot Pipeline
+```
 
-상세 설계는 [protocol.md](protocol.md)와 [testing.md](testing.md)에서 관리한다.
+이후 network delay/jitter/loss를 주입하고 다음을 측정한다.
+
+- packet loss
+- target age
+- stale packet discard
+- end-effector target error
+- grasp success/failure
+
+IMU는 orientation controller가 필요한 시점에 선택적으로 추가한다.
