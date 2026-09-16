@@ -27,7 +27,7 @@ flowchart LR
         G[Grasp Pose]
         IK[IK]
         FK[FK]
-        ROBOT[Robot Model]
+        ROBOT[4DoF Robot Model]
         A[Object Attach]
         V[OpenGL + Flecs]
         R --> T --> OBJ --> G --> IK --> FK --> ROBOT --> V
@@ -42,7 +42,25 @@ flowchart LR
 
 ---
 
-## 3. 현재 구현 구조
+## 3. Robot Arm 모델
+
+1차 프로토타입은 **4DoF serial manipulator + gripper**로 고정한다.
+
+| Joint | Motion | 역할 |
+|---|---|---|
+| J1 | Base yaw | 로봇 전체를 수직축 기준 회전 |
+| J2 | Shoulder pitch | 상완 링크 상하 회전 |
+| J3 | Elbow pitch | 전완 링크 상하 회전 |
+| J4 | Wrist pitch | End Effector 접근 각도 조정 |
+| Gripper | Open / Close | 파지 상태. 4DoF 계산과 별도 actuator/state |
+
+초기 IK의 주된 목표는 target XYZ position이다. J4는 grasp 접근 각도를 맞추는 데 사용하며 임의의 3축 orientation을 모두 만족시키는 full 6DoF pose IK는 범위에 포함하지 않는다.
+
+Robot model asset은 rigid link별 node/pivot가 분리된 hierarchy를 사용한다. skinning animation보다 각 link transform을 FK 결과로 직접 갱신할 수 있는 구조를 우선한다.
+
+---
+
+## 4. 현재 구현 구조
 
 현재 PC 쪽 실제 코드는 OpenGL/Flecs Viewer 기반이다.
 
@@ -67,7 +85,7 @@ Embedded 쪽은 `embedded/controller`에 Zephyr application skeleton을 두었�
 
 ---
 
-## 4. Repository 책임
+## 5. Repository 책임
 
 | 영역 | 책임 |
 |---|---|
@@ -76,12 +94,12 @@ Embedded 쪽은 `embedded/controller`에 Zephyr application skeleton을 두었�
 | `modules/transport` | PC UDP socket, encode/decode |
 | `modules/streaming` | 최신 상태 적용, sequence/freshness 처리 |
 | `modules/viewer` | OpenGL/Flecs scene와 rendering |
-| robot kinematics module | Robot model, FK, IK, grasp 계산. 실제 구현 시 경로 확정 |
+| robot kinematics module | 4DoF Robot model, FK, IK, grasp 계산. 실제 구현 시 경로 확정 |
 | `modules/vision` | Synthetic 및 향후 ArUco 입력원 |
 
 ---
 
-## 5. 핵심 경계
+## 6. 핵심 경계
 
 ### Embedded와 Simulator
 
@@ -126,7 +144,7 @@ Target Pose
 
 ---
 
-## 6. Embedded 실행 흐름
+## 7. Embedded 실행 흐름
 
 목표 구조:
 
@@ -159,7 +177,7 @@ Display / LED / Buzzer
 
 ---
 
-## 7. Simulator 실행 흐름
+## 8. Simulator 실행 흐름
 
 ### Target 처리
 
@@ -176,8 +194,8 @@ UDP Receiver
 ```text
 Object Pose
 → Grasp Pose
-→ IK
-→ Joint Target
+→ 4DoF IK
+→ Joint Target [q1, q2, q3, q4]
 → FK
 → Link / End Effector Transform
 ```
@@ -189,14 +207,14 @@ Object Pose
 ```text
 position error <= threshold
 AND
-orientation error <= threshold
+wrist/grasp alignment error <= threshold
 → grasp success
 → Object Attach
 ```
 
 ---
 
-## 8. Flecs 사용 범위
+## 9. Flecs 사용 범위
 
 Flecs는 Simulator scene의 entity/component 관리와 render system scheduling에 사용한다.
 
@@ -211,10 +229,10 @@ FK/IK 계산 자체는 rendering API나 Flecs에 강하게 결합하지 않는�
 
 ---
 
-## 9. 1차 Prototype 순서
+## 10. 1차 Prototype 순서
 
 1. Synthetic Target Position → Object
-2. Robot Model
+2. 4DoF Robot Model
 3. FK
 4. Grasp Pose
 5. IK
@@ -230,7 +248,7 @@ FK/IK 계산 자체는 rendering API나 Flecs에 강하게 결합하지 않는�
 
 ---
 
-## 10. 2차 확장
+## 11. 2차 확장
 
 Prototype 이후 다음을 추가한다.
 
