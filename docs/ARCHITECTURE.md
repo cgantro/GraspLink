@@ -1,643 +1,271 @@
-# PoseLink Architecture
+# GraspLink Architecture
 
-## 1. 문서 목적
+## 1. 목적
 
-PoseLink는 **원격 Vision Node에서 추정한 6DoF Pose를 UDP로 전송하고, Viewer에서 시간축을 복원하여 3D로 시각화하는 C++ 실시간 응용 소프트웨어**다.
+GraspLink는 **외부 임베디드 장치가 생성한 Target Position을 네트워크로 전달하고, C++ Simulator의 가상 로봇이 해당 목표로 이동해 물체를 파지한 뒤 결과를 다시 외부 장치에 반환하는 시스템**이다.
 
-이 문서는 구현 세부 코드보다 다음 경계를 고정한다.
-
-- 두 실행 프로그램의 책임
-- 모듈 간 의존 방향
-- thread / queue / lifetime 정책
-- Viewer의 ECS 사용 범위
-- Vision Node를 graphics-free core로 유지하는 원칙
-- 현재 구현과 목표 구조의 차이
-
-> 문서의 수치 목표는 `ACCEPTANCE_CRITERIA.md`에서 별도로 정의한다.
+현재 구현과 목표 구조를 구분하며, 구현되지 않은 항목은 계획으로 취급한다.
 
 ---
 
-## 2. 시스템 구성
+## 2. 시스템 경계
 
-최종 시스템은 두 개의 주 실행 프로그램과 하나의 선택적 실험 도구로 구성한다.
+```mermaid
+flowchart LR
+    subgraph E[Embedded Controller]
+        B[Button / ADC]
+        Z[Zephyr RTOS]
+        O[OLED / LED / Buzzer]
+        B --> Z
+        Z --> O
+    end
 
-```text
-┌──────────────────────────────┐
-│ poselink_vision_node         │
-│                              │
-│ Camera / Synthetic Source    │
-│        ↓                     │
-│ 6DoF Pose Estimation         │
-│        ↓                     │
-│ Protocol Encode              │
-│        ↓                     │
-│ UDP Sender                   │
-└──────────────┬───────────────┘
-               │ UDP
-               ▼
-┌──────────────────────────────┐
-│ poselink_viewer              │
-│                              │
-│ UDP Receiver                 │
-│        ↓                     │
-│ Validation / Sequence        │
-│        ↓                     │
-│ Timestamped PoseBuffer       │
-│        ↓                     │
-│ LERP / SLERP                 │
-│        ↓                     │
-│ ECS Transform                │
-│        ↓                     │
-│ OpenGL Renderer              │
-└──────────────────────────────┘
+    subgraph S[C++ Simulator]
+        R[UDP Receiver]
+        T[Target State]
+        OBJ[Simulation Object]
+        G[Grasp Pose]
+        IK[IK]
+        FK[FK]
+        ROBOT[4DoF Robot Model]
+        A[Object Attach]
+        V[OpenGL + Flecs]
+        R --> T --> OBJ --> G --> IK --> FK --> ROBOT --> V
+        ROBOT --> A
+    end
 
-Optional:
-Vision Node → poselink_net_proxy → Viewer
+    Z -- Target Command / UDP --> R
+    S -- Robot State / UDP --> Z
 ```
 
-### 프로그램별 역할
-
-`poselink_vision_node`
-
-- 카메라 또는 Synthetic source에서 Pose 생성
-- Camera calibration 결과 로드
-- ArUco 검출 및 `solvePnP`
-- Pose에 sequence / monotonic timestamp 부여
-- binary protocol serialization
-- UDP publish
-- CLI/config 기반 runtime 설정
-- 선택적으로 OpenCV HighGUI debug preview 제공
-
-`poselink_viewer`
-
-- UDP packet 수신
-- protocol 검증 / deserialize
-- loss / reorder / duplicate 분석
-- timestamp 기준 PoseBuffer 관리
-- rendering timeline 기준 interpolation
-- OpenCV camera frame → OpenGL frame 좌표 변환
-- flecs Entity의 `Transform` 갱신
-- OpenGL 3D visualization
-- 선택적 Dear ImGui diagnostics panel
-
-`poselink_net_proxy`
-
-- delay / jitter / loss / reorder 재현
-- seed 기반 재현 가능한 network impairment
-- Linux에서는 `tc netem`으로 대체 가능
+1차 입력원은 ESP32 + Zephyr Controller다. Camera/ArUco는 이후 동일한 Target Pose 경계에 연결하는 확장 입력원이다.
 
 ---
 
-## 3. 현재 구현 상태와 목표 상태
+## 3. Robot Arm 모델
 
-### 현재 구현
+1차 프로토타입은 **4DoF serial manipulator + gripper**로 고정한다.
 
-현재 repository에서 실제 build target으로 구성된 것은 Viewer 쪽이 중심이다.
+| Joint | Motion | 역할 |
+|---|---|---|
+| J1 | Base yaw | 로봇 전체를 수직축 기준 회전 |
+| J2 | Shoulder pitch | 상완 링크 상하 회전 |
+| J3 | Elbow pitch | 전완 링크 상하 회전 |
+| J4 | Wrist pitch | End Effector 접근 각도 조정 |
+| Gripper | Open / Close | 파지 상태. 4DoF 계산과 별도 actuator/state |
+
+초기 IK의 주된 목표는 target XYZ position이다. J4는 grasp 접근 각도를 맞추는 데 사용하며 임의의 3축 orientation을 모두 만족시키는 full 6DoF pose IK는 범위에 포함하지 않는다.
+
+Robot model asset은 rigid link별 node/pivot가 분리된 hierarchy를 사용한다. skinning animation보다 각 link transform을 FK 결과로 직접 갱신할 수 있는 구조를 우선한다.
+
+---
+
+## 4. 현재 구현 구조
+
+현재 PC 쪽 실제 코드는 OpenGL/Flecs Viewer 기반이다.
 
 ```text
 ViewerApp
 ├─ Window
-├─ Camera
 ├─ Renderer
+├─ Camera
 └─ flecs::world
-   ├─ Entity
-   │  ├─ Transform
-   │  └─ Renderable
+   ├─ RenderContext
+   ├─ Entity: Transform + Renderable
    └─ RenderSystem
 ```
 
-현재 graphics pipeline은 다음을 검증하는 단계다.
+root CMake의 현재 executable 이름은:
 
 ```text
-Mesh
-→ VAO / VBO / EBO
-→ Shader / Texture
-→ Model / View / Projection
-→ Depth Test
-→ OpenGL Draw
+grasplink_simulator
 ```
 
-flecs는 Viewer의 scene-state와 반복 처리 규칙에 사용한다.
+Embedded 쪽은 `embedded/controller`에 Zephyr application skeleton을 두었다. 정확한 보드 모델과 핀맵을 확인한 뒤 DeviceTree overlay를 추가한다.
 
-### 목표 상태
+---
+
+## 5. Repository 책임
+
+| 영역 | 책임 |
+|---|---|
+| `embedded/controller` | ESP32 peripheral, Zephyr task/event, Target 생성, UDP 송수신, 상태 UI |
+| `modules/common` | Pose/Target/State 등 공통 domain type |
+| `modules/transport` | PC UDP socket, encode/decode |
+| `modules/streaming` | 최신 상태 적용, sequence/freshness 처리 |
+| `modules/viewer` | OpenGL/Flecs scene와 rendering |
+| robot kinematics module | 4DoF Robot model, FK, IK, grasp 계산. 실제 구현 시 경로 확정 |
+| `modules/vision` | Synthetic 및 향후 ArUco 입력원 |
+
+---
+
+## 6. 핵심 경계
+
+### Embedded와 Simulator
+
+Embedded는 joint angle이나 renderer 내부 구조를 알지 않는다.
 
 ```text
-SyntheticPoseSource / ArUcoPoseSource
-          ↓
-      PoseSample
-          ↓
-   PacketEncoder
-          ↓
-     UDP Socket
-          ↓
-     PoseReceiver
-          ↓
-Validation + Sequence Metrics
-          ↓
-     PoseBuffer
-          ↓
-PoseInterpolator
-          ↓
-CoordinateConverter
-          ↓
-ECS Transform
-          ↓
-RenderSystem
-          ↓
-Renderer
+Embedded
+→ Target Command
+→ Simulator
+```
+
+Simulator는 GPIO, ADC, OLED 구현을 알지 않는다.
+
+```text
+Simulator
+→ Robot State
+→ Embedded UI
+```
+
+### Target Source와 Robot
+
+Robot control은 입력원이 ESP32인지 Synthetic인지 Camera인지 구분하지 않는다.
+
+```text
+ITargetPoseSource
+├─ SyntheticTargetSource
+├─ UdpTargetSource
+└─ ArucoTargetSource
+```
+
+논리 경계는 다음과 같다.
+
+```text
+Target Pose
+→ Simulation Object
+→ Grasp Pose
+→ IK
+→ FK
+→ Robot Transform
+→ Grasp
 ```
 
 ---
 
-## 4. 모듈 구조와 의존 방향
+## 7. Embedded 실행 흐름
+
+목표 구조:
 
 ```text
-modules/
-├─ common
-│  └─ Pose / PoseSample / time-related value types
-│
-├─ vision
-│  ├─ IPoseSource
-│  ├─ SyntheticPoseSource
-│  └─ ArUcoPoseSource
-│
-├─ transport
-│  ├─ Protocol
-│  └─ UdpSocket
-│
-├─ streaming
-│  ├─ PoseReceiver
-│  ├─ PoseBuffer
-│  ├─ SequenceMetrics
-│  └─ PoseInterpolator
-│
-└─ viewer
-   ├─ components
-   ├─ systems
-   └─ graphics
-```
-
-의존 방향은 다음 원칙을 따른다.
-
-```text
-              common
-          ↗      ↑      ↖
-     vision   transport   viewer
-                  ↑
-              streaming
-```
-
-정확히는 application target이 필요한 module을 조립한다.
-
-### 금지하는 의존
-
-- `common`이 OpenGL / OpenCV / flecs를 include
-- `transport`가 Viewer나 OpenGL을 참조
-- `vision`이 Viewer의 `Transform`을 직접 수정
-- `vision`이 GLFW / GLAD / flecs / Dear ImGui를 참조
-- `Renderer`가 UDP packet을 해석
-- `PoseBuffer`가 OpenGL draw를 호출
-
-`Pose`와 `Transform`은 의도적으로 분리한다.
-
-```text
-Pose
-= vision / network domain data
-
-Transform
-= rendering / scene data
-
-Pose → Transform
-= application boundary에서 변환
-```
-
----
-
-## 5. Viewer의 ECS 구조
-
-flecs는 **Viewer에 한정해 사용**한다. Vision Node에는 현재 ECS가 필요하지 않다.
-
-### Entity
-
-Entity는 identity다.
-
-```text
-TrackedObject
-RobotLink
-DebugAxis
-CameraObject
-```
-
-### Component
-
-현재 핵심:
-
-```text
-Transform
-Renderable
-```
-
-향후 필요 시:
-
-```text
-RemoteTracked
-RobotLink
-PoseBufferRef
-TrackingState
-```
-
-같은 tag/component를 추가할 수 있다.
-
-### System 사용 기준
-
-```text
-특정 Entity 하나에 외부 입력을 적용
-→ 일반 application update로 충분
-
-동일한 Component 조합의 Entity 전체에
-반복 규칙을 적용
-→ flecs System
-```
-
-예:
-
-```text
-Transform + Renderable
-→ RenderSystem
-
-RemoteTracked + InterpolationState
-→ 향후 PoseInterpolationSystem 후보
-```
-
-모든 `Update()`를 System으로 만들지 않는다.
-
----
-
-## 6. Viewer frame loop
-
-목표 frame loop:
-
-```text
-PollEvents
-    ↓
-Drain Received Pose Queue
-    ↓
-Update PoseBuffer / Metrics
-    ↓
-Select render timestamp
-    ↓
-Interpolate Pose
-    ↓
-Apply Pose → Transform
-    ↓
-Renderer::BeginFrame
-    ↓
-world.progress(dt)
-    ↓
-RenderSystem
-    ↓
-Dear ImGui Diagnostics (optional)
-    ↓
-SwapBuffers
-```
-
-예상 형태:
-
-```cpp
-while (!window.ShouldClose())
-{
-    float dt = clock.Tick();
-
-    window.PollEvents();
-
-    DrainNetworkPackets();
-    UpdateTrackedPose(dt);
-
-    renderer.BeginFrame();
-
-    world.progress(dt);
-
-    DrawDiagnosticsUI(); // optional
-
-    window.SwapBuffers();
-}
-```
-
-OpenGL / Dear ImGui 호출은 render/main thread에 귀속한다.
-
----
-
-## 7. Vision Node architecture
-
-Vision Node는 **graphics application이 아니다.**
-
-핵심 구조:
-
-```text
-Camera Capture
+GPIO ISR / ADC
       ↓
-ArUco Detection
+Input Event
       ↓
-solvePnP
+Target State
       ↓
-PoseSample
+Network TX
+```
+
+반대 방향:
+
+```text
+Network RX
       ↓
-Protocol Encode
+Robot State
       ↓
-UDP Sender
+Display / LED / Buzzer
 ```
 
-기본 동작은 window 없이 실행된다.
+원칙:
 
-```bash
-poselink_vision_node \
-  --camera 0 \
-  --calibration camera.yml \
-  --marker-size 0.05 \
-  --host 192.168.0.10 \
-  --port 5000 \
-  --rate 30
-```
-
-### Debug preview
-
-ArUco detection을 개발할 때만 선택적으로 OpenCV HighGUI를 사용할 수 있다.
-
-```text
-Capture / Detection
-   ├─ PoseSample → UDP
-   └─ annotated cv::Mat → OpenCV HighGUI (optional)
-```
-
-예:
-
-```bash
-poselink_vision_node ... --preview
-```
-
-이 preview는 제품 GUI가 아니라 debugging 기능이다.
-
-`ArUcoPoseSource` 내부에 `cv::imshow()`를 박지 않고 application/debug-view 경계에서 표시한다.
+- ISR에서는 최소 작업만 한다.
+- OLED와 socket 송수신 같은 무거운 작업은 ISR에서 처리하지 않는다.
+- 실제 필요성이 생긴 책임 단위로 thread/work/message queue를 사용한다.
+- stale target이 누적되지 않게 최신 상태 우선 정책을 사용한다.
 
 ---
 
-## 8. Vision Node 동시성
+## 8. Simulator 실행 흐름
 
-MVP에서는 가능한 한 단순하게 시작한다.
-
-### 1단계
+### Target 처리
 
 ```text
-Single Thread
-Capture
-→ Detect
-→ Pose
-→ Send
+UDP Receiver
+→ Decode
+→ sequence/freshness 확인
+→ Target State
+→ Object Transform
 ```
 
-먼저 correctness와 처리시간을 측정한다.
-
-### 2단계
-
-실제 측정에서 capture/vision 처리 때문에 송신 주기나 입력 처리 지연이 문제가 될 때 분리한다.
+### Robot 처리
 
 ```text
-Capture + Vision Worker
-        ↓
- bounded Pose Queue
-        ↓
-    UDP Sender
+Object Pose
+→ Grasp Pose
+→ 4DoF IK
+→ Joint Target [q1, q2, q3, q4]
+→ FK
+→ Link / End Effector Transform
 ```
 
-필요 시 main thread는 process control / optional HighGUI preview를 담당할 수 있다.
+### Grasp
 
-### Queue policy
-
-실시간 Pose는 오래된 데이터를 모두 보존하는 것보다 최신성이 중요하다.
+초기에는 physics contact가 아닌 kinematic 조건을 사용한다.
 
 ```text
-capacity 제한
-overflow → DROP_OLDEST
-```
-
-queue depth, dropped sample count를 metric으로 기록한다.
-
-Preview 영상은 긴 frame queue보다 latest-frame snapshot을 우선한다.
-
----
-
-## 9. GUI / Debug UI 경계
-
-### Vision Node
-
-```text
-정식 GUI 없음
-```
-
-설정은 CLI/configuration으로 전달한다.
-
-```text
-Camera Index
-Calibration File
-Marker Size
-Target Host
-Target Port
-Send Rate
-Preview On/Off
-```
-
-선택적 preview는 OpenCV HighGUI만 사용한다.
-
-Vision Node가 링크하지 않아야 하는 것:
-
-```text
-OpenGL
-GLFW
-GLAD
-flecs
-Dear ImGui
-Qt
-MFC
-```
-
-### Viewer
-
-Viewer는 본래 graphics application이므로 선택적으로 Dear ImGui diagnostics를 사용한다.
-
-```text
-Receive Rate
-Loss / Reorder / Duplicate
-Packet Age
-PoseBuffer Occupancy
-Interpolation Delay
-Render FPS
-```
-
-즉:
-
-```text
-Vision Node
-→ headless producer
-
-Viewer
-→ graphics consumer + optional diagnostics UI
-```
-
-으로 책임을 나눈다.
-
----
-
-## 10. Ownership / lifetime
-
-### Viewer
-
-```text
-ViewerApp
-├─ owns Window
-├─ owns Renderer
-├─ owns Camera
-├─ owns flecs::world
-├─ owns network receiver
-└─ owns optional ImGui context
-```
-
-OpenGL resource는 OpenGL context보다 먼저 파괴한다.
-
-```text
-ECS Renderable / Mesh / Texture
-→ Renderer / ImGui GPU resources
-→ Window / OpenGL Context
-```
-
-### Vision Node
-
-```text
-VisionNodeApp
-├─ owns Camera
-├─ owns PoseSource
-├─ owns Sender
-├─ owns optional workers
-└─ owns optional DebugPreview helper
-```
-
-종료 순서:
-
-```text
-stop request
-→ capture stop
-→ queue close
-→ worker join
-→ socket close
-→ optional HighGUI close
-```
-
-Vision Node에는 OpenGL context lifecycle이 없다.
-
-RAII와 명시적 join을 사용하며 detached worker는 사용하지 않는다.
-
----
-
-## 11. 시간 모델
-
-서로 다른 시간을 구분한다.
-
-### Frame `dt`
-
-```text
-현재 application frame 간격
-```
-
-사용:
-
-- synthetic animation
-- local simulation
-- Viewer camera/input
-
-### Pose timestamp
-
-```text
-Pose sample 생성 시각
-```
-
-사용:
-
-- packet age
-- jitter buffer
-- interpolation timeline
-- E2E latency 분석
-
-duration 측정에는 monotonic clock (`std::chrono::steady_clock`)을 사용한다.
-
-```text
-frame dt
-≠
-pose timestamp
-≠
-wall clock
+position error <= threshold
+AND
+wrist/grasp alignment error <= threshold
+→ grasp success
+→ Object Attach
 ```
 
 ---
 
-## 12. 좌표계 경계
+## 9. Flecs 사용 범위
 
-Vision:
-
-```text
-OpenCV Camera Frame
-+X right
-+Y down
-+Z forward
-```
-
-Viewer:
+Flecs는 Simulator scene의 entity/component 관리와 render system scheduling에 사용한다.
 
 ```text
-OpenGL convention
-+X right
-+Y up
--Z forward
+Entity
++ Transform
++ Renderable
++ optional robot/object role component
 ```
 
-따라서 다음 변환을 명시적 함수/모듈로 둔다.
-
-```text
-OpenCV Pose
-→ CoordinateConverter
-→ Viewer Pose
-→ Transform
-```
-
-좌표계 변환을 `Renderer`, `solvePnP`, `Transform` 내부에 흩뿌리지 않는다.
+FK/IK 계산 자체는 rendering API나 Flecs에 강하게 결합하지 않는다.
 
 ---
 
-## 13. 향후 Robotics 확장 경계
+## 10. 1차 Prototype 순서
 
-기본 PoseLink가 안정화된 뒤 선택적으로 확장한다.
+1. Synthetic Target Position → Object
+2. 4DoF Robot Model
+3. FK
+4. Grasp Pose
+5. IK
+6. End Effector 추종
+7. Object Attach
+8. ESP32 + Zephyr bring-up
+9. Button / ADC / OLED Target Controller
+10. ESP32 → Simulator UDP Target Command
+11. Simulator → ESP32 Robot State
+12. RTOS task/event/message 흐름 정리
+
+자세한 4일 작업 순서는 [ROADMAP.md](ROADMAP.md)를 따른다.
+
+---
+
+## 11. 2차 확장
+
+Prototype 이후 다음을 추가한다.
 
 ```text
-Remote Target Pose
-        ↓
-        IK
-        ↓
-   Joint Angles
-        ↓
-        FK
-        ↓
- Link Transforms
-        ↓
-     Viewer ECS
+Camera
+→ ArUco Detection
+→ Object Pose
+→ ArucoTargetSource
+→ 기존 Robot Pipeline
 ```
 
-이 단계에서 flecs Relationship / `ChildOf`를 이용해:
+이후 network delay/jitter/loss를 주입하고 다음을 측정한다.
 
-```text
-Base
-└─ Link1
-   └─ Link2
-      └─ EndEffector
-```
+- packet loss
+- target age
+- stale packet discard
+- end-effector target error
+- grasp success/failure
 
-hierarchy를 표현할 수 있다.
-
-Robotics는 핵심 MVP 완료 전에는 구현 범위를 늘리지 않는다.
+IMU는 orientation controller가 필요한 시점에 선택적으로 추가한다.

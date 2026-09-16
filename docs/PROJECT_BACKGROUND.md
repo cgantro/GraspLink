@@ -1,416 +1,247 @@
-# PoseLink Project Background
+# GraspLink Project Background
 
-## 1. 프로젝트를 시작한 이유
+## 1. 프로젝트가 해결하려는 문제
 
-기존 C++ 프로젝트 경험에서 OpenGL rendering, 실시간 통신, streaming, multithreading을 각각 다뤘지만, **Vision에서 생성된 공간 상태가 네트워크를 지나 다른 프로그램의 3D scene으로 재현되는 전체 경로**를 작은 코드베이스에서 처음부터 설계하고 검증할 필요가 있었다.
+GraspLink의 목표는 **외부 장치에서 지정한 공간상의 목표를 가상 로봇 시스템으로 전달하고, 로봇이 해당 위치의 물체를 찾아 이동·파지하는 수직 경로를 직접 구성하는 것**이다.
 
-단순 OpenGL 예제는 다음만 보여준다.
+초기 시스템 흐름은 다음과 같다.
 
 ```text
-Vertex
-→ Shader
-→ Draw
+Human Input
+→ ESP32 Peripheral
+→ Zephyr RTOS
+→ Target Position
+→ UDP
+→ C++ Simulator
+→ Simulation Object
+→ Grasp Pose
+→ IK / FK
+→ Robot Arm
+→ Grasp
+→ State Feedback
+→ ESP32 UI
 ```
 
-단순 OpenCV 예제는 다음만 보여준다.
+단순한 센서 데모나 단순한 3D Viewer가 아니라 Embedded, Network, Graphics, Robotics 경계를 하나의 동작으로 연결하는 것이 핵심이다.
+
+---
+
+## 2. 왜 ESP32를 1차 입력원으로 두는가
+
+기존 계획은 Camera/ArUco에서 Object Pose를 얻는 흐름을 먼저 구현하는 것이었다. 그러나 초기 prototype에서는 다음 문제가 동시에 섞인다.
 
 ```text
-Camera
-→ Detection
-→ Pose
+Camera calibration
+Detection error
+solvePnP error
+Coordinate transform
+Network
+Robot kinematics
+Rendering
 ```
 
-단순 UDP 예제는 다음만 보여준다.
+그래서 1차 입력은 사용자가 직접 결정할 수 있는 Target Position으로 단순화한다.
 
 ```text
-sendto
-→ recvfrom
+Button + Potentiometer
+→ deterministic Target Position
+→ UDP
+→ Simulator
 ```
 
-PoseLink는 이 세 영역을 하나의 문제로 연결한다.
+이렇게 하면 Embedded/RTOS/Network/Robot pipeline 자체를 먼저 검증할 수 있다.
+
+Camera/ArUco는 이후 동일한 Target Pose interface에 추가한다.
+
+---
+
+## 3. 왜 Zephyr RTOS를 사용하는가
+
+이 장치에는 서로 다른 책임이 존재한다.
 
 ```text
-Physical / Synthetic Motion
-        ↓
-Vision Pose
-        ↓
-Serialization
-        ↓
-Unreliable Network
-        ↓
-Time Reconstruction
-        ↓
-3D Visualization
+Input
+Display
+Network TX/RX
+State Feedback
+```
+
+하나의 무한 loop에 모든 로직을 넣기보다 peripheral binding과 실행 책임을 분리하는 연습을 목표로 한다.
+
+특히 다음 항목을 실제 코드에서 다룬다.
+
+- DeviceTree 기반 board/peripheral binding
+- GPIO interrupt
+- ADC
+- I2C
+- thread/work/message queue
+- UDP socket
+
+단, RTOS를 사용한다는 이유로 thread를 무조건 늘리지는 않는다. 실행 주기와 blocking 특성이 다른 책임이 생길 때 분리한다.
+
+---
+
+## 4. 왜 Target Position과 Robot 제어를 분리하는가
+
+ESP32는 Robot의 joint angle이나 IK 알고리즘을 알 필요가 없다.
+
+```text
+ESP32
+→ "이 위치를 목표로 사용"
+→ Simulator
+```
+
+Robot Model/FK/IK/Grasp는 C++ Simulator가 책임진다.
+
+이 경계를 유지하면 Target source를 나중에 바꿀 수 있다.
+
+```text
+Synthetic
+ESP32
+ArUco Camera
+      ↓
+Target Pose
+      ↓
+Robot Pipeline
 ```
 
 ---
 
-## 2. 해결하려는 핵심 문제
+## 5. 왜 양방향 통신을 구성하는가
 
-원격 3D 상태를 화면에 그릴 때 단순히 **가장 최근 도착한 Pose를 즉시 적용**하면 network jitter가 그대로 시각적 흔들림으로 나타난다.
+Target Command만 보내면 Embedded 장치는 명령을 보낸 뒤 실제 수행 결과를 알 수 없다.
 
-예:
-
-```text
-송신 시각
-0   33   66   99   132 ms
-
-도착 시각
-8   72   79   160  169 ms
-```
-
-송신 주기는 일정해도 수신 주기는 불규칙하다.
-
-즉 Viewer가 받는 문제는 단순한 위치 데이터가 아니라:
+따라서 Simulator가 상태를 반환한다.
 
 ```text
-값(value)
-+
-생성 시각(timestamp)
-+
-순서(sequence)
+ESP32 → TARGET → Simulator
+ESP32 ← STATE  ← Simulator
 ```
 
-가 있는 **시간축 상태 스트림**이다.
+예정 상태:
 
-PoseLink의 중심 질문은 다음이다.
+```text
+IDLE
+TARGET_RECEIVED
+MOVING
+GRASP_SUCCESS
+GRASP_FAILED
+```
 
-> 약간의 의도된 buffering latency를 허용하면, 원격 Pose 시각화의 jitter를 얼마나 줄일 수 있는가?
+ESP32는 OLED/RGB LED/Buzzer로 결과를 표현한다.
+
+이를 통해 단순 sender가 아니라 외부 Controller와 Simulator 사이의 상태 흐름을 구성한다.
 
 ---
 
-## 3. 왜 Synthetic Pose가 필요한가
+## 6. 왜 FK를 IK보다 먼저 구현하는가
 
-실제 Camera + ArUco부터 시작하면 오차 원인이 섞인다.
-
-```text
-Camera Noise
-Marker Detection Error
-solvePnP Error
-Network Jitter
-Packet Loss
-Interpolation Error
-Rendering Error
-```
-
-결과가 흔들려도 어디서 발생했는지 알기 어렵다.
-
-그래서 첫 source는 deterministic한 `SyntheticPoseSource`로 둔다.
-
-예:
+IK의 결과가 올바른지 검증하려면 joint angle에서 실제 End Effector Pose를 계산할 수 있어야 한다.
 
 ```text
-x(t) = sin(t)
-rotation(t) = known quaternion trajectory
+Joint Angles
+→ FK
+→ End Effector Pose
 ```
 
-예상 Pose를 알고 있으므로:
+이 기준을 먼저 확보한 뒤:
 
 ```text
-Ground Truth
-vs
-Received Pose
-vs
-Rendered Pose
+Target Grasp Pose
+→ IK
+→ Joint Angles
+→ FK
+→ Error 확인
 ```
 
-를 비교할 수 있다.
-
-이 설계는 Vision 정확도와 network/interpolation 성능을 분리하기 위한 것이다.
+순서로 구현한다.
 
 ---
 
-## 4. 왜 두 프로그램으로 분리하는가
+## 7. Grasp 범위
 
-한 process에서:
-
-```text
-Camera
-→ Pose
-→ Cube
-```
-
-만 구현하면 네트워크 시스템의 문제를 검증할 수 없다.
-
-따라서 의도적으로:
+1차 prototype에서는 복잡한 physics/contact simulation을 하지 않는다.
 
 ```text
-VisionNode Process
-        ↓ UDP
-Viewer Process
+End Effector가 Grasp Pose 허용 오차에 진입
+→ Grasp Success
+→ Object Attach
 ```
 
-로 나눈다.
+즉 kinematic grasp를 사용한다.
 
-이렇게 해야 실제로 다음 현상을 관찰할 수 있다.
-
-- packet loss
-- packet reorder
-- duplicate
-- receive interval jitter
-- socket/thread 경계
-- producer/consumer 속도 차이
-- shutdown/lifetime 문제
+초기 목표는 collision-free motion planning이나 dynamics가 아니라 **입력부터 파지 결과까지 전체 경로를 완성하는 것**이다.
 
 ---
 
-## 5. 왜 UDP인가
+## 8. 왜 OpenGL/Flecs를 유지하는가
 
-Pose는 명령 로그나 파일 전송과 달리 **최신 상태의 가치가 가장 높다.**
+Simulator는 로봇 link, target object, end effector, debug geometry를 직접 시각화해야 한다.
 
-예:
-
-```text
-Pose #100
-Pose #101
-Pose #102
-```
-
-#100을 늦게 복구하는 동안 이미 #102가 존재한다면 #100의 실시간 가치는 낮다.
-
-따라서 PoseLink에서는:
-
-```text
-reliability보다 freshness 우선
-```
-
-인 UDP를 선택하고, reliability 부족을 숨기지 않고 다음을 직접 측정한다.
-
-- sequence gap
-- out-of-order
-- packet age
-- drop
-- jitter
-
-UDP가 모든 실시간 시스템의 정답이라는 의미는 아니다. 이 프로젝트의 state-update 특성과 실험 목적에 맞는 선택이다.
-
----
-
-## 6. 왜 Jitter Buffer와 Interpolation인가
-
-Viewer에 Pose A와 Pose B가 존재한다고 하자.
-
-```text
-A(t0) -------- B(t1)
-```
-
-Viewer는 실제 현재 시각보다 조금 과거인:
-
-```text
-renderTime = now - bufferDelay
-```
-
-를 선택한다.
-
-그 시점이 A와 B 사이에 있다면:
-
-```text
-position
-→ LERP
-
-rotation
-→ quaternion SLERP
-```
-
-로 Pose를 복원한다.
-
-trade-off:
-
-```text
-bufferDelay 증가
-→ interpolation 가능성 / 안정성 증가
-→ latency 증가
-
-bufferDelay 감소
-→ freshness 증가
-→ jitter / extrapolation 위험 증가
-```
-
-이 trade-off를 수치로 설명하는 것이 프로젝트의 핵심 산출물 중 하나다.
-
----
-
-## 7. 왜 OpenGL Viewer인가
-
-Viewer는 결과 확인용 화면만이 아니라 다음을 직접 검증하는 도구다.
-
-- 6DoF position/orientation 변환
-- Model/View/Projection
-- OpenCV ↔ OpenGL coordinate conversion
-- quaternion rotation
-- interpolation 결과
-- robot hierarchy 확장 가능성
-
-기존 game engine을 사용하면 빠르게 화면은 만들 수 있지만 graphics data path가 가려진다.
-
-PoseLink에서는 OpenGL을 직접 사용하여:
+OpenGL을 사용해:
 
 ```text
 Pose
 → Transform
 → Model Matrix
-→ Shader
-→ Rasterization
+→ Renderer
 ```
 
-경계를 코드로 확인할 수 있게 한다.
+경로를 코드 수준에서 확인한다.
+
+Flecs는 scene entity/component와 render system scheduling에 사용하고, FK/IK 계산 자체는 rendering layer와 분리한다.
 
 ---
 
-## 8. 왜 flecs를 사용하는가
+## 9. 1차 완료 범위
 
-첫 Cube 하나만 그릴 때 ECS는 필요하지 않다.
+1. Synthetic Target Position → Object
+2. Robot Model
+3. FK
+4. Grasp Pose
+5. IK
+6. Robot target 추종
+7. Object Attach
+8. ESP32 + Zephyr bring-up
+9. GPIO interrupt / ADC / I2C
+10. Target Position UI
+11. ESP32 → Simulator UDP
+12. Simulator → ESP32 상태 feedback
 
-하지만 Viewer가 확장되면 scene에는 다음 객체가 생긴다.
+---
+
+## 10. 1차 범위에서 하지 않는 것
+
+- IMU 기반 위치 추정
+- ArUco / camera pose estimation
+- 일반 물체 detector
+- neural network grasp planning
+- collision-free motion planner
+- robot dynamics / torque control
+- physics gripper contact
+- ROS2
+- network impairment 실험
+
+이 항목은 prototype 이후 확장한다.
+
+---
+
+## 11. 이후 확장
+
+2차 단계에서는 Camera/ArUco를 Target Source로 추가한다.
 
 ```text
-Tracked Target
-Reference Object
 Camera
-Robot Base
-Robot Links
-Debug Axis
-Marker
+→ ArUco
+→ Object Pose
+→ Target Pose interface
+→ 기존 Robot Pipeline
 ```
 
-상속 계층을 늘리는 대신:
-
-```text
-Entity
-+ Transform
-+ Renderable
-+ optional role components
-```
-
-형태로 조합하고, 동일 component 조합을 System이 처리하도록 한다.
-
-다만 ECS를 모든 문제에 강제하지 않는다.
-
-```text
-UDP parser
-OpenCV pipeline
-Pose protocol
-```
-
-은 일반 C++ module로 유지한다.
+그 다음 delay/jitter/loss 환경에서 target age, packet loss, end-effector error, grasp result를 측정한다.
 
 ---
 
-## 9. 왜 Vision Node에 GUI가 필요한가
+## 12. 프로젝트 한 문장
 
-카메라 프로그램은 headless sender만으로도 기능할 수 있지만 개발과 검증에는 다음 상태를 동시에 봐야 한다.
-
-```text
-원본 Camera Frame
-Detected Marker
-Reprojection / Axis Overlay
-Current 6DoF Pose
-Detection FPS
-Send Rate
-Target Endpoint
-Calibration Status
-Packet Counters
-```
-
-따라서 GUI는 제품 기능보다 **관측 가능성(observability)**을 위한 engineering interface다.
-
-이 성격 때문에 Qt/MFC보다 Dear ImGui를 기본 선택한다.
-
-GUI를 core에 섞지 않아:
-
-```text
-GUI mode
-Headless benchmark mode
-```
-
-를 모두 유지한다.
-
----
-
-## 10. 프로젝트가 보여주려는 역량
-
-PoseLink의 목적은 library 사용 개수를 늘리는 것이 아니다.
-
-코드와 실험으로 다음을 설명할 수 있어야 한다.
-
-### C++ 응용 SW
-
-- RAII와 ownership
-- component/module boundary
-- object lifetime
-- CMake target dependency
-- error handling / shutdown
-
-### Graphics
-
-- VAO/VBO/EBO
-- Shader
-- Texture
-- MVP
-- Depth
-- quaternion transform
-
-### Real-time data flow
-
-- `dt`와 timestamp 구분
-- bounded queue
-- freshness vs completeness
-- latency / jitter / throughput 구분
-- producer-consumer
-
-### Network
-
-- UDP
-- binary serialization
-- endian
-- sequence number
-- packet validation
-- loss/reorder metrics
-
-### Computer Vision
-
-- calibration
-- ArUco
-- solvePnP
-- coordinate frame
-- reprojection error
-
-### Architecture
-
-- core와 GUI 분리
-- domain data와 rendering data 분리
-- Vision / Transport / Streaming / Viewer 책임 분리
-- testable synthetic source
-
----
-
-## 11. 프로젝트 범위의 당위성
-
-프로젝트가 너무 넓어지는 것을 막기 위해 MVP에서는 다음을 하지 않는다.
-
-- 복수 카메라 sensor fusion
-- markerless tracking
-- neural network detector
-- distributed clock synchronization
-- physics engine
-- full scene editor
-- production authentication/encryption
-- full robot dynamics
-
-핵심은 다음 한 경로를 완성하는 것이다.
-
-```text
-Known / Real Pose
-→ UDP
-→ Timestamp Buffer
-→ Interpolation
-→ 3D Reconstruction
-```
-
-그 이후에만 FK/IK 로봇 시각화를 확장한다.
-
----
-
-## 12. 완료 후 설명하고 싶은 한 문장
-
-> PoseLink는 Vision에서 생성한 6DoF 상태를 UDP로 전송하고 timestamp 기반 buffering과 보간으로 원격 3D 시각화를 복원하며, 네트워크 jitter와 추가 latency의 trade-off를 synthetic ground truth로 측정하는 C++ 실시간 응용 프로젝트다.
+> GraspLink는 ESP32/Zephyr 기반 외부 Target Controller에서 생성한 목표 위치를 UDP로 C++ 로봇 시뮬레이터에 전달하고, 가상 로봇팔이 FK/IK를 이용해 목표 물체를 파지한 뒤 수행 상태를 다시 임베디드 장치에 반환하는 Embedded-to-Simulator robotic grasp 프로젝트다.

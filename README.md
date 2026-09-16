@@ -1,118 +1,174 @@
-# PoseLink
+# GraspLink
 
-PoseLink는 원격 Vision Node에서 추정한 객체의 6DoF Pose를 UDP로 전송하고, OpenGL Viewer에서 실시간으로 재현하는 C++ 프로젝트입니다.
+GraspLink는 **외부 임베디드 장치에서 생성한 목표 위치를 네트워크로 전달하고, C++ 가상 로봇 시뮬레이터가 해당 위치로 이동해 물체를 파지하는 과정을 재현하는 프로젝트**다.
 
-단순히 Pose를 화면에 표시하는 데 그치지 않고, 네트워크 지연·지터·손실·순서 변경이 원격 3D 시각화에 미치는 영향을 측정합니다. Timestamp 기반 Jitter Buffer와 보간을 적용하여 다음 질문에 답하는 것이 프로젝트의 핵심입니다.
+초기 프로토타입은 ESP32 + Zephyr RTOS를 외부 Target Controller로 사용한다. 버튼과 Potentiometer로 3차원 목표 좌표를 만들고 OLED에 표시한 뒤 UDP로 Simulator에 전송한다. Simulator는 Target Pose를 수신해 물체를 배치하고, Robot Model/FK/IK를 거쳐 End Effector를 목표 위치로 이동시킨 후 조건을 만족하면 Object Attach로 파지를 표현한다. 수행 상태는 다시 ESP32로 전송해 OLED/RGB LED/Buzzer로 표시한다.
 
-> 최신성을 유지하면서 네트워크 지터로 인한 원격 3D 시각화의 불안정을 얼마나 줄일 수 있는가?
+Vision/ArUco 입력은 1차 완료 범위가 아니라 **동일한 Target Pose 인터페이스에 붙이는 2차 확장 입력원**으로 둔다.
 
-ArUco는 실제 6DoF Pose를 만드는 입력 수단이고 OpenGL은 결과를 보여주는 출력 수단입니다. 프로젝트의 중심은 두 지점 사이의 실시간 상태 데이터 파이프라인을 직접 설계하고 구현하는 것입니다.
+## Robot Arm 기준
 
-## 전체 데이터 흐름
+1차 프로토타입의 로봇팔은 **4DoF serial manipulator + gripper**로 고정한다.
 
 ```text
-                IPoseSource
-                     │
-          ┌──────────┴──────────┐
-          │                     │
-SyntheticPoseSource       ArUcoPoseSource
-          │                     │
-   Known Ground Truth       Real Camera
-          └──────────┬──────────┘
-                     ↓
-                  PoseSample
-                     ↓
-         Binary Serialization / UDP
-                     ↓
-       Validation / Sequence Analysis
-                     ↓
-          Timestamped Pose Buffer
-                     ↓
-             LERP / SLERP
-                     ↓
-             OpenGL 3D Viewer
+J1: Base yaw
+J2: Shoulder pitch
+J3: Elbow pitch
+J4: Wrist pitch
+Gripper: open / close state
 ```
 
-Synthetic Pose는 network와 interpolation 오차를 독립적으로 측정하는 데 사용합니다. 실제 입력은 ChArUco로 camera calibration을 수행한 뒤, 크기를 알고 있는 단일 ArUco marker와 `solvePnP`로 생성할 계획입니다.
+Gripper 개폐는 로봇팔의 4DoF와 별도 actuator/state로 취급한다. 초기 IK는 target의 XYZ position과 wrist pitch 범위 안에서 해결하며, 임의의 6DoF end-effector orientation을 목표로 하지 않는다.
 
-## 핵심 설계
+## 프로젝트 목표
 
-- C++17과 CMake 기반의 모듈식 구조
-- 최신 상태를 우선하는 UDP 전송
-- ABI와 endianness에 독립적인 64-byte custom binary protocol
-- Sequence Number를 이용한 loss/reorder/duplicate 분석
-- Timestamp를 이용한 packet age와 render timeline 관리
-- 크기가 제한된 timestamp 기반 pose buffer
-- 위치 LERP와 quaternion SLERP
-- OpenCV camera 좌표에서 OpenGL 좌표로의 명시적 변환
-- Synthetic ground truth와 network impairment를 이용한 정량 실험
-- Immediate rendering과 buffered interpolation의 latency/stability 비교
+```text
+ESP32 / Zephyr RTOS
+  ├─ GPIO Interrupt : Button
+  ├─ ADC            : Potentiometer
+  ├─ I2C            : OLED
+  └─ UDP Socket
+          │
+          │ Target Command
+          ▼
+C++ Simulator
+  ├─ UDP Receiver
+  ├─ Target Object
+  ├─ 4DoF Robot Model
+  ├─ FK / IK
+  ├─ Trajectory Update
+  └─ Grasp / Object Attach
+          │
+          │ Robot State / Grasp Result
+          ▼
+ESP32
+  └─ OLED / RGB LED / Buzzer
+```
 
-## 목표 실행 프로그램
+핵심은 단순 센서 데모가 아니라 **MCU 주변장치 → RTOS task/data flow → UDP → C++ simulator → robot kinematics → feedback**을 하나의 수직 경로로 연결하는 것이다.
 
-구현이 완료되면 `VisionNodeApp`과 `ViewerApp`을 각각 독립 process로 실행합니다. 아래 명령은 현재 동작하는 기능이 아니라 직접 구현할 목표 CLI입니다.
+## 4일 프로토타입 계획
+
+| Day | 목표 | 완료 기준 |
+|---|---|---|
+| Day 1 | Zephyr bring-up + GPIO/I2C | ESP32에서 Zephyr 빌드/flash, 버튼 입력과 OLED 출력 확인 |
+| Day 2 | Target Controller | ADC로 Potentiometer를 읽고 버튼으로 X/Y/Z 축을 선택해 Target Position 생성, task/message queue 구조 적용 |
+| Day 3 | UDP 연동 | ESP32 → PC Target Command 송신, Simulator 수신 후 Target Object 위치 갱신 |
+| Day 4 | Robot Grasp 수직 경로 | 4DoF Robot Model/FK/IK → End Effector 이동 → Grasp 판정/Object Attach → 상태 ESP32 반환 |
+
+4일 안에 범위를 넘기지 않는다. IMU, ArUco, network impairment 실험은 최소 프로토타입 이후에 확장한다.
+
+## 개발 단계
+
+1. **Synthetic Target Position → Object**
+2. **4DoF Robot Model 추가**
+3. **FK 구현**
+4. **Grasp Pose 정의**
+5. **IK 구현**
+6. **End Effector → Target 추종**
+7. **Grasp 성공 시 Object Attach**
+8. **ESP32 + Zephyr 기본 환경 구성**
+9. **Button / ADC / OLED 기반 Target Controller**
+10. **ESP32 → Simulator UDP Target Command**
+11. **Simulator → ESP32 상태 피드백**
+12. **Thread / Message Queue 기반 임베디드 데이터 흐름 정리**
+13. ArUco / Vision Target Source 추가
+14. Network delay / jitter / loss 실험
+
+1~12가 1차 프로토타입 범위다.
+
+## 입력원 추상화 방향
+
+Simulator는 Target이 어디서 왔는지 알 필요가 없게 구성한다.
+
+```text
+ITargetPoseSource
+├─ SyntheticTargetSource
+├─ UdpTargetSource        # ESP32
+└─ ArucoTargetSource      # 향후 확장
+```
+
+따라서 로봇 제어 파이프라인은 입력원과 분리한다.
+
+```text
+Target Pose
+→ Simulation Object
+→ Grasp Pose
+→ IK
+→ FK
+→ Robot Link Transform
+→ Grasp / Attach
+```
+
+## Repository 구조
+
+```text
+apps/
+└─ viewer/                  # C++ OpenGL/Flecs Simulator application
+
+embedded/
+└─ controller/              # ESP32 + Zephyr Target Controller
+   ├─ CMakeLists.txt
+   ├─ prj.conf
+   ├─ boards/
+   └─ src/
+
+modules/
+├─ common/                  # Pose / shared domain types
+├─ transport/               # UDP / protocol
+├─ streaming/               # receiver / latest-state handling
+├─ vision/                  # Synthetic / future ArUco source
+└─ viewer/                  # OpenGL / Flecs rendering
+
+docs/
+├─ ROADMAP.md
+├─ EMBEDDED.md
+├─ ARCHITECTURE.md
+└─ ...
+```
+
+## 현재 상태
+
+현재 repository의 실제 구현은 OpenGL/Flecs 기반 Simulator Viewer가 중심이다. 기존 `PoseLink` 이름과 Vision-first 계획을 **GraspLink + Embedded-first prototype**으로 전환하는 중이다.
+
+구현되지 않은 기능은 완료된 것으로 간주하지 않는다. README의 계획은 목표 구조이며, 실제 완료 상태는 코드와 커밋을 기준으로 갱신한다.
+
+## C++ Simulator 빌드
+
+요구 사항:
+
+- C++17 compiler
+- CMake 3.20+
+- OpenGL development environment
+- 최초 configure 시 GLFW, GLM, Flecs를 가져올 네트워크 연결
 
 ```bash
-# Viewer
-poselink_viewer --port 5000 --buffer-ms 30
-
-# Synthetic Vision Node
-poselink_vision_node --source synthetic --host 127.0.0.1 --port 5000 --rate 30
+cmake -S . -B build -DGRASPLINK_BUILD_GRAPHICS=ON
+cmake --build build --config Release
 ```
 
-Windows에서는 중간 UDP proxy로 delay, jitter, loss와 reorder를 재현할 계획입니다. 이때 Vision Node는 Viewer가 아니라 proxy port로 전송합니다.
+현재 executable target 이름은 `grasplink_simulator`다.
 
-```bash
-poselink_viewer --port 5000 --buffer-ms 30
-poselink_net_proxy --listen 5001 --target-port 5000 \
-  --delay-ms 50 --jitter-ms 20 --loss 1 --reorder 1 --seed 1
-poselink_vision_node --source synthetic --host 127.0.0.1 --port 5001 --rate 30
-```
+## 설계 원칙
 
-`--loss`와 `--reorder`의 단위는 백분율입니다. Linux network impairment 실험에는 `tc netem`을 사용할 계획입니다.
+- Embedded firmware와 PC Simulator의 책임을 분리한다.
+- MCU에서는 입력 처리, UI, 네트워크 송수신의 실행 책임을 분리한다.
+- ISR에서 무거운 처리를 하지 않고 event/work/message queue로 넘긴다.
+- Target Position과 Robot State를 별도 메시지로 구분한다.
+- Simulator의 Robot/FK/IK 로직은 ESP32 구현을 직접 알지 않는다.
+- Robot arm은 4DoF serial chain으로 고정하고 gripper open/close는 별도 상태로 둔다.
+- FK correctness를 먼저 고정한 뒤 IK를 구현한다.
+- 1차 grasp는 physics contact가 아닌 kinematic threshold + Object Attach로 제한한다.
+- Vision은 동일한 Target Pose source 인터페이스의 확장으로 추가한다.
+- 구현되지 않은 기능은 문서에서 `예정`으로 표시한다.
 
-## 빌드
+## 문서
 
-요구 사항은 C++17, CMake 3.20 이상입니다. Viewer를 활성화한 최초 configure에서는 GLFW와 GLM을 가져오기 위한 네트워크 연결이 필요합니다.
-
-```bash
-cmake -S . -B build
-cmake --build build
-ctest --test-dir build --output-on-failure
-```
-
-현재 CMake는 보존한 graphics module만 구성합니다. 나머지 source/header는 학습용 빈 파일이며 [구현 가이드](docs/implementation/README.md)의 순서에 따라 target과 코드를 직접 추가합니다. OpenCV는 실제 camera pipeline 단계에서 선택 dependency로 추가합니다.
-
-## 구현 로드맵
-
-이 저장소는 학습을 위해 각 단계를 직접 구현하고 검증하는 방식으로 진행합니다.
-
-1. GLFW/GLAD/GLM으로 빈 창과 OpenGL Cube 구현
-2. `Pose{position, orientation}`로 Cube의 Model Matrix 제어
-3. `SyntheticPoseSource → Pose → Cube` 로컬 경로 구현
-4. `Synthetic Pose → UDP → Cube` 별도 process 경로 구현
-5. sequence/timestamp와 baseline network metrics 추가
-6. delay/jitter/loss/reorder를 재현하고 무보정 상태 측정
-7. Timestamped Pose Buffer와 LERP/SLERP 구현
-8. Immediate와 Buffered Interpolation 비교
-9. ChArUco camera calibration 구현
-10. ArUco detection과 `solvePnP` 구현
-11. `ArUcoPoseSource`를 기존 UDP publisher에 연결
-12. 최종 실험, buffer 정책 결정과 결과 문서화
-
-첫 번째 마일스톤이 끝날 때까지 UDP와 OpenCV는 추가하지 않습니다. 첫 기술 목표는 `Pose{position, quaternion}` 값을 바꾸면 Cube가 정확하게 이동·회전하는 것입니다.
-
-파일별 작성 순서는 [구현 가이드](docs/implementation/README.md)에서 확인할 수 있습니다. 설계 계약은 다음 문서에서 확인합니다.
-
-- [아키텍처와 스레드 수명](docs/ARCHITECTURE.md)
-- [UDP 바이너리 프로토콜](docs/protocol.md)
-- [Viewer buffer와 보간](docs/viewer_interpolation.md)
-- [Vision Pose와 calibration](docs/vision_pose.md)
-- [좌표계와 MVP](docs/coordinate_system.md)
-- [실험 계획](docs/experiments.md)
-- [설계 결정과 범위](docs/decisions.md)
-- [지원 플랫폼과 의존성](docs/platforms.md)
-
-## 프로젝트 완료 기준
-
-Synthetic Pose와 실제 ArUco Pose가 동일한 UDP 파이프라인을 통해 OpenGL 3D Viewer에 표시되고, delay·jitter·loss·buffer delay를 변화시킨 실험으로 Immediate Rendering과 Buffered Interpolation의 차이를 설명할 수 있으면 프로젝트를 완료한 것으로 봅니다.
+- [4일 Roadmap](docs/ROADMAP.md)
+- [Embedded Controller](docs/EMBEDDED.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Project Background](docs/PROJECT_BACKGROUND.md)
+- [Build & Run](docs/build-and-run.md)
+- [Protocol](docs/protocol.md)
+- [Testing](docs/testing.md)
+- [Acceptance Criteria](docs/ACCEPTANCE_CRITERIA.md)

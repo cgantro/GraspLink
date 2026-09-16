@@ -1,18 +1,18 @@
 include(FetchContent)
 
-function(poselink_add_graphics_library)
+function(grasplink_add_graphics_library)
 
   # --------------------------------------------------
   # GLAD
   # --------------------------------------------------
 
   add_library(
-    poselink_glad STATIC
+    grasplink_glad STATIC
     third_party/glad/src/glad.c
   )
 
   target_include_directories(
-    poselink_glad
+    grasplink_glad
     PUBLIC
       third_party/glad/include
   )
@@ -62,7 +62,7 @@ function(poselink_add_graphics_library)
   # --------------------------------------------------
 
   add_library(
-    poselink_graphics STATIC
+    grasplink_graphics STATIC
 
     # ECS Components used by rendering
     modules/viewer/include/components/Transform.h
@@ -93,7 +93,7 @@ function(poselink_add_graphics_library)
 
 
   target_include_directories(
-    poselink_graphics
+    grasplink_graphics
     PUBLIC
       modules/common/include
       modules/viewer/include
@@ -102,16 +102,16 @@ function(poselink_add_graphics_library)
   )
 
   target_link_libraries(
-    poselink_graphics
+    grasplink_graphics
     PUBLIC
-      poselink_glad
+      grasplink_glad
       glfw
       glm::glm
       OpenGL::GL
   )
 
   target_compile_definitions(
-    poselink_graphics
+    grasplink_graphics
     PUBLIC
       GLFW_INCLUDE_NONE
   )
