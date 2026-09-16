@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 project(
-  PoseLink
+  GraspLink
   VERSION 0.1.0
   LANGUAGES C CXX
 )
@@ -15,25 +15,25 @@ if(MSVC)
 endif()
 
 option(
-  POSELINK_BUILD_GRAPHICS
-  "Build PoseLink OpenGL viewer"
+  GRASPLINK_BUILD_GRAPHICS
+  "Build GraspLink OpenGL simulator"
   ON
 )
 
-if(POSELINK_BUILD_GRAPHICS)
+if(GRASPLINK_BUILD_GRAPHICS)
 
   include(cmake/Dependencies.cmake)
 
-  poselink_add_graphics_library(
+  grasplink_add_graphics_library(
     modules/viewer/include/RenderContext.h)
 
 
   # --------------------------------------------------
-  # Viewer Application
+  # Simulator Application
   # --------------------------------------------------
 
   add_executable(
-    poselink_viewer
+    grasplink_simulator
 
     apps/viewer/main.cpp
     apps/viewer/ViewerApp.cpp
@@ -49,7 +49,7 @@ if(POSELINK_BUILD_GRAPHICS)
 
 
   target_include_directories(
-    poselink_viewer
+    grasplink_simulator
     PRIVATE
       apps/viewer
       modules/viewer/include
@@ -60,9 +60,9 @@ if(POSELINK_BUILD_GRAPHICS)
 
 
   target_link_libraries(
-    poselink_viewer
+    grasplink_simulator
     PRIVATE
-      poselink_graphics
+      grasplink_graphics
       flecs::flecs_static
   )
 
@@ -72,12 +72,12 @@ if(POSELINK_BUILD_GRAPHICS)
   # --------------------------------------------------
 
   add_custom_command(
-    TARGET poselink_viewer
+    TARGET grasplink_simulator
     POST_BUILD
 
     COMMAND ${CMAKE_COMMAND} -E copy_directory
       ${CMAKE_SOURCE_DIR}/assets/shaders
-      $<TARGET_FILE_DIR:poselink_viewer>/shaders
+      $<TARGET_FILE_DIR:grasplink_simulator>/shaders
   )
 
 endif()
