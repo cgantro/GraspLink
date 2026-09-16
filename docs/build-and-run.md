@@ -1,223 +1,165 @@
 # Build and Run
 
-## 1. 현재 빌드 가능한 범위
+## 1. PC Simulator
 
-연결된 GitHub master 기준 root `CMakeLists.txt`에서 실제 executable target으로 구성된 것은 다음 하나다.
-
-```text
-poselink_viewer
-```
-
-현재 다음 기능은 아직 CMake target에 연결되어 있지 않다.
+현재 root CMake의 executable target은 다음과 같다.
 
 ```text
-poselink_vision_node
-UDP transport / streaming
-OpenCV vision pipeline
-Robot kinematics
-Automated tests
+grasplink_simulator
 ```
 
-따라서 이 문서는 **현재 Viewer build 방법**과 **향후 단계별 target이 추가될 위치**를 구분해 설명한다.
+### 요구 환경
 
----
-
-## 2. 요구 환경
-
-### 공통
-
-- CMake 3.20 이상
-- C++17 지원 compiler
+- CMake 3.20+
+- C++17 compiler
 - Git
 - OpenGL development environment
 
-### CMake가 현재 가져오는 dependency
+현재 CMake가 사용하는 dependency:
 
-`cmake/Dependencies.cmake` 기준:
+- GLFW 3.4
+- GLM 1.0.1
+- Flecs 4.1.5
+- GLAD
+- OpenGL
 
-- GLFW 3.4 — `FetchContent`
-- GLM 1.0.1 — `FetchContent`
-- Flecs 4.1.5 — `FetchContent`
-- GLAD — `third_party/glad`에 포함
-- OpenGL — `find_package(OpenGL REQUIRED)`
-
-최초 configure 시 GLFW/GLM/Flecs fetch를 위한 네트워크 연결이 필요하다.
-
----
-
-## 3. Configure
-
-Repository root에서:
+### Configure
 
 ```bash
-cmake -S . -B build -DPOSELINK_BUILD_GRAPHICS=ON
+cmake -S . -B build -DGRASPLINK_BUILD_GRAPHICS=ON
 ```
 
-`POSELINK_BUILD_GRAPHICS`의 현재 기본값은 `ON`이다.
+### Build
 
----
-
-## 4. Build
-
-### Single-config generator
-
-Linux + Make/Ninja 등:
+Single-config generator:
 
 ```bash
 cmake --build build -j
 ```
 
-Release를 명시하려면 configure 시:
-
-```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j
-```
-
-### Multi-config generator
-
-Visual Studio 등:
+Visual Studio 등 multi-config generator:
 
 ```bash
 cmake --build build --config Release
 ```
 
----
+### Run
 
-## 5. 실행
-
-CMake는 build 후 `assets/shaders`를 `poselink_viewer` executable directory의 `shaders/`로 복사한다.
-
-따라서 executable directory에서 실행하면 shader relative path 문제를 피하기 쉽다.
-
-### Single-config 예
+Single-config 예:
 
 ```bash
 cd build
-./poselink_viewer
+./grasplink_simulator
 ```
 
-### Visual Studio / multi-config 예
-
-실제 generator에 따라 보통 다음과 같은 위치가 된다.
+Windows multi-config 예:
 
 ```text
-build/Release/poselink_viewer.exe
+build/Release/grasplink_simulator.exe
 ```
 
-해당 executable directory에서 실행한다.
+CMake post-build 단계에서 `assets/shaders`를 executable directory의 `shaders/`로 복사한다.
 
 ---
 
-## 6. 현재 정상 동작 확인
+## 2. Embedded Controller
 
-현재 master의 Viewer는 다음을 확인할 수 있어야 한다.
-
-- GLFW window 생성
-- OpenGL context 초기화
-- Camera/View/Projection 적용
-- depth test 적용
-- CubeA/CubeB 렌더링
-- `flecs::world`의 `RenderSystem`이 `world.progress(dt)`에서 실행
-
-프로젝트 진행 상태에서는 `Synthetic Pose → Cube`가 완료 단계로 관리되고 있으나, 연결된 master snapshot의 `SyntheticPoseSource` 파일은 아직 빈 상태다. 해당 local 구현이 push되면 이 항목을 실제 build 기준으로 다시 갱신한다.
-
----
-
-## 7. 자주 확인할 오류
-
-### OpenGL을 찾지 못함
-
-예:
+Embedded application은 다음에 있다.
 
 ```text
-Could NOT find OpenGL
+embedded/controller
 ```
 
-확인:
-- OS의 OpenGL development package / graphics SDK
-- CMake generator/toolchain
+요구 환경:
 
-### GLFW / GLM / Flecs fetch 실패
+- VS Code 사용 가능
+- Zephyr development environment
+- west
+- CMake / Ninja
+- ESP32 toolchain 지원
 
-확인:
-- 최초 configure 시 network access
-- proxy/firewall
-- `_deps` cache가 깨졌는지
+정확한 `-b <board>` 값은 실제 ESP32 보드 모델을 확인한 뒤 결정한다.
 
-필요하면 build directory를 새로 만든다.
+### Build
+
+Zephyr workspace에서 예:
 
 ```bash
-rm -rf build
-cmake -S . -B build
+west build -b <board> embedded/controller
 ```
 
-Windows에서는 build directory를 파일 탐색기 또는 PowerShell에서 삭제한다.
-
-### Shader 파일을 열지 못함
-
-현재 shader는 runtime relative path를 사용한다.
-
-```text
-shaders/Cube.glsl
-```
-
-post-build copy가 수행된 executable directory에서 실행했는지 확인한다.
-
-### 창은 뜨지만 object가 보이지 않음
-
-확인 순서:
-
-1. shader compile/link error
-2. camera position / projection
-3. `Transform`
-4. `Renderable` resource null 여부
-5. `RenderSystem` import 여부
-6. `world.progress(dt)` 호출 여부
-
----
-
-## 8. 향후 target 계획
-
-### 단계 2: UDP Object Pose
-
-추가 예정:
-
-```text
-transport library
-a synthetic sender executable 또는 vision_node synthetic mode
-viewer receiver path
-protocol tests
-```
-
-### 단계 3: ArUco Object Detection
-
-추가 예정:
-
-```text
-OpenCV dependency
-poselink_vision_node target
-camera calibration/runtime options
-```
-
-### Robot 단계
-
-사용할 robot model과 kinematics module 구조를 먼저 결정한 뒤 target/source를 추가한다.
-
-문서에 target 이름을 미리 확정해 실제 CMake와 어긋나게 만들지 않는다.
-
----
-
-## 9. Test command 주의
-
-현재 `tests/test_main.cpp`는 빈 골격이며 root CMake에 `enable_testing()`, `add_test()`로 연결된 실제 test target이 확인되지 않는다.
-
-따라서 현재 상태에서:
+이미 다른 board로 build한 directory가 있다면 pristine build를 사용한다.
 
 ```bash
-ctest --test-dir build
+west build -p always -b <board> embedded/controller
 ```
 
-를 프로젝트 검증 방법이라고 문서화하지 않는다.
+### Flash
 
-테스트 target이 추가된 뒤 이 문서를 갱신한다. 예정 검증 항목은 [testing.md](testing.md)를 참고한다.
+```bash
+west flash
+```
+
+### Serial log
+
+보드/runner 환경에 따라 Zephyr 또는 ESP32 serial monitor를 사용한다. 첫 bring-up의 성공 기준은 다음 로그를 확인하는 것이다.
+
+```text
+GraspLink embedded controller booted
+```
+
+---
+
+## 3. Board overlay
+
+보드별 DeviceTree overlay는:
+
+```text
+embedded/controller/boards/
+```
+
+아래에 둔다.
+
+초기 연결 예정:
+
+- Button → GPIO interrupt
+- Potentiometer → ADC
+- OLED → I2C
+- RGB LED → GPIO/PWM 검토
+- Active Buzzer → GPIO/PWM 검토
+
+핀 번호는 실제 보드의 Zephyr DTS와 핀맵을 확인한 뒤 작성한다.
+
+---
+
+## 4. 현재 구현 상태 주의
+
+`embedded/controller`는 현재 bring-up용 skeleton이다. GPIO/ADC/I2C 장치 binding과 UDP 구현은 보드 확인 후 추가한다.
+
+PC 쪽도 Robot Model/FK/IK/UDP pipeline 전체가 완료된 상태는 아니다.
+
+따라서 문서의 최종 구조와 현재 실행 가능한 기능을 구분한다.
+
+---
+
+## 5. 권장 개발 순서
+
+```text
+PC Simulator가 기존 OpenGL scene을 정상 렌더링
+        ↓
+ESP32 Zephyr build / flash / serial log
+        ↓
+Button + OLED
+        ↓
+ADC Target Position
+        ↓
+UDP Target Command
+        ↓
+Simulator Target Object
+        ↓
+Robot FK / IK / Grasp
+        ↓
+State Feedback
+```
+
+자세한 4일 계획은 [ROADMAP.md](ROADMAP.md)를 따른다.
