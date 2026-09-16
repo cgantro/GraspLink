@@ -6,6 +6,20 @@ GraspLink는 **외부 임베디드 장치에서 생성한 목표 위치를 네�
 
 Vision/ArUco 입력은 1차 완료 범위가 아니라 **동일한 Target Pose 인터페이스에 붙이는 2차 확장 입력원**으로 둔다.
 
+## Robot Arm 기준
+
+1차 프로토타입의 로봇팔은 **4DoF serial manipulator + gripper**로 고정한다.
+
+```text
+J1: Base yaw
+J2: Shoulder pitch
+J3: Elbow pitch
+J4: Wrist pitch
+Gripper: open / close state
+```
+
+Gripper 개폐는 로봇팔의 4DoF와 별도 actuator/state로 취급한다. 초기 IK는 target의 XYZ position과 wrist pitch 범위 안에서 해결하며, 임의의 6DoF end-effector orientation을 목표로 하지 않는다.
+
 ## 프로젝트 목표
 
 ```text
@@ -20,7 +34,7 @@ ESP32 / Zephyr RTOS
 C++ Simulator
   ├─ UDP Receiver
   ├─ Target Object
-  ├─ Robot Model
+  ├─ 4DoF Robot Model
   ├─ FK / IK
   ├─ Trajectory Update
   └─ Grasp / Object Attach
@@ -40,14 +54,14 @@ ESP32
 | Day 1 | Zephyr bring-up + GPIO/I2C | ESP32에서 Zephyr 빌드/flash, 버튼 입력과 OLED 출력 확인 |
 | Day 2 | Target Controller | ADC로 Potentiometer를 읽고 버튼으로 X/Y/Z 축을 선택해 Target Position 생성, task/message queue 구조 적용 |
 | Day 3 | UDP 연동 | ESP32 → PC Target Command 송신, Simulator 수신 후 Target Object 위치 갱신 |
-| Day 4 | Robot Grasp 수직 경로 | Robot Model/FK/IK → End Effector 이동 → Grasp 판정/Object Attach → 상태 ESP32 반환 |
+| Day 4 | Robot Grasp 수직 경로 | 4DoF Robot Model/FK/IK → End Effector 이동 → Grasp 판정/Object Attach → 상태 ESP32 반환 |
 
 4일 안에 범위를 넘기지 않는다. IMU, ArUco, network impairment 실험은 최소 프로토타입 이후에 확장한다.
 
 ## 개발 단계
 
 1. **Synthetic Target Position → Object**
-2. **Robot Model 추가**
+2. **4DoF Robot Model 추가**
 3. **FK 구현**
 4. **Grasp Pose 정의**
 5. **IK 구현**
@@ -142,6 +156,7 @@ cmake --build build --config Release
 - ISR에서 무거운 처리를 하지 않고 event/work/message queue로 넘긴다.
 - Target Position과 Robot State를 별도 메시지로 구분한다.
 - Simulator의 Robot/FK/IK 로직은 ESP32 구현을 직접 알지 않는다.
+- Robot arm은 4DoF serial chain으로 고정하고 gripper open/close는 별도 상태로 둔다.
 - FK correctness를 먼저 고정한 뒤 IK를 구현한다.
 - 1차 grasp는 physics contact가 아닌 kinematic threshold + Object Attach로 제한한다.
 - Vision은 동일한 Target Pose source 인터페이스의 확장으로 추가한다.
