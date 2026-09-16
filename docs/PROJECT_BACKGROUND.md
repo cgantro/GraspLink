@@ -1,324 +1,247 @@
-# PoseLink Project Background
+# GraspLink Project Background
 
 ## 1. 프로젝트가 해결하려는 문제
 
-PoseLink의 최종 목표는 **원격 카메라에서 특정 물체의 6DoF Pose를 추정하고, 해당 Pose를 시뮬레이터로 전달한 뒤 가상 다관절 로봇팔이 그 물체를 집도록 하는 것**이다.
+GraspLink의 목표는 **외부 장치에서 지정한 공간상의 목표를 가상 로봇 시스템으로 전달하고, 로봇이 해당 위치의 물체를 찾아 이동·파지하는 수직 경로를 직접 구성하는 것**이다.
 
-단순히 카메라 Pose를 화면에 표시하는 프로젝트가 아니다. 프로젝트가 연결하려는 핵심 경로는 다음과 같다.
+초기 시스템 흐름은 다음과 같다.
 
 ```text
-Physical Object
-→ Camera Observation
-→ Object 6DoF Pose
-→ Network Transfer
+Human Input
+→ ESP32 Peripheral
+→ Zephyr RTOS
+→ Target Position
+→ UDP
+→ C++ Simulator
 → Simulation Object
 → Grasp Pose
-→ IK
-→ Joint Angles
-→ FK
-→ Robot Link Transforms
+→ IK / FK
+→ Robot Arm
 → Grasp
+→ State Feedback
+→ ESP32 UI
 ```
 
-이 경로를 작은 C++ 코드베이스에서 직접 구성하면서 다음 문제를 분리해서 다룬다.
-
-- Vision: 물체의 공간 상태를 어떻게 얻는가
-- Network: 그 상태를 다른 process로 어떻게 전달하는가
-- Graphics: 수신한 상태를 simulation world에 어떻게 표현하는가
-- Robotics: object pose에서 grasp pose를 어떻게 만들고 robot joint를 어떻게 계산하는가
-- Robustness: network delay/jitter/loss가 target pose와 grasp 안정성에 어떤 영향을 주는가
+단순한 센서 데모나 단순한 3D Viewer가 아니라 Embedded, Network, Graphics, Robotics 경계를 하나의 동작으로 연결하는 것이 핵심이다.
 
 ---
 
-## 2. 왜 known object부터 시작하는가
+## 2. 왜 ESP32를 1차 입력원으로 두는가
 
-초기 범위는 임의의 사물을 인식하고 자동으로 grasp point를 찾는 문제가 아니다.
+기존 계획은 Camera/ArUco에서 Object Pose를 얻는 흐름을 먼저 구현하는 것이었다. 그러나 초기 prototype에서는 다음 문제가 동시에 섞인다.
 
 ```text
-Known Object
-+
-Known Marker
-+
-Known Grasp Offset
+Camera calibration
+Detection error
+solvePnP error
+Coordinate transform
+Network
+Robot kinematics
+Rendering
 ```
 
-을 사용한다.
-
-예를 들어 물체에 ArUco marker를 부착하고 marker와 object frame의 상대 변환을 미리 알고 있으면:
+그래서 1차 입력은 사용자가 직접 결정할 수 있는 Target Position으로 단순화한다.
 
 ```text
-T_camera_object
-=
-T_camera_marker × T_marker_object
-```
-
-를 계산할 수 있다.
-
-그리고 object frame에서 미리 정의한 grasp pose `T_object_grasp`를 사용하면:
-
-```text
-T_base_grasp
-=
-T_base_camera
-× T_camera_object
-× T_object_grasp
-```
-
-를 IK의 target으로 사용할 수 있다.
-
-이렇게 범위를 제한하면 object detection, coordinate transform, robot kinematics를 검증하면서도 일반적인 grasp planning이나 physics simulation까지 문제를 확장하지 않는다.
-
----
-
-## 3. 왜 Synthetic Pose부터 시작하는가
-
-실제 Camera + ArUco부터 시작하면 오차 원인이 한 번에 섞인다.
-
-```text
-Camera Noise
-Marker Detection Error
-solvePnP Error
-Coordinate Conversion Error
-Network Error
-Rendering Error
-```
-
-그래서 첫 단계에서는 deterministic한 Synthetic Pose를 Viewer에 직접 적용한다.
-
-```text
-Synthetic Pose
-→ Transform
-→ Flecs Entity
-→ RenderSystem
-→ OpenGL Cube
-```
-
-이 단계는 최종 기능이 아니라 **Pose가 생성된 뒤 Viewer까지 전달되는 가장 작은 수직 경로를 검증하는 기준점**이다.
-
-그 다음 UDP를 연결하면:
-
-```text
-Synthetic Pose
+Button + Potentiometer
+→ deterministic Target Position
 → UDP
-→ Viewer
+→ Simulator
 ```
 
-로 바뀌므로 network 문제만 추가해서 확인할 수 있다.
+이렇게 하면 Embedded/RTOS/Network/Robot pipeline 자체를 먼저 검증할 수 있다.
+
+Camera/ArUco는 이후 동일한 Target Pose interface에 추가한다.
 
 ---
 
-## 4. 왜 Vision Node와 Simulator를 분리하는가
+## 3. 왜 Zephyr RTOS를 사용하는가
 
-한 process에서:
-
-```text
-Camera
-→ Pose
-→ Robot
-```
-
-를 처리하면 실제 원격 시스템에서 생기는 network boundary가 사라진다.
-
-PoseLink는 의도적으로 두 process를 둔다.
+이 장치에는 서로 다른 책임이 존재한다.
 
 ```text
-Vision Node
-     ↓ UDP
-Viewer / Simulator
+Input
+Display
+Network TX/RX
+State Feedback
 ```
 
-Vision Node는 다음까지만 책임진다.
+하나의 무한 loop에 모든 로직을 넣기보다 peripheral binding과 실행 책임을 분리하는 연습을 목표로 한다.
 
-```text
-Camera
-→ Detection
-→ Object Pose
-→ Serialization
-→ UDP Publish
-```
+특히 다음 항목을 실제 코드에서 다룬다.
 
-Viewer / Simulator는 다음을 책임진다.
+- DeviceTree 기반 board/peripheral binding
+- GPIO interrupt
+- ADC
+- I2C
+- thread/work/message queue
+- UDP socket
 
-```text
-UDP Receive
-→ Object Transform
-→ Grasp Target
-→ Robot Kinematics
-→ Rendering
-```
-
-이 분리는 Vision과 Simulation을 독립적으로 테스트할 수 있게 한다.
+단, RTOS를 사용한다는 이유로 thread를 무조건 늘리지는 않는다. 실행 주기와 blocking 특성이 다른 책임이 생길 때 분리한다.
 
 ---
 
-## 5. 왜 물체 Pose와 Grasp Pose를 구분하는가
+## 4. 왜 Target Position과 Robot 제어를 분리하는가
 
-물체 중심 좌표로 end-effector를 이동한다고 해서 물체를 잡을 수 있는 것은 아니다.
-
-예:
+ESP32는 Robot의 joint angle이나 IK 알고리즘을 알 필요가 없다.
 
 ```text
-Object Pose
-= 물체의 위치와 방향
-
-Grasp Pose
-= End Effector가 실제로 도달해야 하는 위치와 방향
+ESP32
+→ "이 위치를 목표로 사용"
+→ Simulator
 ```
 
-따라서 PoseLink에서는 object frame 기준 grasp offset을 명시적으로 둔다.
+Robot Model/FK/IK/Grasp는 C++ Simulator가 책임진다.
+
+이 경계를 유지하면 Target source를 나중에 바꿀 수 있다.
 
 ```text
-Object Pose
-     ↓
-Grasp Pose Generator
-     ↓
-Target End-Effector Pose
+Synthetic
+ESP32
+ArUco Camera
+      ↓
+Target Pose
+      ↓
+Robot Pipeline
 ```
 
-초기에는 물체 종류별로 하나의 known grasp pose만 둔다. 임의 형상에서 자동 grasp 후보를 생성하는 기능은 기본 범위에서 제외한다.
+---
+
+## 5. 왜 양방향 통신을 구성하는가
+
+Target Command만 보내면 Embedded 장치는 명령을 보낸 뒤 실제 수행 결과를 알 수 없다.
+
+따라서 Simulator가 상태를 반환한다.
+
+```text
+ESP32 → TARGET → Simulator
+ESP32 ← STATE  ← Simulator
+```
+
+예정 상태:
+
+```text
+IDLE
+TARGET_RECEIVED
+MOVING
+GRASP_SUCCESS
+GRASP_FAILED
+```
+
+ESP32는 OLED/RGB LED/Buzzer로 결과를 표현한다.
+
+이를 통해 단순 sender가 아니라 외부 Controller와 Simulator 사이의 상태 흐름을 구성한다.
 
 ---
 
 ## 6. 왜 FK를 IK보다 먼저 구현하는가
 
-IK는 target pose를 만족하는 joint angle을 찾는 문제다. 하지만 candidate joint angle이 실제로 어떤 end-effector pose를 만드는지 계산하려면 FK가 먼저 필요하다.
+IK의 결과가 올바른지 검증하려면 joint angle에서 실제 End Effector Pose를 계산할 수 있어야 한다.
 
 ```text
 Joint Angles
 → FK
-→ Current End-Effector Pose
-→ Target Pose와 Error 계산
-→ IK Update
+→ End Effector Pose
 ```
 
-따라서 구현 순서는 다음처럼 고정한다.
+이 기준을 먼저 확보한 뒤:
 
 ```text
-Robot Model
-→ FK
-→ Grasp Pose
+Target Grasp Pose
 → IK
+→ Joint Angles
+→ FK
+→ Error 확인
 ```
 
-이 순서를 지키면 robot hierarchy/axis/origin 오류와 IK solver 오류를 분리해서 확인할 수 있다.
+순서로 구현한다.
 
 ---
 
-## 7. 왜 Flecs를 Viewer에 사용하는가
+## 7. Grasp 범위
 
-최종 Viewer에는 단순 Cube 외에 다음 scene object가 생긴다.
-
-```text
-Tracked Object
-Robot Base
-Robot Links
-End Effector
-Debug Axis
-```
-
-각 object를 깊은 상속 구조로 만들기보다:
+1차 prototype에서는 복잡한 physics/contact simulation을 하지 않는다.
 
 ```text
-Entity
-+ Transform
-+ Renderable
-+ optional role component
+End Effector가 Grasp Pose 허용 오차에 진입
+→ Grasp Success
+→ Object Attach
 ```
 
-형태로 구성한다.
+즉 kinematic grasp를 사용한다.
 
-현재 `RenderSystem`은 `Transform + Renderable` 조합을 query해 렌더링한다. 향후 robot hierarchy에는 Flecs relationship을 검토할 수 있지만, FK/IK 계산 자체를 Flecs에 종속시킬 필요는 없다.
+초기 목표는 collision-free motion planning이나 dynamics가 아니라 **입력부터 파지 결과까지 전체 경로를 완성하는 것**이다.
 
 ---
 
-## 8. 왜 OpenGL을 직접 사용하는가
+## 8. 왜 OpenGL/Flecs를 유지하는가
 
-기존 game engine을 사용하면 robot model을 빠르게 화면에 띄울 수 있지만 다음 경계가 가려진다.
+Simulator는 로봇 link, target object, end effector, debug geometry를 직접 시각화해야 한다.
+
+OpenGL을 사용해:
 
 ```text
 Pose
 → Transform
 → Model Matrix
-→ Shader
-→ Draw
+→ Renderer
 ```
 
-PoseLink에서는 OpenGL을 직접 사용해 coordinate system과 transform hierarchy를 코드 수준에서 확인한다.
+경로를 코드 수준에서 확인한다.
 
-이는 robot link의 world transform, end-effector pose, grasp target을 시각적으로 검증하는 데도 유용하다.
+Flecs는 scene entity/component와 render system scheduling에 사용하고, FK/IK 계산 자체는 rendering layer와 분리한다.
 
 ---
 
-## 9. 왜 network 실험은 마지막에 하는가
+## 9. 1차 완료 범위
 
-Network jitter/loss는 프로젝트의 중요한 검증 항목이지만 robot grasp path가 완성되기 전에 먼저 최적화하면 무엇이 흔들리는지 기준이 없다.
-
-따라서 먼저 ideal/local condition에서:
-
-```text
-Object Pose
-→ Grasp Pose
-→ IK
-→ FK
-→ Attach
-```
-
-가 정상 동작하는지 확인한다.
-
-그 다음 network impairment를 넣어 다음을 비교한다.
-
-```text
-Immediate Pose
-vs
-Buffered / Interpolated Pose
-```
-
-측정 대상은 단순 화면 jitter뿐 아니라 최종적으로:
-
-- target pose age
-- end-effector target error
-- grasp 성공/실패 조건
-- queue/buffer 상태
-
-까지 확장할 수 있다.
+1. Synthetic Target Position → Object
+2. Robot Model
+3. FK
+4. Grasp Pose
+5. IK
+6. Robot target 추종
+7. Object Attach
+8. ESP32 + Zephyr bring-up
+9. GPIO interrupt / ADC / I2C
+10. Target Position UI
+11. ESP32 → Simulator UDP
+12. Simulator → ESP32 상태 feedback
 
 ---
 
-## 10. 기본 범위에서 하지 않는 것
+## 10. 1차 범위에서 하지 않는 것
 
-초기 완료 범위에는 다음을 넣지 않는다.
-
-- markerless object detector
-- neural network 기반 6DoF estimation
-- 일반 물체 grasp planning
-- collision-free path planner
-- 물리 기반 gripper contact simulation
+- IMU 기반 위치 추정
+- ArUco / camera pose estimation
+- 일반 물체 detector
+- neural network grasp planning
+- collision-free motion planner
 - robot dynamics / torque control
-- ROS2 integration
-- multi-camera sensor fusion
+- physics gripper contact
+- ROS2
+- network impairment 실험
 
-초기 grasp는 **kinematic grasp**다. End Effector가 위치/회전 허용 오차 안에 들어오면 object를 end-effector에 attach하여 성공으로 처리한다.
-
----
-
-## 11. 프로젝트 진행 순서
-
-1. **Synthetic Pose → Cube** — 현재 단계
-2. UDP Object Pose
-3. ArUco Object Detection
-4. Simulation에 Object 생성
-5. Robot Model 추가
-6. FK 구현
-7. Grasp Pose 정의
-8. IK 구현
-9. End Effector → Grasp Pose 추종
-10. Grasp 성공 시 Object attach
-11. Network jitter/loss 실험
-
-각 단계는 이전 단계의 correctness를 기준으로 다음 변수를 하나씩 추가한다.
+이 항목은 prototype 이후 확장한다.
 
 ---
 
-## 12. 완료 후 한 문장
+## 11. 이후 확장
 
-> PoseLink는 원격 카메라가 추정한 known object의 6DoF Pose를 UDP로 전달하고, 가상 다관절 로봇팔이 object-relative grasp pose를 IK/FK로 추종해 집는 과정을 시뮬레이션하며, 마지막으로 network jitter/loss가 grasp 안정성에 미치는 영향을 검증하는 C++ 프로젝트다.
+2차 단계에서는 Camera/ArUco를 Target Source로 추가한다.
+
+```text
+Camera
+→ ArUco
+→ Object Pose
+→ Target Pose interface
+→ 기존 Robot Pipeline
+```
+
+그 다음 delay/jitter/loss 환경에서 target age, packet loss, end-effector error, grasp result를 측정한다.
+
+---
+
+## 12. 프로젝트 한 문장
+
+> GraspLink는 ESP32/Zephyr 기반 외부 Target Controller에서 생성한 목표 위치를 UDP로 C++ 로봇 시뮬레이터에 전달하고, 가상 로봇팔이 FK/IK를 이용해 목표 물체를 파지한 뒤 수행 상태를 다시 임베디드 장치에 반환하는 Embedded-to-Simulator robotic grasp 프로젝트다.
