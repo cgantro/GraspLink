@@ -3,18 +3,15 @@
 #include "Camera.h"
 #include "Material.h"
 #include "Mesh.h"
-#include "Renderable.h"
 #include "RenderContext.h"
 #include "Renderer.h"
-#include "RenderSystem.h"
+#include "RenderSystemModule.h"
 #include "Shader.h"
-#include "Transform.h"
+#include "TransformComponents.h"
+#include "TransformSystemModule.h"
 #include "Window.h"
 
-#include <GLFW/glfw3.h>
-
 #include <memory>
-#include <stdexcept>
 
 namespace
 {
@@ -24,7 +21,7 @@ const char* kWindowTitle = "GraspLink Viewer";
 const glm::vec3 kCameraPosition{2.0F, 1.35F, 2.15F};
 const glm::vec3 kCameraTarget{0.05F, 0.50F, 0.40F};
 const glm::vec3 kDebugPosition{0.0F, 0.5F, 0.0F};
-const glm::vec3 kDebugScale{0.25F, 0.25F, 0.25F};
+const glm::vec3 kDebugScale{0.25F};
 }
 
 ViewerApp::ViewerApp() = default;
@@ -32,7 +29,11 @@ ViewerApp::~ViewerApp() = default;
 
 int ViewerApp::Run()
 {
-    if (!Init()) { return -1; }
+    if (!Init())
+    {
+        return -1;
+    }
+
     MainLoop();
     Shutdown();
     return 0;
@@ -40,26 +41,32 @@ int ViewerApp::Run()
 
 bool ViewerApp::Init()
 {
-    window_ = std::make_unique<PoseLink::Window>(PoseLink::Window::Properties{
+    window_ = std::make_unique<Window>(Window::Properties{
         kWindowWidth, kWindowHeight, kWindowTitle, true});
-    renderer_ = std::make_unique<PoseLink::Renderer>();
+    renderer_ = std::make_unique<Renderer>();
     renderer_->Init();
-    camera_ = std::make_unique<PoseLink::Camera>(
+    camera_ = std::make_unique<Camera>(
         kCameraPosition,
         kCameraTarget,
-        static_cast<float>(kWindowWidth) / static_cast<float>(kWindowHeight));
+        static_cast<float>(kWindowWidth) /
+            static_cast<float>(kWindowHeight));
 
-    world_.set<PoseLink::RenderContext>({renderer_.get(), camera_.get()});
-    world_.import<PoseLink::RenderSystem>();
+    m_World.set<RenderContext>({renderer_.get(), camera_.get()});
+    m_World.import<TransformSystemModule>();
+    m_World.import<RenderSystemModule>();
 
-    auto shader = PoseLink::Shader::Create("shaders/Debug.glsl");
-    auto material = std::make_shared<PoseLink::Material>(
+    auto shader = Shader::Create("shaders/Debug.glsl");
+    auto material = std::make_shared<Material>(
         glm::vec4(0.18F, 0.45F, 0.85F, 1.0F), 0.0F, 0.8F);
-    std::shared_ptr<PoseLink::Mesh> mesh(PoseLink::Mesh::CreateCube());
-    debugEntity_ = world_.entity("DebugCube")
-        .set<PoseLink::Transform>(PoseLink::Transform{
-            kDebugPosition, glm::quat(1.0F, 0.0F, 0.0F, 0.0F), kDebugScale})
-        .set<PoseLink::Renderable>({mesh, shader, material});
+    std::shared_ptr<Mesh> mesh(Mesh::CreateCube());
+
+    debugEntity_ = m_World.entity("DebugCube")
+        .set<Transform>(Transform{
+            kDebugPosition,
+            glm::quat(1.0F, 0.0F, 0.0F, 0.0F),
+            kDebugScale})
+        .set<Renderable>({mesh, shader, material});
+
     return true;
 }
 
@@ -69,7 +76,7 @@ void ViewerApp::MainLoop()
     {
         window_->PollEvents();
         renderer_->BeginFrame();
-        world_.progress(0.0F);
+        m_World.progress(0.0F);
         window_->SwapBuffers();
     }
 }
@@ -77,7 +84,7 @@ void ViewerApp::MainLoop()
 void ViewerApp::Shutdown()
 {
     debugEntity_ = flecs::entity::null();
-    world_.reset();
+    m_World.reset();
     camera_.reset();
     renderer_.reset();
     window_.reset();

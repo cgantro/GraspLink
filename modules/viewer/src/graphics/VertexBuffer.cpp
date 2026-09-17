@@ -4,7 +4,7 @@
 // GLES는 OpenGL 표준 규격(임베디드)
 // GLM 수학 라이브러리
 
-namespace PoseLink {
+
 
 VertexBuffer::VertexBuffer(const void* data, uint32_t size){
     // 1. OpenGL Buffer 객체 생성
@@ -31,5 +31,3 @@ VertexBuffer::~VertexBuffer(){
 
 void VertexBuffer::Bind() const{ glBindBuffer(GL_ARRAY_BUFFER,m_RendererID);}
 void VertexBuffer::UnBind() const{ glBindBuffer(GL_ARRAY_BUFFER,0);}
-
-} // namespace PoseLink

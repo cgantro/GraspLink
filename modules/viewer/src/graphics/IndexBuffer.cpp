@@ -3,8 +3,7 @@
 #include <glad/glad.h>
 #include <stdexcept>
 
-namespace PoseLink
-{
+
 IndexBuffer::IndexBuffer(const uint32_t* indices, uint32_t cnt) : m_Count(cnt){
     if(indices == nullptr) throw std::runtime_error(
         "IndexBuffer indices must not be null"
@@ -89,5 +88,3 @@ void IndexBuffer::Bind() const {glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,m_RendererI
         VAO UnBind 순이다.
 */
 void IndexBuffer::UnBind() const{glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,0);}
-
-} // namespace PoseLink

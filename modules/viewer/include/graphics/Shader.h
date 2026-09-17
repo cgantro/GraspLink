@@ -7,7 +7,7 @@
 
 #include <glm/glm.hpp>
 
-namespace PoseLink {
+
 
 class Shader{
 public:
@@ -121,5 +121,3 @@ private:
     // GetUniformLocation()이 const함수이지만, Cache 자체는 갱신할 수 있게 하기 위해서
     mutable std::unordered_map<std::string, int> m_UniformLocationCache;
 };
-
-} // namespace PoseLink

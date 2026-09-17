@@ -2,7 +2,7 @@
 
 #include <glad/glad.h>
 
-namespace PoseLink {
+
 
 VertexArray::VertexArray(){
     // VAO 생성
@@ -18,5 +18,3 @@ VertexArray::~VertexArray(){
 
 void VertexArray::Bind() const{glBindVertexArray(m_RendererID);}
 void VertexArray::UnBind() const{glBindVertexArray(0);}
-
-} // namespace PoseLink

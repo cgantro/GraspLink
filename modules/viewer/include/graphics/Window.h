@@ -6,7 +6,7 @@
 // 전방 선언
 struct GLFWwindow;
 
-namespace PoseLink {
+
 
 class Window{
 public:
@@ -14,7 +14,7 @@ public:
     {
         int width = 1280;
         int height = 720;
-        std::string title = "PoseLink";
+        std::string title = "GraspLink";
         bool vsync = true;
     };
 public:
@@ -42,4 +42,3 @@ private:
     // 실제 GLFW window와 OpenGL Context를 나타내는 핸들
     GLFWwindow* m_Handle = nullptr;
 };
-} // namespace PoseLink

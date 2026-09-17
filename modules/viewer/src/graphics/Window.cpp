@@ -6,7 +6,7 @@
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 
-namespace PoseLink {
+
 
 Window::Window(const Properties& properties){
     Init(properties);
@@ -170,4 +170,3 @@ void Window::FramebufferSizeCallback(GLFWwindow* window, int width, int height){
     glViewport(0,0,width,height);
     
 }
-} // namespace PoseLink

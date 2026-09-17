@@ -4,8 +4,7 @@
 
 #include <stdexcept>
 
-namespace PoseLink
-{
+
 Camera::Camera(
     const glm::vec3& position,
     const glm::vec3& target,
@@ -58,4 +57,3 @@ void Camera::SetAspectRatio(float aspectRatio){
     if(aspectRatio <= 0.0f) return;
     m_AspectRatio = aspectRatio;
 }
-} // namespace PoseLink

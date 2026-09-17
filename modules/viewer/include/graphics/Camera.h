@@ -2,8 +2,7 @@
 
 #include <glm/glm.hpp>
 
-namespace PoseLink
-{
+
 class Camera{
 public:
     /*
@@ -62,4 +61,3 @@ private:
     float m_NearPlane;
     float m_FarPlane;
 };
-} // namespace PoseLink

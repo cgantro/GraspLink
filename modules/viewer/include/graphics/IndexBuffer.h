@@ -1,8 +1,7 @@
 #pragma once
 
 #include <cstdint>
-namespace PoseLink
-{
+
 
 /**
  * @brief indexBuffer
@@ -35,4 +34,3 @@ private:
     // 저장하고 있는 Index 개수
     uint32_t m_Count = 0;
 };  
-} // namespace PoseLink

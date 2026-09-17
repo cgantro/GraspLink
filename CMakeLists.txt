@@ -22,8 +22,15 @@ if(GRASPLINK_BUILD_GRAPHICS)
     apps/viewer/ViewerApp.cpp
     apps/viewer/ViewerApp.h
     modules/viewer/include/Entity.h
-    modules/viewer/include/systems/RenderSystem.h
-    modules/viewer/src/systems/RenderSystem.cpp
+    modules/viewer/include/components/Components.h
+    modules/viewer/include/components/GripperComponents.h
+    modules/viewer/include/components/RenderComponents.h
+    modules/viewer/include/components/RobotComponents.h
+    modules/viewer/include/components/TransformComponents.h
+    modules/viewer/include/systems/RenderSystemModule.h
+    modules/viewer/include/systems/TransformSystemModule.h
+    modules/viewer/src/systems/RenderSystemModule.cpp
+    modules/viewer/src/systems/TransformSystemModule.cpp
   )
   target_include_directories(grasplink_simulator PRIVATE
     apps/viewer

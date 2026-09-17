@@ -1,65 +1,111 @@
 #pragma once
 
 #include <flecs.h>
+#include <glm/glm.hpp>
 
-#include <type_traits>
-#include <utility>
+#include <string>
+#include <vector>
 
-namespace PoseLink
-{
-/*
-    flecs::entity를 사용하기위한 래퍼 클래스
-*/
 class Entity{
 public:
-    static Entity Create(flecs::world& world, const char* name = nullptr){
-        if(name) return Entity(world.entity(name));
-    }
+    Entity() = default;
 
+    // 이미 존재하는 Flecs Entity Handle을 감싼다.
+    explicit Entity(flecs::entity handle);
+
+    Entity(const Entity&) = default;
+    Entity& operator=(const Entity&) = default;
+
+    // Transform
     /*
-        Component를 Entity에 붙인다
+        World 값을 직접 수정하는 API는 제공하지 않는다.
+        World는 System이 ParentWorld * Local을 통해 계산해야함
     */
+    glm::vec3 GetLocalPosition() const;
+    glm::vec3 GetLocalRotation() const;
+    glm::vec3 GetLocalScale() const;
+
+    void SetLocalPosition(const glm::vec3& position);
+    void SetLocalRotation(const glm::vec3& rotation);
+    void SetLocalScale(const glm::vec3& scale);
+
+    // System이 계산한 최종 WorldMatrix 조회
+    glm::mat4 GetWorldMatrix() const;
+    
+    // 계층구조
+    /*
+        Flecs ChildOf 관계 형성
+    */
+public:
+    Entity& SetParent(const Entity& parent);
+    Entity& AddChild(const Entity& child);
+
+    Entity GetParent() const;
+    std::vector<Entity> GetChildren() const;
+    Entity GetChild(const std::string& name) const; // 이름으로 검색
+
+    // 하위 계층 구조를 DFS로 검색
+    Entity FindChildByNameRecursive(const std::string& targetName) const;
+public:
+    // Generic Component API
     template<typename T>
-    Entity& Set(T&& component){
-        // const, volatile, 참조등을 제거한 순수 데이터 타입 추출
-        using Component = std::decay_t<T>;
-
-        // 여기서는 T&&로 인수를 받음 -> lval로 ㅂ다음
-        m_Handle.set<Component>(
-            std::forward<T>(component)  //원래 값 성질(lval, rval) 보존 후 전달
-        );
-
-        // 1. 메서드 체이닝
-        // 2. 동일 객체 수정 유지
-        // 3. 복사 제거
+    Entity& Set(const T& component){
+        m_EntityHandle.set<T>(component);
         return *this;
     }
 
-    // 특정 컴포넌트를 가졌는가
+    // Tag Component 추가
+    template<typename T>
+    Entity& Add(){
+        m_EntityHandle.add<T>();
+        return *this;
+    }
+
+    // Component 제거.
+    template<typename T>
+    Entity& Remove() {
+        m_EntityHandle.remove<T>();
+        return *this;
+    }
+
+    // Mutable Component 접근
+    //  get_mut()을 사용하므로 수정 가능한 참조를 얻는다.
+    template<typename T>
+    T& Get(){
+        return m_EntityHandle.get_mut<T>();
+    }
+
     template<typename T>
     bool Has() const{
-        return m_Handle.has<T>();
+        return m_EntityHandle.has<T>();
     }
 
-    // 컴포넌트 제거
-    template<typename T>
-    Entity& Remove(){
-        m_Handle.remove<T>();
-        return *this;
+public:
+    // Util
+    flecs::entity GetHandle() const{
+        return m_EntityHandle;
+    }
+    bool IsValid() const;
+    void Destroy();
+
+    // 필요한 경우 Wrapper를 flecs entity로 전달
+    operator flecs::entity() const{
+        return m_EntityHandle;
     }
 
-    void Destroy(){
-        if(m_Handle.is_alive()) m_Handle.destruct();
+    // if (entity) 형태 지원.
+    explicit operator bool() const{
+        return IsValid();
     }
 
-    bool IsAlive(){
-        return m_Handle.is_alive();
+      bool operator==(const Entity& other) const{
+        return m_EntityHandle == other.m_EntityHandle;
     }
 
+    bool operator!=(const Entity& other) const{
+        return !(*this == other);
+    }
 
 private:
-    explicit Entity(flecs::entity handle):m_Handle(handle){}
-private:
-    flecs::entity m_Handle;
+    flecs::entity m_EntityHandle{flecs::entity::null()};
 };
-} // namespace PoseLink

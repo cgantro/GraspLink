@@ -1,12 +1,11 @@
-﻿#pragma once
+#pragma once
 
 #include <cstdint>
 #include <memory>
 
 #include <glm/glm.hpp>
 
-namespace PoseLink
-{
+
 class VertexArray;
 class VertexBuffer;
 class IndexBuffer;
@@ -40,4 +39,3 @@ private:
     std::unique_ptr<VertexBuffer> vertexBuffer_;
     std::unique_ptr<IndexBuffer> indexBuffer_;
 };
-}

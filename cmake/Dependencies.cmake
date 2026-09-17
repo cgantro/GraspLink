@@ -35,8 +35,8 @@ function(grasplink_add_graphics_library)
   find_package(OpenGL REQUIRED)
 
   add_library(grasplink_graphics STATIC
-    modules/viewer/include/components/Transform.h
-    modules/viewer/include/components/Renderable.h
+    modules/viewer/include/components/TransformComponents.h
+    modules/viewer/include/components/RenderComponents.h
     modules/viewer/include/graphics/Camera.h
     modules/viewer/include/graphics/IndexBuffer.h
     modules/viewer/include/graphics/Material.h

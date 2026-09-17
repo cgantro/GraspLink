@@ -2,16 +2,15 @@
 
 #include "Material.h"
 #include "Mesh.h"
-#include "Renderable.h"
+#include "components/RenderComponents.h"
 #include "Shader.h"
-#include "Transform.h"
+#include "components/TransformComponents.h"
 
 #include <glad/glad.h>
 
 #include <cstdint>
 
-namespace PoseLink
-{
+
 Renderer::Renderer() = default;
 Renderer::~Renderer() = default;
 
@@ -47,4 +46,3 @@ void Renderer::Draw(const Transform& transform, const Renderable& renderable,
     renderable.mesh->UnBind();
     renderable.shader->UnBind();
 }
-} // namespace PoseLink

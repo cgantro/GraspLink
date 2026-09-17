@@ -9,7 +9,7 @@
 
 #include <cstdint>
 
-namespace PoseLink {
+
 
 class VertexArray{
 public:
@@ -24,5 +24,3 @@ public:
 private:
     uint32_t m_RendererID = 0;
 };
-
-} // namespace PoseLink
