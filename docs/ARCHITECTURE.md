@@ -4,7 +4,7 @@
 
 GraspLink는 **하나의 C++ Simulator process 안에서 HCR-12A 기반 6DoF 로봇팔의 모델링, FK/IK, target 추종, grasp/attach를 구현하고 검증하는 프로젝트**다.
 
-외부 Embedded Controller, UDP 입력, Vision Node는 시스템 경계에 포함하지 않는다.
+외부 Embedded Controller, serial/UDP 입력, Vision Node는 시스템 경계에 포함하지 않는다.
 
 ---
 
@@ -14,7 +14,7 @@ GraspLink는 **하나의 C++ Simulator process 안에서 HCR-12A 기반 6DoF 로
 flowchart LR
     T[Synthetic Target / Object]
     G[6D Grasp Pose]
-    IK[6DoF IK]
+    IK[6DoF DLS IK]
     J[Joint State q1..q6]
     FK[FK]
     R[Robot Link Transform]
@@ -28,7 +28,7 @@ flowchart LR
     A --> V
 ```
 
-입력은 Simulator 내부에서 생성하는 deterministic target/object state로 시작한다.
+입력은 Simulator 내부 state로 관리한다. 향후 keyboard/GUI 조작을 추가하더라도 별도 transport/protocol layer를 만들지 않고 simulation state를 직접 갱신한다.
 
 ---
 
@@ -54,9 +54,7 @@ Base
                                        └─ 2F85 Gripper
 ```
 
-J1~J6은 revolute joint이며 origin/axis/limit는 RobotDescription에서 명시한다. Gripper open/close는 별도 actuator/state다.
-
-IK target은 End Effector의 position과 orientation을 포함한 6D pose로 정의한다.
+J1~J6은 revolute joint이며 origin/axis/limit는 kinematics 계층의 `RobotSpecification`에서 명시한다.
 
 ---
 
@@ -65,7 +63,7 @@ IK target은 End Effector의 position과 orientation을 포함한 6D pose로 정
 GLB는 시각 자산이고 joint hierarchy의 source of truth가 아니다.
 
 ```text
-RobotDescription
+RobotSpecification
 ├─ J1~J6 origin
 ├─ J1~J6 axis
 ├─ Joint limit
@@ -77,38 +75,35 @@ RobotAsset
 └─ 2F85 gripper assembly/mesh
 ```
 
-STEP→GLB 변환에서는 CAD assembly hierarchy와 local transform을 보존한다. 다만 HCR-12A CAD의 조립 트리는 실제 6축 kinematic chain과 동일하지 않으므로, 운동학 계층은 코드/설정으로 별도 관리한다.
+STEP→GLB 변환에서는 CAD assembly hierarchy와 local transform을 보존한다. 실제 6축 kinematic chain은 코드에서 별도로 정의한다.
 
-그리퍼는 별도 GLB로 유지한다.
+그리퍼는 별도 GLB로 유지할 수 있다.
 
 ```text
 T_world_gripper = T_world_ee × T_ee_gripper
 ```
 
-`T_ee_gripper`는 고정 mount offset이다.
-
 ---
 
 ## 5. 현재 구현 구조
 
-현재 실제 코드는 OpenGL/Flecs Viewer 기반이다.
-
 ```text
 ViewerApp
-├─ Window
-├─ Renderer
-├─ Camera
+├─ SimulatorConfig
+├─ ForwardKinematics
+├─ DampedLeastSquaresIkSolver
+├─ GraspPoseCalculator
+├─ GraspController
+├─ CadVisualRig
+├─ Window / Renderer / Camera
 └─ flecs::world
-   ├─ RenderContext
-   ├─ Entity: Transform + Renderable
+   ├─ HCR-12A link entities
+   ├─ TargetObject
+   ├─ TCP debug entity
    └─ RenderSystem
 ```
 
-현재 executable:
-
-```text
-grasplink_simulator
-```
+외부 I/O receiver/sender는 없다.
 
 ---
 
@@ -116,23 +111,22 @@ grasplink_simulator
 
 | 영역 | 책임 |
 |---|---|
-| `apps/viewer` | Simulator lifecycle과 scene 구성 |
-| `modules/common` | 공통 수학/domain type |
+| `apps/viewer` | Simulator lifecycle, target state, scene orchestration |
+| `modules/common` | Pose, JointState 등 공통 domain type |
+| `modules/kinematics` | HCR-12A specification, FK, Jacobian, DLS IK, grasp |
 | `modules/viewer` | OpenGL/Flecs scene 및 rendering |
-| 향후 robot module | RobotDescription, 6DoF FK, IK, grasp 계산 |
 | `assets` | shader, HCR-12A/2F85/object mesh |
-| `tests` | deterministic kinematics/state 검증 |
-
-외부 I/O 전용 module은 두지 않는다.
+| `tools/cad` | CAD→GLB preprocessing |
+| `tests` | deterministic FK/IK/grasp 검증 |
 
 ---
 
 ## 7. Simulator update 흐름
 
 ```text
-Synthetic Target Update
+Simulation Target State
 → 6D Grasp Pose 계산
-→ IK
+→ DLS IK
 → Joint Target q1..q6
 → Joint State Update
 → FK
@@ -142,22 +136,22 @@ Synthetic Target Update
 → Render
 ```
 
-IK가 실패하면 이전 유효 joint state를 유지하거나 명시적 failure state로 처리하며 NaN/비정상 transform을 scene에 적용하지 않는다.
+IK가 실패하면 이전 유효 joint state를 유지하고 invalid transform을 scene에 적용하지 않는다.
 
 ---
 
-## 8. FK 경계
+## 8. FK/IK 경계
 
-FK는 rendering API에 의존하지 않는다.
+Kinematics module은 OpenGL/Flecs에 의존하지 않는다.
 
 ```text
 Joint State q1..q6
-→ RobotDescription
-→ Link1..Link6 Transforms
-→ End Effector Transform
+→ RobotSpecification
+→ FK / Jacobian / IK
+→ Link1..Link6 / End Effector Transform
 ```
 
-렌더링 계층은 계산된 world transform만 소비한다.
+렌더링 계층은 계산된 transform만 소비한다.
 
 ---
 
@@ -168,53 +162,39 @@ Joint State q1..q6
 ```text
 position error <= threshold
 AND
-orientation/alignment error <= threshold
-AND
-gripper state == close
-→ grasp success
+orientation error <= threshold
 → Object Attach
 ```
 
-Attach 이후 object는 End Effector 또는 Gripper에 대한 relative transform을 유지한다.
+Attach 이후 object는 End Effector에 대한 relative transform을 유지한다.
 
 ---
 
 ## 10. Flecs 사용 범위
 
-Flecs는 scene entity/component와 rendering system scheduling에 사용한다.
-
-```text
-Entity
-+ Transform
-+ Renderable
-+ optional RobotLink / Target / AttachedObject role component
-```
-
-FK/IK solver 자체는 Flecs나 OpenGL에 강하게 결합하지 않는다.
+Flecs는 scene entity/component와 rendering system scheduling에 사용한다. FK/IK solver 자체는 ECS에 종속시키지 않는다.
 
 ---
 
-## 11. 기본 구현 순서
+## 11. 기본 구현/검증 순서
 
-1. Synthetic Target/Object
-2. HCR-12A / 2F85 asset 정리
-3. 6DoF hierarchy와 J1~J6 joint frame 정의
-4. FK
-5. End Effector / 6D Grasp Pose
-6. Gripper mount
-7. 6DoF IK
-8. Joint update / trajectory
-9. Target pose tracking
-10. Kinematic attach/release
-11. Test / diagnostics / performance measurement
-
-자세한 순서는 [ROADMAP.md](ROADMAP.md)를 따른다.
+1. HCR-12A / 2F85 asset 정리
+2. J1~J6 joint frame/limit 검증
+3. FK reference pose 검증
+4. End Effector / 6D Grasp Pose
+5. Gripper mount
+6. DLS IK 정확도/수렴성 검증
+7. Joint trajectory/update
+8. Synthetic target pose 조작 UI
+9. Kinematic attach/release
+10. Test / diagnostics / performance measurement
 
 ---
 
 ## 12. 기본 범위에서 제외
 
 - ESP32 / MCU / RTOS
+- UART / serial protocol
 - UDP / socket protocol
 - Camera / ArUco / OpenCV
 - ROS2

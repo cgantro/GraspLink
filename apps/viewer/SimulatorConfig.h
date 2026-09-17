@@ -2,26 +2,20 @@
 
 #include "Pose.h"
 
-#include <cstdint>
+#include <cstddef>
 #include <string>
 
 /**
- * @brief Simulator process의 외부 환경 계약이다.
+ * @brief Simulation-only runtime configuration.
  *
- * 로봇의 좌표/IK 상수와 개발자의 LAN endpoint를 소스 코드에서 분리한다. `.env`는
- * `KEY=VALUE` 한 줄씩만 해석하는 의도적으로 작은 형식이다. Wi-Fi password 같은
- * secret을 C++ binary나 repository에 남기지 않으며, 알 수 없는 key는 앞으로의
- * 설정 확장을 위해 무시한다.
+ * 외부 controller/serial/network 설정은 포함하지 않는다. workspace, target orientation,
+ * grasp tolerance, IK parameter처럼 시뮬레이션 자체에 필요한 값만 로컬 `.env`에서 덮어쓸 수 있다.
  */
 struct SimulatorConfig
 {
-    // USB-to-UART bridge creates a bidirectional virtual COM port. This v1
-    // setting deliberately has no LAN address or Wi-Fi credential.
-    std::string serialPort = "COM3";
-    std::uint32_t serialBaudRate = 115200U;
     PoseLink::Position3D workspaceMinimum{-0.90F, 0.10F, -0.90F};
     PoseLink::Position3D workspaceMaximum{0.90F, 1.20F, 0.90F};
-    PoseLink::Quaternion fixedTcpOrientation{};
+    PoseLink::Quaternion targetOrientation{};
     float graspPositionToleranceMetres = 0.020F;
     float graspOrientationToleranceRadians = 0.08726646F;
     std::size_t ikMaximumIterations = 100U;
