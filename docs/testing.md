@@ -10,10 +10,10 @@ GraspLink는 시뮬레이션 단계별로 오류 원인을 분리해 검증한�
 
 ```text
 Synthetic Target/Object
-→ Robot Model
-→ FK
-→ Gripper Mount / Grasp Pose
-→ IK
+→ HCR-12A Robot Model
+→ 6DoF FK
+→ 2F85 Gripper Mount / 6D Grasp Pose
+→ 6DoF IK
 → Joint Tracking
 → Attach / Release
 → Runtime Measurement
@@ -24,6 +24,7 @@ Synthetic Target/Object
 ## 3. Synthetic Target/Object
 
 - X/Y/Z 이동이 예상 축으로 적용되는지 확인한다.
+- orientation 변화가 예상 회전축으로 적용되는지 확인한다.
 - 같은 시간/seed에서 같은 target을 생성한다.
 - reference axis를 함께 그려 frame 방향을 확인한다.
 
@@ -33,13 +34,15 @@ Synthetic Target/Object
 
 체크리스트:
 
-- Base / Link1~4 식별
-- J1~J4 origin 확인
-- joint axis 확인
-- joint limit 확인
+- HCR-12A Base / Link1~6 식별
+- J1~J6 origin 확인
+- J1~J6 joint axis 확인
+- J1~J6 joint limit 확인
 - End Effector frame 확인
 - GLB mesh scale/unit 확인
-- Gripper mount frame 확인
+- CAD assembly hierarchy/local transform 보존 확인
+- CAD assembly tree와 kinematic tree 분리 확인
+- 2F85 Gripper mount frame 확인
 
 각 link에 debug axis를 표시해 hierarchy 오류를 확인한다.
 
@@ -49,7 +52,7 @@ Synthetic Target/Object
 
 ### Reference Configuration
 
-고정 joint angle set을 사용해 예상 link/EE transform과 비교한다.
+고정 `q1..q6` angle set을 사용해 예상 link/EE transform과 비교한다.
 
 ### Single-Joint Test
 
@@ -58,6 +61,8 @@ J1 only
 J2 only
 J3 only
 J4 only
+J5 only
+J6 only
 ```
 
 확인:
@@ -65,6 +70,7 @@ J4 only
 - 올바른 축으로 회전하는가
 - child link가 함께 움직이는가
 - parent link가 역으로 움직이지 않는가
+- J1~J6 누적 transform 후 End Effector pose가 일관적인가
 
 ### Invariant
 
@@ -83,8 +89,8 @@ T_world_gripper = T_world_ee × T_ee_gripper
 T_world_grasp   = T_world_object × T_object_grasp
 ```
 
-- End Effector 이동 시 gripper offset이 일정하다.
-- Object 이동 시 grasp frame offset이 일정하다.
+- End Effector 이동 시 2F85 gripper offset이 일정하다.
+- Object 이동/회전 시 grasp frame offset이 일정하다.
 - 두 frame을 debug axis로 동시에 확인할 수 있다.
 
 ---
@@ -94,24 +100,25 @@ T_world_grasp   = T_world_object × T_object_grasp
 ### Reachable Target
 
 ```text
-Target
+Target 6D Pose
 → IK
-→ q
+→ q1..q6
 → FK(q)
-→ End Effector
+→ End Effector 6D Pose
 ```
 
-FK 결과가 설정한 tolerance 안에 들어오는지 확인한다.
+FK 결과의 position/orientation error가 설정한 tolerance 안에 들어오는지 확인한다.
 
 ### Unreachable Target
 
-workspace 밖 target에서 solver가 실패 상태를 반환하고 scene에 invalid joint 값을 적용하지 않는지 확인한다.
+workspace 밖 target 또는 수렴 불가능한 orientation에서 solver가 실패 상태를 반환하고 scene에 invalid joint 값을 적용하지 않는지 확인한다.
 
 ### Numerical Solver를 사용할 경우
 
 - iteration limit
 - damping
 - convergence threshold
+- position/orientation error weight
 - singularity 근처 동작
 - joint limit 처리
 
@@ -122,9 +129,9 @@ workspace 밖 target에서 solver가 실패 상태를 반환하고 scene에 inva
 ## 8. Joint Tracking
 
 - frame `dt` 변화에 따른 update를 확인한다.
-- joint speed/step limit를 초과하지 않는다.
+- 각 joint의 speed/step limit를 초과하지 않는다.
 - 큰 `dt` 입력에서 비정상 점프를 방지한다.
-- 움직이는 synthetic target을 안정적으로 추종한다.
+- 움직이는 synthetic 6D target pose를 안정적으로 추종한다.
 
 ---
 
@@ -135,7 +142,7 @@ workspace 밖 target에서 solver가 실패 상태를 반환하고 scene에 inva
 ```text
 position error <= threshold
 AND
-alignment error <= threshold
+orientation/alignment error <= threshold
 AND
 gripper == close
 ```
@@ -157,7 +164,8 @@ GLB/mesh loader에 대해 다음을 확인한다.
 - 잘못된 header/chunk를 명시적으로 reject한다.
 - unsupported vertex/index layout을 구분한다.
 - mesh bounds와 scale을 확인할 수 있다.
-- CAD 변환 asset의 node hierarchy를 kinematics 정보로 암묵적으로 사용하지 않는다.
+- STEP→GLB 변환 asset의 assembly hierarchy와 local transform을 읽을 수 있다.
+- CAD node hierarchy를 kinematics 정보로 암묵적으로 사용하지 않는다.
 
 ---
 
@@ -178,10 +186,11 @@ GLB/mesh loader에 대해 다음을 확인한다.
 Release build에서 기록 후보:
 
 - Viewer frame time / FPS
-- FK update time
+- 6DoF FK update time
 - IK solve time
 - IK iteration count
-- End Effector error
+- End Effector position error
+- End Effector orientation error
 - grasp success/failure
 - target 도달 시간
 
