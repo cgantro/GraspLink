@@ -54,3 +54,8 @@ Desktop.ini
 *.temp
 *.swp
 *~
+
+# Local simulator and controller endpoints/credentials.  Commit only the
+# documented template so a developer's LAN address and Wi-Fi secrets never
+# become repository data.
+.env

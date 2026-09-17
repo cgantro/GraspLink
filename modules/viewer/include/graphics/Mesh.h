@@ -2,6 +2,8 @@
 
 #include <cstdint>
 #include <memory>
+#include <string>
+#include <vector>
 
 #include <glm/glm.hpp>
 namespace PoseLink
@@ -9,6 +11,21 @@ namespace PoseLink
 class VertexArray;
 class VertexBuffer;
 class IndexBuffer;
+class Mesh;
+
+/**
+ * @brief 단일 GLB asset 안에서 독립적으로 그릴 수 있는 named mesh다.
+ *
+ * HCR-12A GLB는 base와 여섯 link를 한 파일에 담지만, FK는 link마다 서로 다른
+ * rigid transform을 적용한다. `name`은 CAD visual rig가 어느 FK reference frame에
+ * 연결할지를 검증하는 stable asset contract이고, `mesh`의 GPU resource는
+ * `Renderable`과 같은 shared ownership으로 보관된다.
+ */
+struct StaticGlbMesh
+{
+    std::string name;
+    std::shared_ptr<Mesh> mesh;
+};
 
 /*
     정점 하나의 데이터
@@ -50,6 +67,27 @@ public:
     void Bind() const;
     void UnBind() const;
     static std::unique_ptr<Mesh> CreateCube();
+    /**
+     * @brief Offline-converted triangular OBJ를 GPU mesh로 읽는다.
+     *
+     * STEP/CAD parser는 runtime dependency가 아니며 FreeCAD가 link별 OBJ를 만든다.
+     * 이 importer는 `v`, optional `vt`, 그리고 triangle 또는 fan-triangulatable `f`만
+     * 허용한다. HCR link는 local joint frame을 유지한 채 export해야 하므로 이 함수는
+     * mesh vertex에 robot transform을 추가로 적용하지 않는다.
+     */
+    static std::unique_ptr<Mesh> LoadObj(const std::string& path);
+
+    /**
+     * @brief GraspLink exporter profile의 one-file static GLB를 named mesh 목록으로 읽는다.
+     *
+     * 이 함수는 범용 glTF importer가 아니다. GLB v2, embedded BIN chunk, `POSITION`
+     * float/VEC3, unsigned-32 triangle index라는 `export_hcr12a_glb.py`의 정확한
+     * profile만 허용한다. profile 밖의 skin, animation, external URI, sparse accessor는
+     * 명시적으로 지원하지 않아 CAD asset parsing이 renderer의 공격 표면이나 hidden
+     * dependency가 되지 않는다. GLB normal은 현재 unlit texture shader가 소비하지
+     * 않으므로 검증만 하고, position/index만 OpenGL mesh로 옮긴다.
+     */
+    static std::vector<StaticGlbMesh> LoadStaticGlb(const std::string& path);
     uint32_t GetIndexCount() const;
 private:
     std::unique_ptr<VertexArray> m_VertexArray;
