@@ -2,7 +2,7 @@
 
 ## 1. 목적
 
-GraspLink는 **하나의 C++ Simulator process 안에서 4DoF 로봇팔의 모델링, FK/IK, target 추종, grasp/attach를 구현하고 검증하는 프로젝트**다.
+GraspLink는 **하나의 C++ Simulator process 안에서 HCR-12A 기반 6DoF 로봇팔의 모델링, FK/IK, target 추종, grasp/attach를 구현하고 검증하는 프로젝트**다.
 
 외부 Embedded Controller, UDP 입력, Vision Node는 시스템 경계에 포함하지 않는다.
 
@@ -13,9 +13,9 @@ GraspLink는 **하나의 C++ Simulator process 안에서 4DoF 로봇팔의 모�
 ```mermaid
 flowchart LR
     T[Synthetic Target / Object]
-    G[Grasp Pose]
-    IK[4DoF IK]
-    J[Joint State]
+    G[6D Grasp Pose]
+    IK[6DoF IK]
+    J[Joint State q1..q6]
     FK[FK]
     R[Robot Link Transform]
     EE[End Effector]
@@ -34,17 +34,29 @@ flowchart LR
 
 ## 3. Robot Arm 모델
 
-로봇팔은 **4DoF serial manipulator + gripper**로 고정한다.
+로봇팔은 **HCR-12A 기반 6DoF serial manipulator + 2F85 gripper**로 고정한다.
 
-| Joint | Motion | 역할 |
-|---|---|---|
-| J1 | Base yaw | 수직축 기준 회전 |
-| J2 | Shoulder pitch | 상완 링크 회전 |
-| J3 | Elbow pitch | 전완 링크 회전 |
-| J4 | Wrist pitch | 접근 각도 조정 |
-| Gripper | Open / Close | 별도 actuator/state |
+```text
+Base
+└─ J1
+   └─ Link1
+      └─ J2
+         └─ Link2
+            └─ J3
+               └─ Link3
+                  └─ J4
+                     └─ Link4
+                        └─ J5
+                           └─ Link5
+                              └─ J6
+                                 └─ Link6
+                                    └─ End Effector
+                                       └─ 2F85 Gripper
+```
 
-초기 IK의 주 목표는 target XYZ와 wrist pitch다. full 6DoF pose IK는 기본 범위가 아니다.
+J1~J6은 revolute joint이며 origin/axis/limit는 RobotDescription에서 명시한다. Gripper open/close는 별도 actuator/state다.
+
+IK target은 End Effector의 position과 orientation을 포함한 6D pose로 정의한다.
 
 ---
 
@@ -54,21 +66,20 @@ GLB는 시각 자산이고 joint hierarchy의 source of truth가 아니다.
 
 ```text
 RobotDescription
-├─ Joint origin
-├─ Joint axis
+├─ J1~J6 origin
+├─ J1~J6 axis
 ├─ Joint limit
 ├─ Parent / Child link
 └─ End Effector frame
 
 RobotAsset
-├─ Base mesh
-├─ Link meshes
-└─ Gripper mesh
+├─ HCR-12A assembly/mesh
+└─ 2F85 gripper assembly/mesh
 ```
 
-CAD 변환 과정에서 node hierarchy가 사라지거나 vertex에 transform이 bake될 수 있으므로, kinematics는 코드/설정으로 명시적으로 관리한다.
+STEP→GLB 변환에서는 CAD assembly hierarchy와 local transform을 보존한다. 다만 HCR-12A CAD의 조립 트리는 실제 6축 kinematic chain과 동일하지 않으므로, 운동학 계층은 코드/설정으로 별도 관리한다.
 
-그리퍼는 별도 GLB로 유지할 수 있다.
+그리퍼는 별도 GLB로 유지한다.
 
 ```text
 T_world_gripper = T_world_ee × T_ee_gripper
@@ -108,8 +119,8 @@ grasplink_simulator
 | `apps/viewer` | Simulator lifecycle과 scene 구성 |
 | `modules/common` | 공통 수학/domain type |
 | `modules/viewer` | OpenGL/Flecs scene 및 rendering |
-| 향후 robot module | RobotDescription, FK, IK, grasp 계산 |
-| `assets` | shader, robot/object mesh |
+| 향후 robot module | RobotDescription, 6DoF FK, IK, grasp 계산 |
+| `assets` | shader, HCR-12A/2F85/object mesh |
 | `tests` | deterministic kinematics/state 검증 |
 
 외부 I/O 전용 module은 두지 않는다.
@@ -120,9 +131,9 @@ grasplink_simulator
 
 ```text
 Synthetic Target Update
-→ Grasp Pose 계산
+→ 6D Grasp Pose 계산
 → IK
-→ Joint Target
+→ Joint Target q1..q6
 → Joint State Update
 → FK
 → Link / EE World Transform
@@ -140,9 +151,9 @@ IK가 실패하면 이전 유효 joint state를 유지하거나 명시적 failur
 FK는 rendering API에 의존하지 않는다.
 
 ```text
-Joint State
+Joint State q1..q6
 → RobotDescription
-→ Link Transforms
+→ Link1..Link6 Transforms
 → End Effector Transform
 ```
 
@@ -157,7 +168,7 @@ Joint State
 ```text
 position error <= threshold
 AND
-wrist/grasp alignment error <= threshold
+orientation/alignment error <= threshold
 AND
 gripper state == close
 → grasp success
@@ -186,14 +197,14 @@ FK/IK solver 자체는 Flecs나 OpenGL에 강하게 결합하지 않는다.
 ## 11. 기본 구현 순서
 
 1. Synthetic Target/Object
-2. Robot asset 정리
-3. 4DoF hierarchy와 joint frame 정의
+2. HCR-12A / 2F85 asset 정리
+3. 6DoF hierarchy와 J1~J6 joint frame 정의
 4. FK
-5. End Effector / Grasp Pose
+5. End Effector / 6D Grasp Pose
 6. Gripper mount
-7. IK
+7. 6DoF IK
 8. Joint update / trajectory
-9. Target tracking
+9. Target pose tracking
 10. Kinematic attach/release
 11. Test / diagnostics / performance measurement
 

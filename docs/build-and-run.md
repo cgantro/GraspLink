@@ -83,7 +83,7 @@ Network Proxy
 
 현재 실행 가능한 중심 기능은 OpenGL/Flecs scene rendering이다.
 
-Robot Model/FK/IK/Grasp는 로드맵에 따라 단계적으로 추가한다. 문서의 목표 구조와 현재 구현 상태를 구분한다.
+HCR-12A 6DoF Robot Model/FK/IK와 2F85 Gripper/Grasp는 로드맵에 따라 단계적으로 추가한다. 문서의 목표 구조와 현재 구현 상태를 구분한다.
 
 ---
 
@@ -94,15 +94,17 @@ Robot Model/FK/IK/Grasp는 로드맵에 따라 단계적으로 추가한다. 문
         ↓
 Synthetic Target/Object
         ↓
-Robot asset / 4DoF hierarchy
+HCR-12A / 2F85 assembly-preserving GLB 정리
+        ↓
+6DoF RobotDescription (J1~J6)
         ↓
 FK
         ↓
-Gripper mount / Grasp Pose
+Gripper mount / 6D Grasp Pose
         ↓
-IK
+6DoF IK
         ↓
-Joint tracking
+Joint tracking q1..q6
         ↓
 Object Attach / Release
         ↓

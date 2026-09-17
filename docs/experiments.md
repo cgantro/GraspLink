@@ -2,17 +2,17 @@
 
 ## 1. 목적
 
-GraspLink의 실험은 외부 network 상태가 아니라 **로봇 kinematics, tracking, grasp 조건, runtime 성능**을 검증한다.
+GraspLink의 실험은 외부 network 상태가 아니라 **6DoF 로봇 kinematics, pose tracking, grasp 조건, runtime 성능**을 검증한다.
 
 기본 경로:
 
 ```text
 Synthetic Object
-→ Grasp Pose
-→ IK
-→ Joint Update
+→ 6D Grasp Pose
+→ 6DoF IK
+→ Joint Update q1..q6
 → FK
-→ End Effector
+→ End Effector 6D Pose
 → Grasp / Attach
 ```
 
@@ -21,8 +21,6 @@ Synthetic Object
 ## 2. 실험 전제
 
 입력은 deterministic synthetic trajectory를 사용한다.
-
-이유:
 
 ```text
 Known Ground Truth
@@ -39,7 +37,7 @@ Known Ground Truth
 비교 항목:
 
 - reference configuration
-- single-joint rotation
+- J1~J6 single-joint rotation
 - multi-joint configuration
 - End Effector world pose
 
@@ -57,11 +55,12 @@ Known Ground Truth
 
 | 변수 | 의미 |
 |---|---|
-| target position | workspace 내 위치 |
-| wrist pitch | J4 목표 |
-| initial joint state | solver 시작점 |
+| target position | workspace 내 XYZ 위치 |
+| target orientation | 목표 End Effector orientation |
+| initial joint state | q1..q6 solver 시작점 |
 | iteration limit | 최대 반복 횟수 |
 | damping | numerical IK 안정화 계수 |
+| position/orientation weight | pose error 가중치 |
 | convergence threshold | 종료 조건 |
 
 측정:
@@ -69,7 +68,8 @@ Known Ground Truth
 - convergence success/failure
 - iteration count
 - solve time
-- `IK → FK` End Effector error
+- `IK → FK` position error
+- `IK → FK` orientation error
 - joint limit violation 여부
 
 ---
@@ -78,10 +78,11 @@ Known Ground Truth
 
 Synthetic object trajectory 예:
 
-- static target
+- static target pose
 - straight line
 - circle/arc
-- direction change
+- orientation change
+- position + orientation simultaneous change
 - reachable/unreachable boundary
 
 조절 변수:
@@ -89,11 +90,12 @@ Synthetic object trajectory 예:
 - joint speed limit
 - joint step limit
 - frame `dt`
-- target movement speed
+- target movement/rotation speed
 
 측정:
 
 - End Effector position error
+- End Effector orientation error
 - tracking error variation
 - target 도달 시간
 - IK failure count
@@ -105,7 +107,7 @@ Synthetic object trajectory 예:
 조절 변수:
 
 - position threshold
-- alignment threshold
+- orientation/alignment threshold
 - gripper close timing
 - object motion speed
 
@@ -123,7 +125,7 @@ Synthetic object trajectory 예:
 Release build에서 기록:
 
 - frame time / FPS
-- FK update time
+- 6DoF FK update time
 - IK solve time
 - scene entity count
 - 반복 실행 시 memory 증가 여부
@@ -155,9 +157,10 @@ CPU
 GPU
 Compiler
 Build Type
-Robot Model
+Robot Model: HCR-12A
+Gripper Model: 2F85
 Trajectory
-Initial Joint State
+Initial Joint State q1..q6
 IK Parameters
 Random Seed
 Run Duration
@@ -167,8 +170,8 @@ Run Duration
 
 ## 10. 완료 시 답할 수 있어야 하는 질문
 
-1. FK가 정의한 joint hierarchy를 정확히 반영하는가
-2. IK가 reachable target에서 어느 오차로 수렴하는가
+1. FK가 정의한 6축 joint hierarchy를 정확히 반영하는가
+2. IK가 reachable 6D target pose에서 어느 position/orientation 오차로 수렴하는가
 3. unreachable/singularity 근처에서 어떻게 실패하는가
 4. joint speed 제한이 tracking error에 어떤 영향을 주는가
 5. grasp threshold가 성공 시점과 안정성에 어떤 영향을 주는가

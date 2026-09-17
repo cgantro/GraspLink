@@ -105,7 +105,7 @@ Transform + Renderable
 
 ## 6. Robot 단계에서의 Flecs 역할
 
-예상 scene:
+예상 kinematic scene:
 
 ```text
 Robot Base
@@ -113,8 +113,10 @@ Robot Base
    └─ Link2
       └─ Link3
          └─ Link4
-            └─ End Effector
-               └─ Gripper
+            └─ Link5
+               └─ Link6
+                  └─ End Effector
+                     └─ 2F85 Gripper
 ```
 
 향후 검토 대상:
@@ -124,7 +126,7 @@ Robot Base
 - `ChildOf` relationship
 - hierarchy traversal
 
-다만 FK 계산을 Flecs hierarchy에 먼저 맞추지 않는다. Robot kinematics를 일반 C++로 검증한 뒤 계산된 world transform을 Flecs entity에 반영한다.
+다만 FK 계산을 Flecs hierarchy에 먼저 맞추지 않는다. HCR-12A의 6DoF kinematics를 일반 C++로 검증한 뒤 계산된 world transform을 Flecs entity에 반영한다. CAD assembly hierarchy는 visual asset 구성에 사용하되 kinematic hierarchy의 source of truth로 사용하지 않는다.
 
 ---
 
@@ -152,8 +154,8 @@ world/component 파괴
 | `RenderSystem` module/system | 구현 |
 | `world.progress(dt)` loop | 구현 |
 | `Transform + Renderable` query | 구현 |
-| Robot Link entity | 예정 |
-| Gripper / Object role component | 예정 |
+| HCR-12A Link1~6 entity | 예정 |
+| 2F85 Gripper / Object role component | 예정 |
 | Flecs hierarchy / relationship | 검토 예정 |
 | FK/IK system | ECS 종속 없이 먼저 구현 |
 
