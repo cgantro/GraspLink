@@ -24,11 +24,6 @@ target_include_directories(grasplink_kinematics PUBLIC
   modules/kinematics/include
 )
 
-add_library(grasplink_transport STATIC
-  modules/transport/src/Protocol.cpp
-  modules/transport/src/SerialTransport.cpp
-  modules/transport/src/UdpSocket.cpp
-)
 target_include_directories(grasplink_transport PUBLIC
   modules/common/include
   modules/transport/include
