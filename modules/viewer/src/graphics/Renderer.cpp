@@ -1,15 +1,13 @@
-#include "Renderer.h"
+﻿#include "Renderer.h"
 
 #include "Material.h"
 #include "Mesh.h"
-#include "components/RenderComponents.h"
 #include "Shader.h"
-#include "components/TransformComponents.h"
+#include "components/RenderComponents.h"
 
 #include <glad/glad.h>
 
 #include <cstdint>
-
 
 Renderer::Renderer() = default;
 Renderer::~Renderer() = default;
@@ -25,24 +23,39 @@ void Renderer::BeginFrame()
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 }
 
-void Renderer::Draw(const Transform& transform, const Renderable& renderable,
-                    const glm::mat4& view, const glm::mat4& projection)
+void Renderer::Draw(const glm::mat4& model,
+                    const MeshFilter& meshFilter,
+                    const MeshRenderer& meshRenderer,
+                    const glm::mat4& view,
+                    const glm::mat4& projection)
 {
-    if (!renderable.mesh || !renderable.shader || !renderable.material) { return; }
+    if (!meshFilter.mesh || !meshRenderer.shader || !meshRenderer.material)
+    {
+        return;
+    }
 
-    renderable.shader->Bind();
-    renderable.shader->SetMat4("u_Model", transform.GetMatrix());
-    renderable.shader->SetMat4("u_View", view);
-    renderable.shader->SetMat4("u_Projection", projection);
-    renderable.shader->SetFloat4("u_BaseColorFactor", renderable.material->BaseColorFactor());
-    renderable.shader->SetFloat("u_MetallicFactor", renderable.material->MetallicFactor());
-    renderable.shader->SetFloat("u_RoughnessFactor", renderable.material->RoughnessFactor());
-    renderable.mesh->Bind();
-    const std::size_t indexCount = renderable.indexCount == 0U
-        ? renderable.mesh->GetIndexCount() : renderable.indexCount;
-    const std::size_t indexOffset = renderable.indexOffset * sizeof(std::uint32_t);
-    glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(indexCount), GL_UNSIGNED_INT,
-                   reinterpret_cast<const void*>(indexOffset));
-    renderable.mesh->UnBind();
-    renderable.shader->UnBind();
+    meshRenderer.shader->Bind();
+    meshRenderer.shader->SetMat4("u_Model", model);
+    meshRenderer.shader->SetMat4("u_View", view);
+    meshRenderer.shader->SetMat4("u_Projection", projection);
+    meshRenderer.shader->SetFloat4(
+        "u_BaseColorFactor", meshRenderer.material->BaseColorFactor());
+    meshRenderer.shader->SetFloat(
+        "u_MetallicFactor", meshRenderer.material->MetallicFactor());
+    meshRenderer.shader->SetFloat(
+        "u_RoughnessFactor", meshRenderer.material->RoughnessFactor());
+
+    meshFilter.mesh->Bind();
+    const std::size_t indexCount = meshFilter.indexCount == 0U
+        ? meshFilter.mesh->GetIndexCount()
+        : meshFilter.indexCount;
+    const std::size_t indexOffset =
+        meshFilter.indexOffset * sizeof(std::uint32_t);
+    glDrawElements(
+        GL_TRIANGLES,
+        static_cast<GLsizei>(indexCount),
+        GL_UNSIGNED_INT,
+        reinterpret_cast<const void*>(indexOffset));
+    meshFilter.mesh->UnBind();
+    meshRenderer.shader->UnBind();
 }

@@ -22,9 +22,8 @@ private:
     void MainLoop();
     void Shutdown();
 
-    std::unique_ptr<Window> window_;
-    std::unique_ptr<Renderer> renderer_;
-    std::unique_ptr<Camera> camera_;
+    std::unique_ptr<Window> m_Window;
+    std::unique_ptr<Renderer> m_Renderer;
+    std::unique_ptr<Camera> m_Camera;
     flecs::world m_World;
-    flecs::entity debugEntity_{flecs::entity::null()};
 };

@@ -1,6 +1,6 @@
 #include "Entity.h"
 
-#include "Components/TransformComponents.h"
+#include "components/TransformComponents.h"
 
 
 Entity::Entity(flecs::entity handle)
@@ -26,13 +26,10 @@ glm::vec3 Entity::GetLocalPosition() const
     if (!IsValid())
         return glm::vec3(0.0f);
 
-    const Position* position =
-        m_EntityHandle.get<Position, Local>();
-
-    if (!position)
+    if (!m_EntityHandle.has<Position, Local>())
         return glm::vec3(0.0f);
 
-    return *position;
+    return m_EntityHandle.get<Position, Local>();
 }
 
 
@@ -41,13 +38,10 @@ glm::vec3 Entity::GetLocalRotation() const
     if (!IsValid())
         return glm::vec3(0.0f);
 
-    const Rotation* rotation =
-        m_EntityHandle.get<Rotation, Local>();
-
-    if (!rotation)
+    if (!m_EntityHandle.has<Rotation, Local>())
         return glm::vec3(0.0f);
 
-    return *rotation;
+    return m_EntityHandle.get<Rotation, Local>();
 }
 
 
@@ -56,13 +50,10 @@ glm::vec3 Entity::GetLocalScale() const
     if (!IsValid())
         return glm::vec3(1.0f);
 
-    const Scale* scale =
-        m_EntityHandle.get<Scale, Local>();
-
-    if (!scale)
+    if (!m_EntityHandle.has<Scale, Local>())
         return glm::vec3(1.0f);
 
-    return *scale;
+    return m_EntityHandle.get<Scale, Local>();
 }
 
 
@@ -134,13 +125,10 @@ glm::mat4 Entity::GetWorldMatrix() const
             TransformSystem
                 -> 실제 계산
     */
-    const TransformMatrix* matrix =
-        m_EntityHandle.get<TransformMatrix, World>();
-
-    if (!matrix)
+    if (!m_EntityHandle.has<TransformMatrix, World>())
         return glm::mat4(1.0f);
 
-    return *matrix;
+    return m_EntityHandle.get<TransformMatrix, World>();
 }
 
 

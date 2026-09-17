@@ -15,13 +15,16 @@ option(GRASPLINK_BUILD_GRAPHICS "Build the OpenGL viewer" ON)
 if(GRASPLINK_BUILD_GRAPHICS)
   include(cmake/Dependencies.cmake)
   grasplink_add_graphics_dependencies()
-  grasplink_add_graphics_library()
+  grasplink_add_graphics_library(
+    modules/viewer/include/scene/Scene.h
+    modules/viewer/include/scene/SceneManager.h)
 
   add_executable(grasplink_simulator
     apps/viewer/main.cpp
     apps/viewer/ViewerApp.cpp
     apps/viewer/ViewerApp.h
     modules/viewer/include/Entity.h
+    modules/viewer/src/Entity.cpp
     modules/viewer/include/components/Components.h
     modules/viewer/include/components/GripperComponents.h
     modules/viewer/include/components/RenderComponents.h

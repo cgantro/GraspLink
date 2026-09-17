@@ -1,36 +1,45 @@
 ﻿#include "systems/RenderSystemModule.h"
 
-#include "graphics/Camera.h"
-#include "RenderContext.h"
-#include "graphics/Renderer.h"
+#include "components/RenderComponents.h"
 #include "components/TransformComponents.h"
+#include "graphics/Camera.h"
+#include "graphics/Renderer.h"
+#include "RenderContext.h"
 
 RenderSystemModule::RenderSystemModule(flecs::world& world)
 {
-    // 렌더 시스템 등록은 이 모듈이 단독으로 책임진다.
     world.module<RenderSystemModule>();
     RegisterSystem(world);
 }
 
 void RenderSystemModule::RegisterSystem(flecs::world& world)
 {
-    flecs::world* worldPtr = &world;
+    flecs::world* worldPointer = &world;
 
-    world.system<const Transform, const Renderable>("RenderSystem")
+    world.system<const MeshFilter, const MeshRenderer, const TransformMatrix>(
+        "RenderSystem")
         .kind(flecs::PreStore)
-        .each([worldPtr](const Transform& transform,
-                         const Renderable& renderable)
+        .term_at(2).second<World>()
+        .each([worldPointer](const MeshFilter& meshFilter,
+                             const MeshRenderer& meshRenderer,
+                             const TransformMatrix& worldMatrix)
         {
+            if (!meshRenderer.visible)
+            {
+                return;
+            }
+
             const RenderContext* context =
-                worldPtr->try_get<RenderContext>();
+                worldPointer->try_get<RenderContext>();
             if (!context || !context->renderer || !context->camera)
             {
                 return;
             }
 
             context->renderer->Draw(
-                transform,
-                renderable,
+                static_cast<const glm::mat4&>(worldMatrix),
+                meshFilter,
+                meshRenderer,
                 context->camera->GetViewMatrix(),
                 context->camera->GetProjectionMatrix());
         });

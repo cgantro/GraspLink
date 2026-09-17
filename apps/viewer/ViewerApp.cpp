@@ -7,9 +7,10 @@
 #include "Renderer.h"
 #include "RenderSystemModule.h"
 #include "Shader.h"
-#include "TransformComponents.h"
 #include "TransformSystemModule.h"
 #include "Window.h"
+#include "components/RenderComponents.h"
+#include "components/TransformComponents.h"
 
 #include <memory>
 
@@ -41,51 +42,54 @@ int ViewerApp::Run()
 
 bool ViewerApp::Init()
 {
-    window_ = std::make_unique<Window>(Window::Properties{
+    m_Window = std::make_unique<Window>(Window::Properties{
         kWindowWidth, kWindowHeight, kWindowTitle, true});
-    renderer_ = std::make_unique<Renderer>();
-    renderer_->Init();
-    camera_ = std::make_unique<Camera>(
+    m_Renderer = std::make_unique<Renderer>();
+    m_Renderer->Init();
+    m_Camera = std::make_unique<Camera>(
         kCameraPosition,
         kCameraTarget,
         static_cast<float>(kWindowWidth) /
             static_cast<float>(kWindowHeight));
 
-    m_World.set<RenderContext>({renderer_.get(), camera_.get()});
+    m_World.set<RenderContext>({m_Renderer.get(), m_Camera.get()});
     m_World.import<TransformSystemModule>();
     m_World.import<RenderSystemModule>();
 
     auto shader = Shader::Create("shaders/Debug.glsl");
     auto material = std::make_shared<Material>(
         glm::vec4(0.18F, 0.45F, 0.85F, 1.0F), 0.0F, 0.8F);
-    std::shared_ptr<Mesh> mesh(Mesh::CreateCube());
+    std::shared_ptr<Mesh> mesh = Mesh::CreateCube();
 
-    debugEntity_ = m_World.entity("DebugCube")
-        .set<Transform>(Transform{
-            kDebugPosition,
-            glm::quat(1.0F, 0.0F, 0.0F, 0.0F),
-            kDebugScale})
-        .set<Renderable>({mesh, shader, material});
+    // DebugCube도 실제 씬 엔티티와 같은 Local/World pair를 사용한다.
+    auto debugEntity = m_World.entity("DebugCube");
+    debugEntity
+        .set<Position, Local>(Position{kDebugPosition})
+        .set<Rotation, Local>(Rotation{glm::vec3(0.0F)})
+        .set<Scale, Local>(Scale{kDebugScale})
+        .set<TransformMatrix, Local>(TransformMatrix{})
+        .set<TransformMatrix, World>(TransformMatrix{})
+        .set<MeshFilter>(MeshFilter{mesh})
+        .set<MeshRenderer>(MeshRenderer{shader, material, true});
 
     return true;
 }
 
 void ViewerApp::MainLoop()
 {
-    while (!window_->ShouldClose())
+    while (!m_Window->ShouldClose())
     {
-        window_->PollEvents();
-        renderer_->BeginFrame();
+        m_Window->PollEvents();
+        m_Renderer->BeginFrame();
         m_World.progress(0.0F);
-        window_->SwapBuffers();
+        m_Window->SwapBuffers();
     }
 }
 
 void ViewerApp::Shutdown()
 {
-    debugEntity_ = flecs::entity::null();
     m_World.reset();
-    camera_.reset();
-    renderer_.reset();
-    window_.reset();
+    m_Camera.reset();
+    m_Renderer.reset();
+    m_Window.reset();
 }
