@@ -2,179 +2,161 @@
 
 ## 1. 확정 결정
 
-### D-01 Vision Node와 Viewer/Simulator 분리
+### D-01 프로젝트는 Simulation-only로 유지
 
-두 프로그램을 별도 process로 유지한다.
+GraspLink는 단일 C++ Simulator process로 제한한다.
 
-```text
-Vision Node
-→ UDP
-→ Viewer / Simulator
-```
-
-이유: 실제 network boundary와 process lifetime을 검증하기 위해서다.
-
-### D-02 Vision Node는 headless producer
-
-Vision Node는 OpenGL/Flecs GUI application으로 만들지 않는다.
-
-개발 중 preview가 필요하면 OpenCV HighGUI를 선택적으로 사용한다.
-
-### D-03 초기 인식 대상은 known object
-
-초기에는 markerless detector나 일반 grasp planning을 하지 않는다.
+기본 범위에서 제외:
 
 ```text
-Known Object
-+ Known ArUco Marker
-+ Known Grasp Offset
+Embedded Controller
+UDP / Network
+Camera / Vision
+External Robot
 ```
 
-구조로 제한한다.
-
-### D-04 물체 Pose와 Grasp Pose를 분리
+### D-02 Robot Arm은 4DoF + Gripper
 
 ```text
-Object Pose
-≠
-End-Effector Target Pose
+J1 Base yaw
+J2 Shoulder pitch
+J3 Elbow pitch
+J4 Wrist pitch
+Gripper Open/Close
 ```
 
-`T_object_grasp`를 별도로 정의하고 IK target을 계산한다.
+Gripper는 4DoF와 별도 state로 관리한다.
+
+### D-03 Robot asset과 Kinematics 분리
+
+GLB node 구조를 joint hierarchy의 source of truth로 사용하지 않는다.
+
+```text
+RobotDescription
+→ joint origin / axis / limit / parent-child
+
+Mesh Asset
+→ rendering geometry
+```
+
+### D-04 Robot GLB와 Gripper GLB는 분리 유지 가능
+
+그리퍼는 End Effector에 고정 mount transform으로 연결한다.
+
+```text
+T_world_gripper = T_world_ee × T_ee_gripper
+```
 
 ### D-05 FK를 IK보다 먼저 구현
 
-Robot model hierarchy와 joint axis/origin을 검증한 뒤 IK를 구현한다.
+Robot hierarchy와 joint frame을 검증한 뒤 IK를 구현한다.
 
-### D-06 초기 grasp는 kinematic attach
+### D-06 Object Pose와 Grasp Pose를 분리
 
-물리 엔진 기반 접촉 simulation은 기본 범위에서 제외한다.
+```text
+T_world_grasp = T_world_object × T_object_grasp
+```
 
-End Effector가 위치/회전 성공 조건을 만족하면 object를 end-effector transform에 부착한다.
+Object 중심과 End Effector target은 같다고 가정하지 않는다.
 
-### D-07 Viewer에만 Flecs 사용
+### D-07 초기 grasp는 kinematic attach
 
-Flecs는 scene object와 rendering system 관리에 사용한다.
+물리 접촉 simulation은 기본 범위에서 제외한다. 위치/정렬 오차와 gripper state가 조건을 만족할 때 Object Attach로 파지를 표현한다.
 
-Vision, transport, protocol, kinematics core 전체를 ECS에 종속시키지 않는다.
+### D-08 Flecs는 Scene/Rendering에 사용
 
-### D-08 UDP 사용
+Flecs는 entity/component/system 관리에 사용한다. FK/IK solver를 ECS에 강하게 결합하지 않는다.
 
-Object Pose는 지속적으로 갱신되는 상태이므로 오래된 packet 복구보다 최신성에 더 높은 우선순위를 둔다.
+### D-09 입력은 Deterministic Synthetic State
 
-loss/reorder 문제는 마지막 network robustness 단계에서 직접 측정한다.
+외부 입력 대신 Simulator 내부에서 target/object trajectory를 생성한다. 같은 조건에서 같은 결과를 재현할 수 있어야 한다.
 
-### D-09 명시적 binary serialization
+### D-10 성능 수치는 Baseline 이후 결정
 
-C++ struct memory를 그대로 송신하지 않는다.
-
-padding, alignment, ABI, endianness 차이를 피하기 위해 field 단위로 encode/decode한다.
-
-### D-10 Network impairment는 마지막 단계
-
-먼저 ideal/local condition에서 robot grasp pipeline을 완성한 뒤 delay/jitter/loss를 주입한다.
+구현 전 임의 숫자를 성과 목표처럼 두지 않는다.
 
 ---
 
-## 2. 현재 진행 로드맵
+## 2. 현재 로드맵
 
-1. **Synthetic Pose → Cube** — 현재 단계
-2. UDP Object Pose
-3. ArUco Object Detection
-4. Simulation에 Object 생성
-5. Robot Model 추가
-6. FK 구현
-7. Grasp Pose 정의
-8. IK 구현
-9. End Effector → Grasp Pose 추종
-10. Grasp 성공 시 Object attach
-11. Network jitter/loss 실험
-
-이 순서는 기능을 나열한 것이 아니라 **오류 원인을 한 단계씩 분리하기 위한 구현 순서**다.
+1. Synthetic Target/Object
+2. 4DoF Robot Asset / Description
+3. FK
+4. Gripper Mount / Grasp Pose
+5. IK
+6. Joint Tracking
+7. Kinematic Grasp
+8. Object Attach / Release
+9. Verification / Measurement
 
 ---
 
 ## 3. 미결정 사항
 
-다음 항목은 실제 구현 단계에 들어가기 전에 결정한다.
+### Robot Model 단계
 
-### UDP Object Pose 전
+- CAD/GLB를 link 단위로 어떻게 전처리할지
+- RobotDescription을 C++ 상수/config 중 어디에 둘지
+- 실제 joint origin/axis/limit 기준 자료
 
-- packet exact byte layout
-- wire quaternion field order
-- timestamp/sequence를 단계 2부터 넣을지 여부
-- object ID 포함 여부
-- Windows/Linux socket wrapper API
-
-### Robot Model 전
-
-- 사용할 robot model
-- robot description 원본(URDF/config 등)
-- mesh format
-- joint/link data representation
-- Flecs hierarchy 사용 여부
-
-### IK 전
+### IK 단계
 
 - analytic vs numerical solver
-- numerical IK 사용 시 Jacobian method
-- position/orientation error weighting
-- convergence condition
+- numerical 사용 시 Jacobian/DLS 세부 방식
+- convergence threshold
 - joint limit 처리
 
-### Grasp Attach 전
+### Grasp 단계
 
-- position success threshold
-- orientation success threshold
-- attach 이후 object transform ownership
+- `T_object_grasp`
+- `T_ee_gripper`
+- position/alignment threshold
+- attach 이후 transform ownership
 
-### Network Experiment 전
+### Verification 단계
 
-- buffer/interpolation을 robot target 앞에 둘지 object transform 단계에 둘지
-- buffer delay 후보
-- target/end-effector error metric
-- 실험 반복 횟수와 baseline
+- baseline trajectory
+- 반복 횟수
+- solver/frame timing 측정 방식
 
 ---
 
 ## 4. 기본 완료 범위
 
 ```text
-Synthetic Pose
-→ UDP Object Pose
-→ ArUco Object Pose
-→ Simulation Object
-→ Robot Model
-→ FK
+Synthetic Object
 → Grasp Pose
-→ IK
-→ End-Effector Tracking
-→ Kinematic Object Attach
-→ Network Impairment Evaluation
+→ 4DoF IK
+→ Joint Tracking
+→ FK
+→ Robot / Gripper Visualization
+→ Kinematic Grasp
+→ Object Attach / Release
+→ Deterministic Verification
 ```
 
 ---
 
 ## 5. 기본 범위에서 제외
 
+- ESP32 / MCU / RTOS
+- GPIO / ADC / I2C
+- UDP / network protocol
+- Camera / OpenCV / ArUco
 - markerless object detection
-- ML-based grasp generation
-- arbitrary-object grasp planning
+- ROS2
+- 실로봇 제어
 - collision-free motion planning
 - rigid-body/contact physics
 - robot dynamics / torque control
-- ROS2
-- multi-camera sensor fusion
-- production security/authentication
-
-이 기능들은 핵심 경로가 완성된 뒤 별도 확장으로만 검토한다.
 
 ---
 
 ## 6. 설계 원칙
 
-- 구현 전에 추상화를 늘리지 않는다.
-- 현재 단계에서 실제로 필요한 dependency만 추가한다.
-- 외부 입력, network, kinematics, rendering의 책임 경계를 유지한다.
-- 수치 목표는 baseline 측정 없이 임의로 성과처럼 작성하지 않는다.
+- 현재 필요한 책임만 구현한다.
+- Kinematics와 rendering을 분리한다.
+- Asset 형식과 robot joint definition을 분리한다.
+- FK correctness를 IK보다 먼저 고정한다.
+- synthetic input으로 재현 가능한 테스트를 만든다.
 - 구현 상태와 예정 상태를 문서에서 구분한다.

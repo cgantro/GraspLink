@@ -1,188 +1,178 @@
-# GraspLink 4-Day Prototype Roadmap
+# GraspLink Simulation Roadmap
 
 ## Goal
 
-4일 동안 완성할 최소 수직 경로는 다음과 같다.
+프로젝트의 최소 완성 경로는 다음과 같다.
 
 ```text
-ESP32 Input
-→ Zephyr RTOS
-→ Target Position
-→ UDP
-→ C++ Simulator
-→ Robot IK/FK
-→ End Effector 이동
-→ Grasp / Object Attach
-→ UDP State Feedback
-→ ESP32 UI
+Synthetic Target/Object
+→ 4DoF Robot Model
+→ FK
+→ Grasp Pose
+→ IK
+→ Joint Update
+→ End Effector Tracking
+→ Gripper
+→ Object Attach / Release
 ```
 
-이 기간에는 기능 수를 늘리기보다 **한 경로를 실제로 끝까지 연결하는 것**을 우선한다.
+외부 장치, 네트워크, Camera/Vision 기능은 로드맵에 포함하지 않는다.
 
 ---
 
-## Day 1 — Zephyr bring-up
+## Phase 1 — Simulation Scene Baseline
 
 ### 목표
 
-ESP32에서 Zephyr 애플리케이션을 빌드하고 flash할 수 있는 개발 환경을 고정한다.
-
-### 작업
-
-- VS Code + Zephyr/west 환경 확인
-- 정확한 ESP32 board target 확인
-- `embedded/controller` 빌드
-- serial log 출력
-- Button GPIO interrupt
-- OLED I2C 출력
-- board-specific devicetree overlay 작성
+현재 OpenGL/Flecs Viewer 안에서 target object와 reference axis를 안정적으로 렌더링한다.
 
 ### 완료 기준
 
-- 보드 부팅 로그 확인
-- 버튼 입력 이벤트 확인
-- OLED에 고정 문자열 표시
+- deterministic synthetic target을 배치할 수 있다.
+- object transform과 world axis를 확인할 수 있다.
+- frame delta time과 scene update 순서가 고정된다.
 
 ---
 
-## Day 2 — Target Controller
+## Phase 2 — Robot Asset / Kinematic Description
 
 ### 목표
 
-외부 장치만으로 Target Position을 만들 수 있게 한다.
+4DoF 로봇을 link 단위로 표현할 수 있는 asset과 joint 정보를 정리한다.
 
 ### 작업
 
-- Potentiometer ADC 읽기
-- Button으로 X/Y/Z 선택
-- ADC 값을 simulator coordinate range로 mapping
-- OLED에 선택 축과 X/Y/Z 표시
-- 입력 처리와 UI 갱신 책임 분리
-- ISR에서는 event만 전달하고 실제 처리는 thread/work context에서 수행
-- message queue 또는 event 구조 적용
+- Base / Link1~4 mesh 식별
+- Joint origin/axis/limit 정의
+- End Effector frame 정의
+- Gripper asset 분리 유지
+- `T_ee_gripper` mount offset 정의
 
 ### 완료 기준
 
-```text
-X: 0.30
-Y: 0.10
-Z: 0.45
-```
-
-형태의 목표 좌표를 ESP32에서 조작할 수 있다.
+reference configuration에서 모든 link와 gripper가 의도한 위치에 표시된다.
 
 ---
 
-## Day 3 — Embedded ↔ Simulator UDP
+## Phase 3 — Forward Kinematics
 
 ### 목표
 
-ESP32에서 생성한 Target Position이 PC Simulator의 Object 위치를 실제로 바꾸게 한다.
+joint angle로 모든 link와 End Effector의 world transform을 계산한다.
 
-### 작업
+### 완료 기준
 
-- Target Command packet 정의
-- sequence number 추가
-- ESP32 UDP sender
-- C++ UDP receiver
-- 최신 Target만 적용
-- Synthetic source와 UDP source 경계 분리
-- 수신된 Target Position을 simulation object에 반영
+- joint 하나씩 움직였을 때 올바른 축으로 회전한다.
+- child link가 parent transform을 올바르게 누적한다.
+- reference configuration을 재현한다.
+- End Effector pose를 계산할 수 있다.
 
-### 최소 packet
+---
+
+## Phase 4 — Grasp Pose / Gripper Mount
+
+### 목표
+
+Object frame에서 grasp target과 gripper 장착 관계를 명시한다.
 
 ```text
-message_type
-target_id
-sequence
-x
-y
-z
+T_world_grasp = T_world_object × T_object_grasp
+T_world_gripper = T_world_ee × T_ee_gripper
 ```
 
 ### 완료 기준
 
-Potentiometer/Button으로 좌표를 변경하고 SEND했을 때 PC 화면의 Target Object 위치가 변경된다.
+- Object와 Grasp frame을 debug axis로 확인할 수 있다.
+- End Effector에 gripper가 일정한 mount offset으로 따라간다.
 
 ---
 
-## Day 4 — Robot Grasp Vertical Slice
+## Phase 5 — Inverse Kinematics
 
 ### 목표
 
-수신한 목표 위치를 로봇 동작과 파지까지 연결한다.
-
-### 작업
-
-- Robot Model
-- FK
-- Grasp Pose
-- IK
-- 프레임 기반 joint/EE 추종
-- 위치/회전 오차 기반 grasp 판정
-- Object Attach
-- Simulator → ESP32 상태 packet
-- OLED/RGB LED/Buzzer 피드백
-
-### 상태 예
-
-```text
-IDLE
-TARGET_RECEIVED
-MOVING
-GRASP_SUCCESS
-GRASP_FAILED
-```
+reachable target에 대해 4DoF joint configuration을 계산한다.
 
 ### 완료 기준
 
 ```text
-ESP32에서 Target 입력
-→ UDP 전송
-→ 가상 Robot 이동
-→ Object grasp
-→ ESP32에 성공 상태 표시
+Target Grasp Pose
+→ IK
+→ q
+→ FK(q)
+→ End Effector Pose
 ```
 
-가 한 번의 데모 흐름으로 동작한다.
+결과가 정한 tolerance 안에 들어온다. unreachable/non-convergent target은 명시적 실패로 처리한다.
 
 ---
 
-## 4일 동안 제외
+## Phase 6 — Joint Update / Tracking
 
-다음 항목은 프로토타입 완료 후 추가한다.
+### 목표
 
-- IMU
-- ArUco / Camera
-- 일반 물체 인식
-- collision avoidance motion planning
-- physics-based gripper contact
-- ROS2
+IK 결과로 즉시 teleport하지 않고 joint state를 시간에 따라 갱신한다.
+
+### 완료 기준
+
+- joint speed/step 제한이 있다.
+- frame rate 변화에도 update가 안정적이다.
+- target 이동 시 End Effector가 추종한다.
+
+---
+
+## Phase 7 — Grasp / Attach / Release
+
+### 목표
+
+kinematic grasp state machine을 완성한다.
+
+```text
+OPEN
+→ APPROACHING
+→ READY
+→ CLOSED / ATTACHED
+→ RELEASED
+```
+
+### 완료 기준
+
+- position/alignment threshold 밖에서는 attach되지 않는다.
+- 조건 만족 + gripper close에서 attach된다.
+- attach 후 object가 gripper relative transform을 유지한다.
+- release 시 world pose가 비정상적으로 튀지 않는다.
+
+---
+
+## Phase 8 — Verification / Measurement
+
+### 목표
+
+시뮬레이터의 correctness와 runtime 특성을 측정 가능한 형태로 남긴다.
+
+### 측정 후보
+
+- FK reference error
+- IK convergence / failure count
+- End Effector position error
+- grasp success/failure
+- target 도달 시간
+- frame time / FPS
+- solver time
+
+정확한 목표 수치는 baseline을 측정한 뒤 정한다.
+
+---
+
+## 기본 범위에서 제외
+
+- ESP32 / MCU / Zephyr RTOS
+- GPIO / ADC / I2C / OLED
+- UDP / socket communication
+- Camera / ArUco / OpenCV
 - network jitter/loss 실험
-- 복잡한 telemetry/dashboard
-
----
-
-## Prototype 이후 확장 순서
-
-1. ArUcoTargetSource
-2. Quaternion/orientation target
-3. Network delay/jitter/loss injection
-4. target age / packet loss / grasp error 측정
-5. 필요 시 IMU orientation controller
-6. 센서/상태 telemetry 확장
-
----
-
-## 포트폴리오에서 설명할 수 있어야 하는 질문
-
-- 왜 Arduino loop가 아니라 Zephyr를 사용했는가?
-- GPIO interrupt와 polling의 차이는 무엇인가?
-- ISR에서 모든 로직을 처리하지 않은 이유는 무엇인가?
-- DeviceTree가 어떤 하드웨어 정보를 분리하는가?
-- 입력/UI/network task를 왜 분리했는가?
-- UDP를 선택한 이유와 packet loss 시 정책은 무엇인가?
-- stale target을 어떻게 처리하는가?
-- Object Pose와 Grasp Pose는 어떻게 다른가?
-- FK와 IK를 왜 분리해서 구현했는가?
-- Embedded node와 Simulator 사이 책임 경계를 어떻게 잡았는가?
+- ROS2
+- 실로봇 제어
+- collision-free motion planning
+- rigid-body/contact physics
+- torque/dynamics simulation
