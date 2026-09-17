@@ -2,17 +2,17 @@
 
 ## 1. 프로젝트가 해결하려는 문제
 
-GraspLink의 목표는 **가상 환경에서 4DoF 로봇팔이 목표 물체에 접근하고 파지하는 전체 과정을 C++로 직접 구현하고 검증하는 것**이다.
+GraspLink의 목표는 **가상 환경에서 HCR-12A 기반 6DoF 로봇팔이 목표 물체에 접근하고 파지하는 전체 과정을 C++로 직접 구현하고 검증하는 것**이다.
 
 ```text
 Synthetic Object
-→ Grasp Pose
-→ IK
-→ Joint State
+→ 6D Grasp Pose
+→ 6DoF IK
+→ Joint State q1..q6
 → FK
 → Robot Link Transform
 → End Effector
-→ Gripper
+→ 2F85 Gripper
 → Object Attach
 ```
 
@@ -25,10 +25,10 @@ Synthetic Object
 이 프로젝트의 핵심 학습 대상은 다음이다.
 
 - robot coordinate frame
-- joint hierarchy
+- 6-axis joint hierarchy
 - forward kinematics
 - inverse kinematics
-- end-effector transform
+- end-effector 6D pose
 - gripper mount
 - grasp state transition
 - real-time rendering/update loop
@@ -37,20 +37,25 @@ Synthetic Object
 
 ---
 
-## 3. 왜 4DoF인가
+## 3. 왜 6DoF인가
 
-초기 범위는 다음 serial chain으로 고정한다.
+사용할 HCR-12A 모델은 J1~J6으로 구성된 6축 serial manipulator다. 프로젝트의 kinematics도 실제 모델 구조에 맞춰 6DoF로 정의한다.
 
 ```text
-J1 Base yaw
-J2 Shoulder pitch
-J3 Elbow pitch
-J4 Wrist pitch
+Base
+→ J1
+→ J2
+→ J3
+→ J4
+→ J5
+→ J6
+→ End Effector
+→ Gripper
 ```
 
-Gripper open/close는 별도 state다.
+Gripper open/close는 6개 robot joint와 별도 state다.
 
-이 구조는 full 6DoF industrial manipulator보다 범위가 작아 FK/IK를 직접 구현하고 시각적으로 검증하기 적절하다. 초기 IK는 XYZ position과 wrist pitch를 대상으로 한다.
+6DoF를 사용하면 End Effector의 XYZ 위치뿐 아니라 orientation까지 포함한 grasp pose를 다룰 수 있다. IK는 position과 orientation을 함께 만족하는 joint configuration을 구하는 문제로 정의한다.
 
 ---
 
@@ -59,19 +64,19 @@ Gripper open/close는 별도 state다.
 IK 결과를 검증하려면 joint angle에서 실제 End Effector pose를 계산할 기준이 먼저 필요하다.
 
 ```text
-Joint Angles
+q1..q6
 → FK
-→ End Effector Pose
+→ End Effector 6D Pose
 ```
 
 그 다음:
 
 ```text
-Target Grasp Pose
+Target 6D Grasp Pose
 → IK
-→ Joint Angles
+→ q1..q6
 → FK
-→ Error 확인
+→ Position / Orientation Error 확인
 ```
 
 순서로 solver를 검증한다.
@@ -80,7 +85,7 @@ Target Grasp Pose
 
 ## 5. Robot asset과 운동학을 왜 분리하는가
 
-CAD→GLB 변환 파일은 시각적으로는 정상이어도 joint hierarchy, pivot, parent-child 관계가 사라질 수 있다. 따라서 mesh node 구조를 kinematics의 source of truth로 사용하지 않는다.
+STEP→GLB 변환 시 CAD assembly hierarchy와 local transform은 보존한다. 하지만 CAD 조립 트리와 robot kinematic chain은 목적이 다르므로 동일한 구조라고 가정하지 않는다.
 
 ```text
 Rendering Asset
@@ -88,13 +93,13 @@ Rendering Asset
 Robot Kinematic Description
 ```
 
-RobotDescription은 joint origin/axis/limit과 link 관계를 별도로 가진다. GLB는 계산된 link transform을 받아 그리는 자산으로 사용한다.
+RobotDescription은 J1~J6 origin/axis/limit과 parent-child link 관계를 별도로 가진다. GLB는 계산된 link transform을 받아 그리는 자산으로 사용한다.
 
 ---
 
 ## 6. Gripper를 별도 asset으로 두는 이유
 
-로봇 본체 GLB와 gripper GLB는 합칠 필요가 없다.
+로봇 본체 HCR-12A GLB와 2F85 Gripper GLB는 분리한다.
 
 ```text
 T_world_gripper
@@ -111,7 +116,7 @@ T_world_ee × T_ee_gripper
 초기 grasp는 physics/contact simulation이 아니라 kinematic condition으로 판정한다.
 
 ```text
-End Effector / Gripper가 Grasp Pose tolerance에 진입
+End Effector / Gripper가 6D Grasp Pose tolerance에 진입
 AND
 Gripper Close
 → Grasp Success
@@ -140,11 +145,11 @@ Flecs는 scene entity/component와 rendering system scheduling에 사용한다. 
 ## 9. 프로젝트 완료 범위
 
 1. Synthetic Target/Object
-2. 4DoF Robot Model
+2. HCR-12A 6DoF Robot Model
 3. FK
-4. End Effector / Grasp Pose
-5. Gripper Mount
-6. IK
+4. End Effector / 6D Grasp Pose
+5. 2F85 Gripper Mount
+6. 6DoF IK
 7. Joint Update / Tracking
 8. Kinematic Grasp
 9. Object Attach / Release
@@ -167,4 +172,4 @@ Flecs는 scene entity/component와 rendering system scheduling에 사용한다. 
 
 ## 11. 프로젝트 한 문장
 
-> GraspLink는 C++/OpenGL 기반 가상 환경에서 4DoF 로봇팔의 FK/IK와 gripper transform을 직접 구현하고, 목표 물체 추종부터 kinematic grasp와 attach까지 검증하는 로봇 시뮬레이션 프로젝트다.
+> GraspLink는 C++/OpenGL 기반 가상 환경에서 HCR-12A 6DoF 로봇팔의 FK/IK와 2F85 gripper transform을 직접 구현하고, 6D grasp pose 추종부터 kinematic grasp와 attach까지 검증하는 로봇 시뮬레이션 프로젝트다.
