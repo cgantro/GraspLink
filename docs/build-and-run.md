@@ -2,7 +2,7 @@
 
 ## 1. Simulator
 
-현재 root CMake executable target은 다음과 같다.
+현재 executable target:
 
 ```text
 grasplink_simulator
@@ -26,31 +26,24 @@ grasplink_simulator
 ### Configure
 
 ```bash
-cmake -S . -B build -DGRASPLINK_BUILD_GRAPHICS=ON
+cmake -S . -B build \
+  -DGRASPLINK_BUILD_GRAPHICS=ON \
+  -DGRASPLINK_BUILD_TESTS=ON
 ```
 
 ### Build
-
-Single-config generator:
-
-```bash
-cmake --build build -j
-```
-
-Visual Studio 등 multi-config generator:
 
 ```bash
 cmake --build build --config Release
 ```
 
-### Run
-
-Single-config 예:
+### Test
 
 ```bash
-cd build
-./grasplink_simulator
+ctest --test-dir build -C Release --output-on-failure
 ```
+
+### Run
 
 Windows multi-config 예:
 
@@ -58,53 +51,59 @@ Windows multi-config 예:
 build/Release/grasplink_simulator.exe
 ```
 
-CMake post-build 단계에서 `assets/shaders`를 executable directory의 `shaders/`로 복사한다.
+CMake post-build 단계에서 shader와 HCR-12A GLB를 executable directory로 복사한다.
 
 ---
 
-## 2. 프로젝트 실행 경계
+## 2. 실행 경계
 
 GraspLink는 단일 Simulator application만 실행한다.
 
-다음 별도 runtime은 존재하지 않는다.
-
 ```text
-Embedded Controller
-Vision Node
-UDP Sender/Receiver
-Network Proxy
+Simulation Target/Object State
+→ DLS IK
+→ Joint Update
+→ FK
+→ HCR-12A Visual Rig
+→ Grasp / Attach
+→ OpenGL Render
 ```
 
-시뮬레이션 입력은 application 내부의 deterministic target/object state에서 생성한다.
+별도 embedded controller, serial process, network sender/receiver, Vision Node는 없다.
 
 ---
 
 ## 3. 현재 구현 상태
 
-현재 실행 가능한 중심 기능은 OpenGL/Flecs scene rendering이다.
+현재 코드에는 다음이 포함되어 있다.
 
-HCR-12A 6DoF Robot Model/FK/IK와 2F85 Gripper/Grasp는 로드맵에 따라 단계적으로 추가한다. 문서의 목표 구조와 현재 구현 상태를 구분한다.
+- HCR-12A nominal 6DoF robot specification
+- FK / geometric Jacobian
+- Damped Least Squares IK
+- joint speed-limited update
+- kinematic grasp/attach
+- HCR-12A CAD visual rig
+- OpenGL/Flecs scene rendering
+- deterministic kinematics/grasp test
 
 ---
 
 ## 4. 권장 개발 순서
 
 ```text
-기존 OpenGL scene 정상 렌더링
+HCR-12A / 2F85 asset 검증
         ↓
-Synthetic Target/Object
+J1~J6 frame / limit 검증
         ↓
-HCR-12A / 2F85 assembly-preserving GLB 정리
+FK reference pose 검증
         ↓
-6DoF RobotDescription (J1~J6)
+6D Grasp Pose / Gripper mount
         ↓
-FK
+DLS IK 정확도 / 수렴성 검증
         ↓
-Gripper mount / 6D Grasp Pose
+Joint tracking 개선
         ↓
-6DoF IK
-        ↓
-Joint tracking q1..q6
+Synthetic target pose 조작 UI
         ↓
 Object Attach / Release
         ↓

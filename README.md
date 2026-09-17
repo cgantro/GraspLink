@@ -1,8 +1,8 @@
 # GraspLink
 
-GraspLink는 **C++로 구현하는 6DoF 로봇팔 grasp 시뮬레이터**다.
+GraspLink는 **C++로 구현하는 HCR-12A 6DoF 로봇팔 grasp 시뮬레이터**다.
 
-외부 임베디드 장치, 네트워크 입력, Camera/Vision Node는 프로젝트 범위에서 제거한다. 하나의 Simulator process 안에서 목표 물체를 생성하고, 로봇의 FK/IK와 grasp/attach 과정을 직접 구현하고 검증하는 데 집중한다.
+프로젝트는 하나의 Simulator process 안에서 목표 물체를 생성하고, 6DoF FK/IK와 grasp/attach 과정을 직접 구현하고 검증하는 데 집중한다. 외부 임베디드 장치, serial/UDP transport, Camera/Vision Node는 프로젝트 경계에 포함하지 않는다.
 
 ## Robot Arm 기준
 
@@ -16,14 +16,14 @@ J1
          └─ J5
             └─ J6
                └─ EndEffector
-                  └─ Gripper
+                  └─ 2F85 Gripper
 ```
 
-J1~J6은 각각 revolute joint로 취급하며 실제 joint origin, axis, limit는 `RobotDescription`에 명시한다. Gripper open/close는 6개 robot joint와 별도 actuator/state로 관리한다.
+J1~J6은 revolute joint로 취급하며 실제 joint origin, axis, limit는 `RobotSpecification`/kinematics 계층에 명시한다. Gripper state는 6개 robot joint와 별도 상태로 관리한다.
 
-IK target은 End Effector의 **6D pose(position + orientation)** 를 기준으로 한다. 초기 구현은 FK correctness와 joint frame 검증을 먼저 완료한 뒤 numerical IK로 확장한다.
+IK target은 End Effector의 **6D pose(position + orientation)** 를 기준으로 한다.
 
-## 프로젝트 목표
+## 프로젝트 흐름
 
 ```text
 Synthetic Target / Object
@@ -32,41 +32,41 @@ Simulation Scene
         ↓
 6D Grasp Pose
         ↓
-6DoF IK
+6DoF IK (DLS)
         ↓
-Joint State (q1..q6)
+Joint State q1..q6
         ↓
 FK
         ↓
-Robot Link / End Effector Transform
+HCR-12A Link / End Effector Transform
         ↓
 Grasp Condition
         ↓
 Object Attach / Release
+        ↓
+OpenGL / Flecs Visualization
 ```
 
-핵심은 로봇 모델의 좌표계와 6축 관절 계층을 직접 정의하고, FK로 계산한 링크 transform과 IK 결과를 시각적으로 검증한 뒤 kinematic grasp까지 연결하는 것이다.
+## 현재 구현
 
-## 개발 단계
+현재 repository에는 다음 기반이 구현되어 있다.
 
-1. Synthetic Target/Object 배치
-2. HCR-12A 6DoF Robot Model 정리
-3. J1~J6 joint origin/axis/limit 및 link hierarchy 정의
-4. FK 구현과 기준 자세 검증
-5. End Effector / 6D Grasp Pose 정의
-6. 2F85 Gripper mount transform 연결
-7. 6DoF IK 구현
-8. Joint trajectory/update 적용
-9. End Effector target pose 추종
-10. Grasp 성공 시 Object Attach
-11. Release 및 상태 전이
-12. deterministic test와 성능/오차 측정
+- OpenGL/GLFW/GLAD 기반 Viewer
+- Flecs 기반 scene/render system
+- HCR-12A nominal 6DoF `RobotSpecification`
+- Forward Kinematics
+- Geometric Jacobian
+- Damped Least Squares IK
+- Grasp pose / attach state
+- HCR-12A CAD visual rig
+- deterministic kinematics/grasp test
+- static GLB loading과 HCR-12A mesh contract
+
+외부 controller/transport/protocol/vision module은 사용하지 않는다.
 
 ## Asset 원칙
 
-CAD에서 변환한 GLB는 렌더링 자산으로 사용한다. STEP→GLB 변환 시 **assembly hierarchy와 local transform을 보존**하되, CAD assembly tree 자체를 robot kinematics의 source of truth로 사용하지 않는다.
-
-HCR-12A CAD에는 J1/J2/1st Arm/J3-J4/2nd Arm/J5-J6/Tool IO 단위의 조립 계층이 존재하지만, 운동학 계층은 다음과 같은 6축 serial chain으로 별도 정의한다.
+CAD에서 변환한 GLB는 렌더링 자산으로 사용한다. STEP→GLB 변환 시 assembly hierarchy와 local transform을 보존하되, CAD assembly tree 자체를 robot kinematics의 source of truth로 사용하지 않는다.
 
 ```text
 Robot Base
@@ -83,10 +83,10 @@ Robot Base
                               └─ Joint6
                                  └─ Link6
                                     └─ EndEffector
-                                       └─ Gripper
+                                       └─ 2F85 Gripper
 ```
 
-로봇 GLB와 그리퍼 GLB는 별도 asset으로 유지하고, 그리퍼는 End Effector transform에 mount offset을 곱해 연결한다.
+로봇 GLB와 그리퍼 GLB는 별도 asset으로 유지할 수 있으며, 그리퍼는 End Effector transform에 mount offset을 곱해 연결한다.
 
 ```text
 T_world_gripper = T_world_ee × T_ee_gripper
@@ -96,22 +96,23 @@ T_world_gripper = T_world_ee × T_ee_gripper
 
 ```text
 apps/
-└─ viewer/                  # C++ Simulator application
+└─ viewer/                  # Simulator lifecycle / scene
 
 modules/
-├─ common/                  # 공통 수학/domain type
+├─ common/                  # Pose, JointState 등 공통 domain type
+├─ kinematics/              # HCR-12A FK / Jacobian / DLS IK / grasp
 └─ viewer/                  # OpenGL / Flecs rendering
 
-assets/                     # shader 및 robot/object asset
-docs/                       # architecture, roadmap, testing 등
-tests/                      # deterministic test 확장 위치
+assets/
+├─ hcr12a/                  # HCR-12A visual asset
+└─ shaders/
+
+tools/
+└─ cad/                     # CAD→GLB preprocessing
+
+tests/                      # deterministic FK/IK/grasp test
+docs/                       # architecture, kinematics, testing 등
 ```
-
-외부 장치·네트워크·Vision 전용 디렉터리는 유지하지 않는다.
-
-## 현재 상태
-
-현재 repository의 실제 구현은 OpenGL/Flecs 기반 Simulator Viewer가 중심이다. Robot Model/FK/IK/Grasp는 이후 단계에서 구현하며, 구현되지 않은 기능은 완료된 것으로 간주하지 않는다.
 
 ## 빌드
 
@@ -123,21 +124,40 @@ tests/                      # deterministic test 확장 위치
 - 최초 configure 시 GLFW, GLM, Flecs를 가져올 네트워크 연결
 
 ```bash
-cmake -S . -B build -DGRASPLINK_BUILD_GRAPHICS=ON
+cmake -S . -B build -DGRASPLINK_BUILD_GRAPHICS=ON -DGRASPLINK_BUILD_TESTS=ON
 cmake --build build --config Release
 ```
 
 현재 executable target 이름은 `grasplink_simulator`다.
 
+테스트:
+
+```bash
+ctest --test-dir build -C Release --output-on-failure
+```
+
+## 개발 단계
+
+1. HCR-12A / 2F85 asset 정리
+2. J1~J6 joint origin/axis/limit 검증
+3. FK reference pose 검증
+4. End Effector / 6D Grasp Pose 검증
+5. 2F85 Gripper mount transform 연결
+6. DLS IK 정확도/수렴성 검증
+7. Joint trajectory/update 개선
+8. Synthetic target pose 제어 UI 추가
+9. Grasp 성공 시 Object Attach / Release
+10. deterministic test와 성능/오차 측정
+
 ## 설계 원칙
 
 - 프로젝트 경계는 단일 C++ Simulator process로 제한한다.
 - Kinematics와 rendering을 분리한다.
-- Robot arm은 HCR-12A 기반 6DoF serial chain으로 정의하고 gripper는 별도 상태로 둔다.
-- FK correctness를 먼저 고정한 뒤 IK를 구현한다.
+- HCR-12A는 6DoF serial chain으로 정의한다.
+- FK correctness를 먼저 고정한 뒤 IK를 검증한다.
 - CAD assembly hierarchy와 kinematic hierarchy를 분리한다.
 - Robot asset과 kinematic description을 분리한다.
-- 1차 grasp는 physics contact가 아닌 kinematic threshold + Object Attach로 제한한다.
+- 초기 grasp는 rigid-body contact가 아닌 kinematic threshold + Object Attach로 제한한다.
 - synthetic target을 사용해 같은 입력에서 같은 결과를 재현할 수 있게 한다.
 - 수치 목표는 baseline 측정 후 정한다.
 
@@ -145,6 +165,8 @@ cmake --build build --config Release
 
 - [Roadmap](docs/ROADMAP.md)
 - [Architecture](docs/ARCHITECTURE.md)
+- [HCR-12A Kinematics](docs/HCR12A_KINEMATICS.md)
+- [HCR-12A CAD Conversion](docs/HCR12A_CAD_CONVERSION.md)
 - [Project Background](docs/PROJECT_BACKGROUND.md)
 - [Technology Stack](docs/TECH_STACK.md)
 - [Coordinate System](docs/coordinate_system.md)

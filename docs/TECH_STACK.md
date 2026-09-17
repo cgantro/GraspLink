@@ -5,7 +5,7 @@
 GraspLink는 **단일 C++ 로봇 시뮬레이터**에 필요한 기술만 사용한다.
 
 1. Rendering과 robot kinematics를 분리한다.
-2. 외부 장치/네트워크/Vision dependency를 두지 않는다.
+2. 외부 장치/serial/network/Vision dependency를 두지 않는다.
 3. Robot asset과 kinematic description을 분리한다.
 4. CAD assembly hierarchy와 6DoF kinematic hierarchy를 구분한다.
 5. Windows/Linux에서 공통 core를 재사용한다.
@@ -25,10 +25,11 @@ GraspLink는 **단일 C++ 로봇 시뮬레이터**에 필요한 기술만 사용
 | OpenGL Loader | GLAD | 사용 |
 | Math | GLM 1.0.1 | 사용 |
 | ECS | Flecs 4.1.5 | 사용 |
-| Robot kinematics | 자체 C++ 구현 예정 | 미구현 |
-| GLB asset | static mesh loader / asset preprocessing | 진행 중 |
+| Robot kinematics | 자체 C++ FK/Jacobian/DLS IK | 사용 |
+| Grasp | 자체 kinematic attach logic | 사용 |
+| GLB asset | static mesh loader / CAD preprocessing | 사용 |
 
-OpenCV, UDP socket, Zephyr/ESP32 관련 dependency는 프로젝트에서 제거한다.
+OpenCV, serial/UDP transport, Zephyr/ESP32 관련 dependency는 프로젝트에서 제거한다.
 
 ---
 
@@ -49,6 +50,7 @@ grasplink_simulator
 | Loader | GLAD | OpenGL function loading |
 | Math | GLM | matrix/quaternion/transform |
 | ECS | Flecs | scene entity/component/system |
+| Robot Core | C++17 | FK/Jacobian/DLS IK/grasp |
 | Build | CMake | target/dependency 구성 |
 
 ---
@@ -70,11 +72,9 @@ End Effector frame
 2F85 Gripper mount transform
 ```
 
-6DoF 모델은 코드 또는 별도 config에 명시적으로 정의한다. STEP→GLB 변환으로 CAD assembly hierarchy/local transform은 보존하되 GLB node hierarchy 자체를 kinematics의 source of truth로 사용하지 않는다.
+6DoF 모델은 `RobotSpecification`과 kinematics 코드에서 명시적으로 정의한다. STEP→GLB 변환으로 CAD assembly hierarchy/local transform은 보존하되 GLB node hierarchy 자체를 kinematics의 source of truth로 사용하지 않는다.
 
 ### FK
-
-FK는 직접 구현해 6축 transform chain을 이해하고 검증하는 것을 우선한다.
 
 ```text
 q1..q6
@@ -85,12 +85,13 @@ q1..q6
 
 ### IK
 
-IK target은 End Effector의 6D pose(position + orientation)다. numerical IK가 필요하면 Jacobian 기반 Damped Least Squares를 우선 후보로 둔다.
+현재 numerical IK는 Jacobian 기반 Damped Least Squares를 사용한다.
 
 ```text
 Target SE(3) Pose
 → position/orientation error
-→ Jacobian / DLS
+→ Geometric Jacobian
+→ DLS
 → Δq1..Δq6
 → joint limit 적용
 ```
@@ -101,7 +102,7 @@ Solver는 rendering/Flecs에 의존하지 않는다.
 
 ## 5. Asset
 
-Robot과 Gripper는 별도 GLB asset으로 유지한다.
+Robot과 Gripper는 별도 GLB asset으로 유지할 수 있다.
 
 ```text
 HCR-12A GLB
@@ -111,7 +112,7 @@ HCR-12A GLB
 → base / finger / fingertip meshes
 ```
 
-STEP→GLB 변환 시 assembly tree와 local transform을 보존한다. 이후 HCR-12A visual node들을 Link1~6에 매핑하고 실제 관절 pivot/axis는 RobotDescription에서 관리한다.
+STEP→GLB 변환 시 assembly tree와 local transform을 보존한다. 실제 관절 pivot/axis와 link 관계는 RobotDescription/RobotSpecification에서 관리한다.
 
 ---
 
@@ -125,7 +126,8 @@ STEP→GLB 변환 시 assembly tree와 local transform을 보존한다. 이후 H
 - homogeneous coordinate
 - parent-child transform accumulation
 - 6DoF FK
-- Jacobian 기반 IK
+- geometric Jacobian
+- Damped Least Squares IK
 - position/orientation error metric
 
 기본 공간 단위는 meter, 내부 각도는 radian을 사용한다.
@@ -136,12 +138,12 @@ STEP→GLB 변환 시 assembly tree와 local transform을 보존한다. 이후 H
 
 | 단계 | 기술 |
 |---|---|
-| Synthetic Target/Object | OpenGL/GLM/Flecs |
+| Synthetic Target/Object | application state + OpenGL/GLM/Flecs |
 | HCR-12A / 2F85 Asset | STEP→GLB + assembly-preserving preprocessing |
-| Robot Description | C++ data/config |
-| 6DoF FK | GLM 기반 transform math |
+| Robot Description | C++ `RobotSpecification` |
+| 6DoF FK | rigid transform accumulation |
 | 6D Grasp Pose | frame composition / SE(3) |
-| 6DoF IK | Jacobian/DLS 우선 검토 |
+| 6DoF IK | Geometric Jacobian + DLS |
 | Joint Tracking | frame `dt`, speed/step limit |
 | Attach/Release | scene transform ownership/state machine |
 | Verification | deterministic test + debug visualization + timing |
@@ -152,13 +154,14 @@ STEP→GLB 변환 시 assembly tree와 local transform을 보존한다. 이후 H
 
 ```text
 ESP32 / Zephyr RTOS
-OpenCV / ArUco
+Serial / UART protocol
 UDP / WinSock / POSIX socket
+OpenCV / ArUco
 ROS2
 Physics engine
 ```
 
-필요성이 생기기 전까지 프로젝트에 다시 추가하지 않는다.
+이 기능들은 현재 프로젝트 경계에 포함하지 않는다.
 
 ---
 

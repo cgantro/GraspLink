@@ -1,11 +1,10 @@
 # Testing and Verification
 
-> v1 automated test는 graphics 없이 protocol/sequence, HCR-12A nominal FK/DLS IK와 grasp
-> ownership을 검증한다. ArUco/camera/network impairment test는 현재 범위에서 제외한다.
+> Automated tests are limited to simulation-domain behavior: HCR-12A nominal FK/Jacobian/DLS IK and grasp ownership. External transport/protocol/device tests are not part of the project.
 
 ## 1. 목적
 
-GraspLink는 시뮬레이션 단계별로 오류 원인을 분리해 검증한다. 외부 장치/네트워크/Vision은 테스트 범위에 포함하지 않는다.
+GraspLink는 시뮬레이션 단계별로 오류 원인을 분리해 검증한다.
 
 ---
 
@@ -28,7 +27,7 @@ Synthetic Target/Object
 
 - X/Y/Z 이동이 예상 축으로 적용되는지 확인한다.
 - orientation 변화가 예상 회전축으로 적용되는지 확인한다.
-- 같은 시간/seed에서 같은 target을 생성한다.
+- 같은 입력에서 같은 target pose를 재현한다.
 - reference axis를 함께 그려 frame 방향을 확인한다.
 
 ---
@@ -46,8 +45,6 @@ Synthetic Target/Object
 - CAD assembly hierarchy/local transform 보존 확인
 - CAD assembly tree와 kinematic tree 분리 확인
 - 2F85 Gripper mount frame 확인
-
-각 link에 debug axis를 표시해 hierarchy 오류를 확인한다.
 
 ---
 
@@ -85,8 +82,6 @@ J6 only
 
 ## 6. Gripper Mount / Grasp Pose
 
-검증 식:
-
 ```text
 T_world_gripper = T_world_ee × T_ee_gripper
 T_world_grasp   = T_world_object × T_object_grasp
@@ -116,7 +111,7 @@ FK 결과의 position/orientation error가 설정한 tolerance 안에 들어오�
 
 workspace 밖 target 또는 수렴 불가능한 orientation에서 solver가 실패 상태를 반환하고 scene에 invalid joint 값을 적용하지 않는지 확인한다.
 
-### Numerical Solver를 사용할 경우
+### Numerical Solver 검증
 
 - iteration limit
 - damping
@@ -125,7 +120,7 @@ workspace 밖 target 또는 수렴 불가능한 orientation에서 solver가 실�
 - singularity 근처 동작
 - joint limit 처리
 
-를 명시한다.
+을 명시한다.
 
 ---
 
@@ -139,16 +134,6 @@ workspace 밖 target 또는 수렴 불가능한 orientation에서 solver가 실�
 ---
 
 ## 9. Grasp / Attach / Release
-
-성공 조건 예:
-
-```text
-position error <= threshold
-AND
-orientation/alignment error <= threshold
-AND
-gripper == close
-```
 
 검증:
 
