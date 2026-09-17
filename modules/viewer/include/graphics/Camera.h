@@ -53,7 +53,9 @@ private:
         카메라의 위쪽 방향
         보통 +y 방향을 위쪽으로 사용
     */
-    glm::vec3 m_Up{0.0f,0.0f,1.0f};
+    // 현재 뷰어가 사용하는 Y-up 런타임 좌표계에 맞춘 카메라 위쪽 방향이다.
+    // Z-up을 사용하면 화면이 기울어지고, 바닥 평면의 법선(Y+)과도 일치하지 않는다.
+    glm::vec3 m_Up{0.0F, 1.0F, 0.0F};
 
     float m_AspectRatio;
     float m_Fov;

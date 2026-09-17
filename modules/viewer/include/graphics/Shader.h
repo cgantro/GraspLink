@@ -15,7 +15,7 @@ public:
     // 하나의 Shader 파일 안에서
     // #type vertex
     // #type fragment 영역을 찾아 각각 컴파일
-    // Shader shader("assets/shaders/Quad.glsl");
+    // 예: Shader shader("assets/shaders/Model.glsl");
     Shader(const std::string& filepath);
 
     // Source Code 기반 Shader 생성
@@ -74,7 +74,7 @@ public:
     // Shader의 이름 반환.
     //
     // 예:
-    // assets/shaders/Quad.glsl
+    // assets/shaders/Model.glsl
     //
     // → "Quad"
     const std::string& GetName() const {return m_Name;}

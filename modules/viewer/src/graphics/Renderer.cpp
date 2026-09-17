@@ -1,58 +1,50 @@
 #include "Renderer.h"
 
+#include "Material.h"
 #include "Mesh.h"
 #include "Renderable.h"
 #include "Shader.h"
-#include "Texture.h"
 #include "Transform.h"
-#include <iostream>
+
 #include <glad/glad.h>
 
-namespace PoseLink {
+#include <cstdint>
 
+namespace PoseLink
+{
 Renderer::Renderer() = default;
 Renderer::~Renderer() = default;
 
-void Renderer::Init() {
+void Renderer::Init()
+{
     glEnable(GL_DEPTH_TEST);
 }
 
-void Renderer::BeginFrame() {
-    glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
+void Renderer::BeginFrame()
+{
+    glClearColor(0.1F, 0.1F, 0.1F, 1.0F);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 }
 
-void Renderer::Draw(
-    const Transform& transform,
-    const Renderable& renderable,
-    const glm::mat4& view,
-    const glm::mat4& projection){
-    /*
-        잘못 구성된 Renderable은 Draw x
-        현재는 Mesh, Shader, Texture 모두 필요
-    */
-    if(!renderable.mesh || !renderable.shader || !renderable.texture) return;
+void Renderer::Draw(const Transform& transform, const Renderable& renderable,
+                    const glm::mat4& view, const glm::mat4& projection)
+{
+    if (!renderable.mesh || !renderable.shader || !renderable.material) { return; }
 
     renderable.shader->Bind();
     renderable.shader->SetMat4("u_Model", transform.GetMatrix());
     renderable.shader->SetMat4("u_View", view);
-
-    /*
-     현재 Camera에서 만들어진 공통 View/Projection
-    */
-    renderable.shader->SetMat4("u_Projection",projection);
-    renderable.texture->Bind(0);
+    renderable.shader->SetMat4("u_Projection", projection);
+    renderable.shader->SetFloat4("u_BaseColorFactor", renderable.material->BaseColorFactor());
+    renderable.shader->SetFloat("u_MetallicFactor", renderable.material->MetallicFactor());
+    renderable.shader->SetFloat("u_RoughnessFactor", renderable.material->RoughnessFactor());
     renderable.mesh->Bind();
-
-    glDrawElements(
-        GL_TRIANGLES,
-        renderable.mesh->GetIndexCount(),
-        GL_UNSIGNED_INT,
-        nullptr
-    );
-
+    const std::size_t indexCount = renderable.indexCount == 0U
+        ? renderable.mesh->GetIndexCount() : renderable.indexCount;
+    const std::size_t indexOffset = renderable.indexOffset * sizeof(std::uint32_t);
+    glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(indexCount), GL_UNSIGNED_INT,
+                   reinterpret_cast<const void*>(indexOffset));
     renderable.mesh->UnBind();
-    renderable.texture->UnBind();
     renderable.shader->UnBind();
 }
 } // namespace PoseLink

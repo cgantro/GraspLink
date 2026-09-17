@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.20)
+﻿cmake_minimum_required(VERSION 3.20)
 
 project(GraspLink VERSION 0.1.0 LANGUAGES C CXX)
 
@@ -10,50 +10,31 @@ if(MSVC)
   add_compile_options(/utf-8)
 endif()
 
-option(GRASPLINK_BUILD_GRAPHICS "Build the OpenGL HCR-12A simulator" ON)
-option(GRASPLINK_BUILD_TESTS "Build deterministic GraspLink tests" ON)
-
-# Robot math remains independent from OpenGL/Flecs so FK/IK/grasp logic can be
-# verified without a graphics context.
-add_library(grasplink_kinematics STATIC
-  modules/kinematics/src/RobotKinematics.cpp
-  modules/kinematics/src/Grasping.cpp
-)
-target_include_directories(grasplink_kinematics PUBLIC
-  modules/common/include
-  modules/kinematics/include
-)
+option(GRASPLINK_BUILD_GRAPHICS "Build the OpenGL viewer" ON)
 
 if(GRASPLINK_BUILD_GRAPHICS)
   include(cmake/Dependencies.cmake)
+  grasplink_add_graphics_dependencies()
   grasplink_add_graphics_library()
 
   add_executable(grasplink_simulator
     apps/viewer/main.cpp
     apps/viewer/ViewerApp.cpp
     apps/viewer/ViewerApp.h
-    apps/viewer/CadVisualRig.cpp
-    apps/viewer/CadVisualRig.h
-    apps/viewer/SimulatorConfig.cpp
-    apps/viewer/SimulatorConfig.h
     modules/viewer/include/Entity.h
     modules/viewer/include/systems/RenderSystem.h
     modules/viewer/src/systems/RenderSystem.cpp
   )
-
   target_include_directories(grasplink_simulator PRIVATE
     apps/viewer
     modules/common/include
-    modules/kinematics/include
     modules/viewer/include
     modules/viewer/include/components
     modules/viewer/include/graphics
     modules/viewer/include/systems
   )
-
   target_link_libraries(grasplink_simulator PRIVATE
     grasplink_graphics
-    grasplink_kinematics
     flecs::flecs_static
   )
 
@@ -61,31 +42,5 @@ if(GRASPLINK_BUILD_GRAPHICS)
     COMMAND ${CMAKE_COMMAND} -E copy_directory
       ${CMAKE_SOURCE_DIR}/assets/shaders
       $<TARGET_FILE_DIR:grasplink_simulator>/shaders
-    COMMAND ${CMAKE_COMMAND} -E make_directory
-      $<TARGET_FILE_DIR:grasplink_simulator>/assets/hcr12a
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-      ${CMAKE_SOURCE_DIR}/assets/hcr12a/HCR12A_R00.glb
-      $<TARGET_FILE_DIR:grasplink_simulator>/assets/hcr12a/HCR12A_R00.glb
   )
-
-  target_compile_definitions(grasplink_simulator PRIVATE
-    GRASPLINK_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
-  )
-endif()
-
-if(GRASPLINK_BUILD_TESTS)
-  enable_testing()
-
-  add_executable(grasplink_tests
-    tests/test_main.cpp
-  )
-  target_include_directories(grasplink_tests PRIVATE
-    modules/common/include
-    modules/kinematics/include
-  )
-  target_link_libraries(grasplink_tests PRIVATE
-    grasplink_kinematics
-  )
-
-  add_test(NAME grasplink_tests COMMAND grasplink_tests)
 endif()
