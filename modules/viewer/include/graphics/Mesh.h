@@ -1,4 +1,5 @@
 #pragma once
+#include "assets/GraphicsTypes.h"
 
 #include <cstdint>
 #include <memory>
@@ -11,13 +12,7 @@ class VertexBuffer;
 class IndexBuffer;
 
 // 준비된 정점과 인덱스를 GPU 버퍼로 옮기는 단순 mesh다.
-struct Vertex
-{
-    glm::vec3 position;
-    glm::vec3 normal;
-    glm::vec2 texCoord;
-};
-
+ 
 class Mesh final
 {
 public:

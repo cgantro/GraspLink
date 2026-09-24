@@ -11,8 +11,10 @@
 #include "Window.h"
 #include "components/RenderComponents.h"
 #include "components/TransformComponents.h"
-
+#include "scene/Scene.h"
+#include "scene/SceneManager.h"
 #include <memory>
+#include <chrono>
 
 namespace
 {
@@ -53,41 +55,74 @@ bool ViewerApp::Init()
             static_cast<float>(kWindowHeight));
 
     m_World.set<RenderContext>({m_Renderer.get(), m_Camera.get()});
+
     m_World.import<TransformSystemModule>();
     m_World.import<RenderSystemModule>();
 
+
+     /*
+        아직 SimulationScene 같은 구체 Scene을 만들지 않기로 했으므로
+        현재는 기본 Scene을 그대로 사용한다.
+
+        Scene::OnEnter() 등이 virtual이지만 pure virtual이 아니므로
+        Scene 자체를 생성할 수 있다.
+    */
+    m_SceneManager = std::make_unique<SceneManager>(m_World);
+    m_SceneManager->LoadScene<Scene>();
+    m_SceneManager->OnUpdate(0.0f);
+
+    Scene* scene = m_SceneManager->GetActiveScene();
     auto shader = Shader::Create("shaders/Debug.glsl");
     auto material = std::make_shared<Material>(
         glm::vec4(0.18F, 0.45F, 0.85F, 1.0F), 0.0F, 0.8F);
     std::shared_ptr<Mesh> mesh = Mesh::CreateCube();
-
     // DebugCube도 실제 씬 엔티티와 같은 Local/World pair를 사용한다.
-    auto debugEntity = m_World.entity("DebugCube");
-    debugEntity
-        .set<Position, Local>(Position{kDebugPosition})
-        .set<Rotation, Local>(Rotation{glm::vec3(0.0F)})
-        .set<Scale, Local>(Scale{kDebugScale})
-        .set<TransformMatrix, Local>(TransformMatrix{})
-        .set<TransformMatrix, World>(TransformMatrix{})
-        .set<MeshFilter>(MeshFilter{mesh})
-        .set<MeshRenderer>(MeshRenderer{shader, material, true});
-
+    Entity debugCube = scene->CreateEntity("DebugCube");
+    debugCube.SetLocalPosition(kDebugPosition);
+    debugCube.SetLocalScale(kDebugScale);
+    debugCube.Set<MeshFilter>(MeshFilter{mesh})
+            .Set<MeshRenderer>(MeshRenderer{shader,material,true});
     return true;
 }
 
 void ViewerApp::MainLoop()
-{
+{   
+    using Clock=std::chrono::steady_clock;
+    auto lastFrameTime = Clock::now();
+
     while (!m_Window->ShouldClose())
-    {
+    {   
+        const auto currentFrameTime = Clock::now();
+
+        /*
+            현재 frame과 이전 frame 사이의 실제 경과 시간.
+            duration<float>의 단위는 seconds.
+        */
+        float dt = std::chrono::duration<float>(currentFrameTime - lastFrameTime).count();
+        lastFrameTime = currentFrameTime;
+        if(dt > 0.1F) dt = 0.1F; // dt가 너무 길어진 경우, 갑자기 큰 dt가 전송되는걸 방지한다.
         m_Window->PollEvents();
         m_Renderer->BeginFrame();
-        m_World.progress(0.0F);
+
+        /*
+            순서가 중요
+            1. SceneManager
+                - Scene 전환
+                - update
+            2. World
+                - Transform
+                - Render
+            즉, Scene에서 Transform 변경 후, 같은 Frame의 ECS System이 그 값을 처리
+        */
+        m_SceneManager->OnUpdate(dt);
+        m_World.progress(dt);
         m_Window->SwapBuffers();
     }
 }
 
 void ViewerApp::Shutdown()
-{
+{   
+    m_SceneManager.reset();
     m_World.reset();
     m_Camera.reset();
     m_Renderer.reset();

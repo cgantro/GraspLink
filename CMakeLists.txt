@@ -15,9 +15,7 @@ option(GRASPLINK_BUILD_GRAPHICS "Build the OpenGL viewer" ON)
 if(GRASPLINK_BUILD_GRAPHICS)
   include(cmake/Dependencies.cmake)
   grasplink_add_graphics_dependencies()
-  grasplink_add_graphics_library(
-    modules/viewer/include/scene/Scene.h
-    modules/viewer/include/scene/SceneManager.h)
+  grasplink_add_graphics_library()
 
   add_executable(grasplink_simulator
     apps/viewer/main.cpp
@@ -34,6 +32,13 @@ if(GRASPLINK_BUILD_GRAPHICS)
     modules/viewer/include/systems/TransformSystemModule.h
     modules/viewer/src/systems/RenderSystemModule.cpp
     modules/viewer/src/systems/TransformSystemModule.cpp
+    modules/viewer/include/scene/Scene.h
+    modules/viewer/include/scene/SceneManager.h
+    modules/viewer/src/scene/Scene.cpp
+    modules/viewer/src/scene/SceneManager.cpp
+    modules/viewer/include/assets/GraphicsTypes.h
+    modules/viewer/include/graphics/Texture.h
+    modules/viewer/src/graphics/Texture.cpp
   )
   target_include_directories(grasplink_simulator PRIVATE
     apps/viewer
