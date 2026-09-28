@@ -18,3 +18,37 @@
 
 새 모델 형식이나 로봇 제어를 추가할 때는 기존 viewer 책임을 침범하지 않는 별도 모듈로
 설계하고, 현재 최소 실행 구조를 먼저 깨뜨리지 않도록 한다.
+
+## 향후 Robot Control 경계
+
+로봇 제어가 추가되면 Controller가 GLB node나 Flecs render component를 직접 수정하지 않는다.
+제어 결과는 공통 Joint 상태를 통해 시뮬레이션과 렌더링으로 전달한다.
+
+```text
+Controller
+    ↓
+JointCommand
+    ↓
+Limit / Safety
+    ↓
+IRobotHardware
+    ├─ SimRobotHardware
+    └─ RealRobotHardware
+    ↓
+JointState
+    ↓
+Kinematics / Simulation
+    ↓
+Rendering
+```
+
+필수 제어 경계는 다음과 같다.
+
+- Hardware / Simulation 구현 분리
+- Joint Angle Limit
+- Joint Velocity / Acceleration Limit
+- Rendering Loop와 Fixed Control Loop 분리
+
+E-Stop과 Zero Offset은 기본 제어 구조 이후 확장한다.
+
+세부 기준은 [CONTROL_SIMULATION_GOALS.md](CONTROL_SIMULATION_GOALS.md)를 따른다.
