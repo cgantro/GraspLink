@@ -176,9 +176,12 @@ ROS-Industrial C3 visualization model에서는 시뮬레이션을 위해 다음�
 
 2F-85 자체 질량은 약 0.925 kg이고 coupling 질량은 별도로 더해진다. HCR의 12 kg payload는 tool assembly 전체를 포함하므로 robot payload 계산에는 gripper/coupling/object를 합산해야 한다. 반면 2F-85의 nominal grasp payload는 5 kg이므로, 정적 이상조건에서도 object payload는 일반적으로 5 kg 이하에서 먼저 제한된다. 실제 허용량은 마찰계수와 로봇 가속도로 더 낮아진다. [R1]
 
-### 7.3 속도 제한
+### 7.3 속도 / 가속도 제한
 
-- 각 joint command는 위의 max joint speed를 넘지 않도록 clamp한다.
+- 각 joint command는 위의 max joint speed를 넘지 않도록 제한한다.
+- Joint target을 한 프레임에 즉시 적용하지 않고 `dt`를 기준으로 velocity와 acceleration 제한을 거쳐 상태를 갱신한다.
+- HCR-12A의 확인된 최대속도는 위 사양값을 사용한다.
+- 최대 가속도는 현재 문서에서 제조사 기준값을 확인하지 못했으므로 별도 simulation profile 값으로 관리하며 제조사 공식 사양으로 취급하지 않는다.
 - Cartesian EE speed는 기본적으로 1 m/s를 상한으로 둔다. [H1]
 - Gripper finger speed는 20~150 mm/s 범위를 사용한다. [R1]
 
@@ -196,15 +199,17 @@ struct JointLimit {
     double minRad;
     double maxRad;
     double maxVelRadSec;
+    double maxAccRadSec2; // simulation profile value
 };
 
+// maxAccRadSec2는 제조사 공식값이 아니라 simulation profile에서 주입한다.
 constexpr JointLimit HCR12A_LIMITS[6] = {
-    { -3.141593,  3.141593,  2.268928 }, // J1
-    { -2.879793,  2.356194,  2.268928 }, // J2
-    { -1.483530,  4.276057,  3.490659 }, // J3
-    { -3.316126,  3.316126,  3.490659 }, // J4
-    { -2.967060,  2.967060,  3.490659 }, // J5
-    { -6.283185,  6.283185,  3.490659 }, // J6
+    { -3.141593,  3.141593,  2.268928, 0.0 }, // J1
+    { -2.879793,  2.356194,  2.268928, 0.0 }, // J2
+    { -1.483530,  4.276057,  3.490659, 0.0 }, // J3
+    { -3.316126,  3.316126,  3.490659, 0.0 }, // J4
+    { -2.967060,  2.967060,  3.490659, 0.0 }, // J5
+    { -6.283185,  6.283185,  3.490659, 0.0 }, // J6
 };
 
 constexpr double HCR12A_REACH_M = 1.300;
@@ -254,8 +259,13 @@ GLB에서 추출된 주요 bind translation은 다음과 같다. 이 값은 **as
 
 ## 10. 구현 체크리스트
 
-- [ ] J1~J6 angle limit clamp 적용
-- [ ] Joint max velocity clamp 적용
+- [ ] Hardware / Simulation 공통 interface 분리
+- [ ] J1~J6 angle limit 적용
+- [ ] Joint max velocity limit 적용
+- [ ] Joint max acceleration limit 적용
+- [ ] Rendering FPS와 분리된 Fixed Control Loop 적용
+- [ ] E-Stop 상태 모델 추가
+- [ ] Joint Zero Offset 보정 계층 추가
 - [ ] J2/J3 limit profile revision 분리
 - [ ] FK 결과 TCP reach sanity check (1.3 m)
 - [ ] Gripper opening state 0~85 mm 관리
