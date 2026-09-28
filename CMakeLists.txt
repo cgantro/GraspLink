@@ -17,12 +17,15 @@ if(GRASPLINK_BUILD_GRAPHICS)
   grasplink_add_graphics_dependencies()
   grasplink_add_graphics_library()
 
-  add_executable(grasplink_simulator
-    apps/viewer/main.cpp
-    apps/viewer/ViewerApp.cpp
-    apps/viewer/ViewerApp.h
-    modules/viewer/include/Entity.h
+  set(GRASPLINK_VIEWER_SOURCES
     modules/viewer/src/Entity.cpp
+    modules/viewer/src/systems/RenderSystemModule.cpp
+    modules/viewer/src/systems/TransformSystemModule.cpp
+    modules/viewer/src/scene/Scene.cpp
+    modules/viewer/src/scene/SceneManager.cpp
+  )
+  set(GRASPLINK_VIEWER_HEADERS
+    modules/viewer/include/Entity.h
     modules/viewer/include/components/Components.h
     modules/viewer/include/components/GripperComponents.h
     modules/viewer/include/components/RenderComponents.h
@@ -30,27 +33,45 @@ if(GRASPLINK_BUILD_GRAPHICS)
     modules/viewer/include/components/TransformComponents.h
     modules/viewer/include/systems/RenderSystemModule.h
     modules/viewer/include/systems/TransformSystemModule.h
-    modules/viewer/src/systems/RenderSystemModule.cpp
-    modules/viewer/src/systems/TransformSystemModule.cpp
     modules/viewer/include/scene/Scene.h
     modules/viewer/include/scene/SceneManager.h
-    modules/viewer/src/scene/Scene.cpp
-    modules/viewer/src/scene/SceneManager.cpp
     modules/viewer/include/assets/GraphicsTypes.h
-    modules/viewer/include/graphics/Texture.h
-    modules/viewer/src/graphics/Texture.cpp
+    modules/viewer/include/assets/ResourceID.h
   )
-  target_include_directories(grasplink_simulator PRIVATE
-    apps/viewer
+
+  add_library(grasplink_viewer STATIC
+    ${GRASPLINK_VIEWER_SOURCES}
+    ${GRASPLINK_VIEWER_HEADERS}
+  )
+  target_include_directories(grasplink_viewer PUBLIC
     modules/common/include
     modules/viewer/include
     modules/viewer/include/components
     modules/viewer/include/graphics
     modules/viewer/include/systems
   )
-  target_link_libraries(grasplink_simulator PRIVATE
+  target_link_libraries(grasplink_viewer PUBLIC
     grasplink_graphics
     flecs::flecs_static
+  )
+
+  set(GRASPLINK_APP_SOURCES
+    apps/viewer/main.cpp
+    apps/viewer/ViewerApp.cpp
+  )
+  set(GRASPLINK_APP_HEADERS
+    apps/viewer/ViewerApp.h
+  )
+
+  add_executable(grasplink_simulator
+    ${GRASPLINK_APP_SOURCES}
+    ${GRASPLINK_APP_HEADERS}
+  )
+  target_include_directories(grasplink_simulator PRIVATE
+    apps/viewer
+  )
+  target_link_libraries(grasplink_simulator PRIVATE
+    grasplink_viewer
   )
 
   add_custom_command(TARGET grasplink_simulator POST_BUILD

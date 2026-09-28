@@ -1,0 +1,5 @@
+{
+  "cmake.useCMakePresets": "always",
+  "cmake.generator": "Ninja",
+  "cmake.parallelJobs": 0
+}

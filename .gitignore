@@ -36,7 +36,8 @@ _deps/
 *.exp
 
 # IDE and editor settings
-/.vscode/
+/.vscode/*
+!/.vscode/settings.json
 /.idea/
 *.suo
 *.user

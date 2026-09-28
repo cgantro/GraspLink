@@ -46,15 +46,17 @@ class Mesh;
         위치 : X, Y, Z
         법선 벡터 : 주로 크기 1로 정규화된 X,Y,Z 
             빛 연산의 핵심
-        textCoord : 텍스처 좌표 U/V
+        texCoord : 텍스처 좌표 U/V
             3D모델 표면에 2D 텍스처를 입힐 때 사용하는 2차원 좌표
 */
 struct Vertex
 {
-    // Local Mesh 좌표계에서의 정점 위치
+    // Local Mesh 좌표계에서의 정점 위치.
     glm::vec3 position{0.0f};
-    glm::vec3 normal{0.0f, 1.0f, 0.0f}; // 기본 값 +Y
-    glm::vec2 textCoord{0.0f};
+    // 조명 계산에 사용하는 정점 법선. 기본값은 +Y 방향이다.
+    glm::vec3 normal{0.0f, 1.0f, 0.0f};
+    // 텍스처의 U/V 좌표.
+    glm::vec2 texCoord{0.0f};
 
     /*  
 

@@ -34,7 +34,19 @@ function(grasplink_add_graphics_library)
   FetchContent_MakeAvailable(glfw flecs)
   find_package(OpenGL REQUIRED)
 
-  add_library(grasplink_graphics STATIC
+  set(GRASPLINK_GRAPHICS_SOURCES
+    modules/viewer/src/graphics/Camera.cpp
+    modules/viewer/src/graphics/IndexBuffer.cpp
+    modules/viewer/src/graphics/Material.cpp
+    modules/viewer/src/graphics/Mesh.cpp
+    modules/viewer/src/graphics/Renderer.cpp
+    modules/viewer/src/graphics/Shader.cpp
+    modules/viewer/src/graphics/Texture.cpp
+    modules/viewer/src/graphics/VertexArray.cpp
+    modules/viewer/src/graphics/VertexBuffer.cpp
+    modules/viewer/src/graphics/Window.cpp
+  )
+  set(GRASPLINK_GRAPHICS_HEADERS
     modules/viewer/include/components/TransformComponents.h
     modules/viewer/include/components/RenderComponents.h
     modules/viewer/include/graphics/Camera.h
@@ -43,18 +55,15 @@ function(grasplink_add_graphics_library)
     modules/viewer/include/graphics/Mesh.h
     modules/viewer/include/graphics/Renderer.h
     modules/viewer/include/graphics/Shader.h
+    modules/viewer/include/graphics/Texture.h
     modules/viewer/include/graphics/VertexArray.h
     modules/viewer/include/graphics/VertexBuffer.h
     modules/viewer/include/graphics/Window.h
-    modules/viewer/src/graphics/Camera.cpp
-    modules/viewer/src/graphics/IndexBuffer.cpp
-    modules/viewer/src/graphics/Material.cpp
-    modules/viewer/src/graphics/Mesh.cpp
-    modules/viewer/src/graphics/Renderer.cpp
-    modules/viewer/src/graphics/Shader.cpp
-    modules/viewer/src/graphics/VertexArray.cpp
-    modules/viewer/src/graphics/VertexBuffer.cpp
-    modules/viewer/src/graphics/Window.cpp
+  )
+
+  add_library(grasplink_graphics STATIC
+    ${GRASPLINK_GRAPHICS_SOURCES}
+    ${GRASPLINK_GRAPHICS_HEADERS}
   )
   target_include_directories(grasplink_graphics PUBLIC
     modules/common/include

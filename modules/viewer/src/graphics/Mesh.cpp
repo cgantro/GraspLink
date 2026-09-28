@@ -17,9 +17,14 @@ Mesh::Mesh(const Vertex* vertices, std::uint32_t vertexCount,
     if (vertices == nullptr || vertexCount == 0U) { throw std::invalid_argument("Mesh has no vertices"); }
     if (indices == nullptr || indexCount == 0U) { throw std::invalid_argument("Mesh has no indices"); }
 
+    // VAO를 먼저 바인딩한다.
+    // OpenGL의 vertex attribute 설정은 현재 바인딩된 VAO에 기록되므로,
+    // 이 순서를 지키지 않으면 다른 VAO에 잘못된 정점 배치가 저장될 수 있다.
     vertexArray_ = std::make_unique<VertexArray>();
     vertexArray_->Bind();
 
+    // Vertex 배열 전체를 GPU의 VBO로 복사한다.
+    // byteCount는 정점 개수가 아니라 정점 데이터 전체의 바이트 수다.
     const std::size_t byteCount = sizeof(Vertex) * static_cast<std::size_t>(vertexCount);
     if (byteCount > std::numeric_limits<std::uint32_t>::max())
     {
@@ -27,8 +32,20 @@ Mesh::Mesh(const Vertex* vertices, std::uint32_t vertexCount,
     }
     vertexBuffer_ = std::make_unique<VertexBuffer>(vertices, static_cast<std::uint32_t>(byteCount));
     vertexBuffer_->Bind();
+
+    // 인덱스 배열을 GPU의 EBO로 복사한다.
+    // EBO는 VAO에 연결되므로 VAO가 바인딩된 상태에서 생성/바인딩해야 한다.
     indexBuffer_ = std::make_unique<IndexBuffer>(indices, indexCount);
 
+    // Vertex 구조체는 [position][normal][texCoord] 순서로 한 정점 안에
+    // 여러 attribute를 나란히 저장하는 interleaved layout이다.
+    //
+    // stride는 현재 정점에서 다음 정점까지 이동하는 바이트 수다.
+    // sizeof(Vertex)를 사용하면 padding을 포함한 실제 구조체 간격과 일치한다.
+    // offset은 한 정점의 시작 주소에서 각 attribute가 시작하는 위치다.
+    // offsetof(Vertex, field)는 C++ 구조체에서 그 위치를 바이트 단위로 계산한다.
+    //
+    // location 번호는 셰이더의 layout(location = N)과 반드시 일치해야 한다.
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), reinterpret_cast<void*>(offsetof(Vertex, position)));
     glEnableVertexAttribArray(1);
@@ -36,6 +53,9 @@ Mesh::Mesh(const Vertex* vertices, std::uint32_t vertexCount,
     glEnableVertexAttribArray(2);
     glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), reinterpret_cast<void*>(offsetof(Vertex, texCoord)));
 
+    // glVertexAttribPointer를 호출하는 순간 현재 VBO와 attribute 설정이 VAO에 기록된다.
+    // 그래서 이후 VBO를 해제해도 VAO가 정점 데이터를 읽는 방법은 유지된다.
+    // 반면 EBO 바인딩은 VAO 상태의 일부이므로 VAO가 바인딩된 동안 연결을 유지한다.
     vertexBuffer_->UnBind();
     vertexArray_->UnBind();
 }

@@ -1,0 +1,24 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "ninja",
+      "displayName": "Ninja",
+      "description": "Configure with the Ninja generator",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-ninja",
+      "cacheVariables": {
+        "GRASPLINK_BUILD_GRAPHICS": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "ninja-release",
+      "displayName": "Ninja Release (parallel)",
+      "configurePreset": "ninja",
+      "configuration": "Release",
+      "jobs": 0
+    }
+  ]
+}

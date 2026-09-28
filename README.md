@@ -29,8 +29,17 @@ HCR-12A의 관절 범위와 최대 속도 기준은 [HCR-12A + 2F-85 Simulation 
 ## 빌드
 
 ```powershell
-cmake -S . -B build -DGRASPLINK_BUILD_GRAPHICS=ON
-cmake --build build --config Release
+cmake --preset ninja
+cmake --build --preset ninja-release
+```
+
+`ninja-release` 프리셋은 Ninja 생성기를 사용하며, `jobs: 0`으로 CMake에
+병렬 빌드 작업 수를 Ninja의 기본값(사용 가능한 병렬 작업)으로 위임한다.
+기존 `build` 디렉터리를 사용하려면 다음처럼 직접 실행할 수도 있다.
+
+```powershell
+cmake -S . -B build-ninja -G Ninja -DGRASPLINK_BUILD_GRAPHICS=ON
+cmake --build build-ninja --config Release --parallel
 ```
 
 실행 파일은 `grasplink_simulator`이며, 현재는 GLB 파일을 읽지 않는다.
