@@ -20,14 +20,14 @@ third_party/glad  OpenGL 함수 로더
 - Joint Angle Limit
 - Joint Velocity / Acceleration Limit
 - Rendering과 분리된 Fixed Control Loop
-- 외부 Physics Library 연동
+- **Flecs + Jolt Physics** 연동
 - Rigid Body / Collision / Ground 처리
 - Grasp Attach / Detach와 Physics 상태 전환
 - E-Stop 확장
 - Zero Offset 확장
 
 세부 설계와 구현 우선순위는 [Robot Control Simulation Goals](docs/CONTROL_SIMULATION_GOALS.md)를 따른다.
-물리 엔진 자체는 직접 구현하지 않고 외부 라이브러리를 사용하며, 프로젝트에서는 Scene/Robot/Physics 상태 연동과 Pick & Place 통합을 구현한다.
+물리 엔진 자체는 직접 구현하지 않고 **Jolt Physics**를 사용한다. Flecs는 ECS/상태 관리에 집중시키고, Jolt의 `BodyID`를 Flecs component handle로 연결하여 Scene/Robot/Physics 상태 연동과 Pick & Place 통합을 구현한다.
 HCR-12A의 관절 범위와 최대 속도 기준은 [HCR-12A + 2F-85 Simulation Specs](docs/HCR12A_2F85_simulation_specs.md)에 정리한다.
 
 ## 빌드
