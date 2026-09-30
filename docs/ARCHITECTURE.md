@@ -39,6 +39,8 @@ JointState
     ↓
 Kinematics / Simulation
     ↓
+Physics Integration
+    ↓
 Rendering
 ```
 
@@ -48,6 +50,12 @@ Rendering
 - Joint Angle Limit
 - Joint Velocity / Acceleration Limit
 - Rendering Loop와 Fixed Control Loop 분리
+- Physics Library는 별도 통합 계층을 통해 연결
+- Physics World와 Rendering Transform의 동기화
+- Grasp Attach / Detach 시 Physics 상태 전환
+
+물리 엔진의 충돌 해결기나 rigid-body solver를 직접 구현하지 않고 외부 라이브러리에 위임한다.
+프로젝트 코드는 Robot State, Scene State, Physics Body 사이의 변환과 생명주기 관리에 집중한다.
 
 E-Stop과 Zero Offset은 기본 제어 구조 이후 확장한다.
 
