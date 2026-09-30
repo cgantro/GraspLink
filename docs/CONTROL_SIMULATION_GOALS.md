@@ -55,6 +55,35 @@ Target / Controller
 6. **Zero Offset**
    - 논리적 Joint Zero와 센서/엔코더 기준점 사이의 차이를 보정할 수 있도록 offset 계층 추가
 
+## Physics Simulation
+
+물리는 직접 엔진을 구현하지 않고 외부 물리 라이브러리를 사용한다.
+프로젝트에서 직접 구현하는 범위는 물리 엔진 자체가 아니라 **Robot/Scene 상태와 Physics World를 연결하는 통합 계층**이다.
+
+### 필수 구현
+
+- Physics World 생성 및 Fixed Physics Step
+- Dynamic / Static Rigid Body 구분
+- 질량, 중력, 선형/각속도 상태 연동
+- Robot/Environment용 Collision Shape 생성
+- 바닥 및 물체 간 Collision Detection / Response를 라이브러리에 위임
+- Render Transform ↔ Physics Transform 동기화
+- Grasp 시 Object를 End Effector에 연결
+- Detach 시 Object를 다시 Dynamic Body로 전환하여 중력/충돌 적용
+- Pick & Place 시 물체가 바닥과 다른 물체를 관통하지 않는지 검증
+
+### 선택 확장
+
+- Friction / Restitution 파라미터 조정
+- Collision Layer / Mask
+- Continuous Collision Detection
+- Gripper 접촉 기반 grasp 판정
+- Constraint 기반 grasp
+
+물리 라이브러리는 이후 프로젝트 요구사항과 C++ 연동성을 기준으로 선택한다.
+직접 구현해야 하는 것은 Library Wrapper와 Robot/Scene/Physics 간 데이터 흐름이며,
+충돌 해결기나 rigid-body solver 자체를 새로 작성하지 않는다.
+
 ## 기본 상태 / 설정
 
 ```cpp
@@ -89,8 +118,11 @@ Time         s
 3. Velocity Limit
 4. Acceleration Limit
 5. Fixed Control Loop
-6. E-Stop
-7. Zero Offset
+6. Physics Library 연동
+7. Rigid Body / Collision / Ground 처리
+8. Grasp Attach / Detach와 Physics 상태 전환
+9. E-Stop
+10. Zero Offset
 ```
 
-E-Stop과 Zero Offset은 기본 제어 구조와 제한 처리가 완료된 뒤 확장한다.
+Physics는 외부 라이브러리를 사용해 통합하고, E-Stop과 Zero Offset은 기본 제어 구조와 제한 처리가 완료된 뒤 확장한다.
