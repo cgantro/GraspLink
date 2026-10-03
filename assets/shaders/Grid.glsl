@@ -6,7 +6,9 @@ layout(location = 0) in vec3 a_Position;
 uniform mat4 u_Model;
 uniform mat4 u_View;
 uniform mat4 u_Projection;
+uniform mat4 u_LightSpaceMatrix;
 
+out vec4 v_LightSpacePosition;
 out vec3 v_WorldPosition;
 
 void main()
@@ -22,6 +24,9 @@ void main()
         u_Projection *
         u_View *
         worldPosition;
+    v_LightSpacePosition =
+        u_LightSpaceMatrix *
+        worldPosition;
 }
 
 
@@ -29,9 +34,67 @@ void main()
 #version 330 core
 
 in vec3 v_WorldPosition;
+in vec4 v_LightSpacePosition;
 
+uniform sampler2D u_ShadowMap;
 out vec4 FragColor;
 
+float CalculateShadow(
+    vec4 lightPosition)
+{
+    vec3 projCoords =
+        lightPosition.xyz /
+        lightPosition.w;
+
+    projCoords =
+        projCoords * 0.5 + 0.5;
+
+    if (projCoords.z > 1.0)
+    {
+        return 0.0;
+    }
+
+    float currentDepth =
+        projCoords.z;
+
+    vec2 texelSize =
+        1.0 /
+        textureSize(
+            u_ShadowMap,
+            0);
+
+    float shadow =
+    CalculateShadow(
+        v_LightSpacePosition);
+
+    color *= mix(1.0,0.42,shadow);
+
+    for (int x = -1;
+         x <= 1;
+         ++x)
+    {
+        for (int y = -1;
+             y <= 1;
+             ++y)
+        {
+            float depth =
+                texture(
+                    u_ShadowMap,
+                    projCoords.xy +
+                    vec2(x, y) *
+                    texelSize)
+                    .r;
+
+            shadow +=
+                currentDepth - 0.001 >
+                depth
+                    ? 1.0
+                    : 0.0;
+        }
+    }
+
+    return shadow / 9.0;
+}
 
 // scale = Grid 간격
 float GridLine(

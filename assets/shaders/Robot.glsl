@@ -8,7 +8,9 @@ layout(location = 2) in vec2 a_TexCoord;
 uniform mat4 u_Model;
 uniform mat4 u_View;
 uniform mat4 u_Projection;
+uniform mat4 u_LightSpaceMatrix;
 
+out vec4 v_LightSpacePosition;
 out vec3 v_Normal;
 out vec3 v_WorldPosition;
 
@@ -28,6 +30,10 @@ void main()
         u_Projection *
         u_View *
         worldPosition;
+
+    v_LightSpacePosition =
+        u_LightSpaceMatrix *
+        worldPosition;
 }
 
 
@@ -36,7 +42,10 @@ void main()
 
 in vec3 v_Normal;
 in vec3 v_WorldPosition;
+in vec4 v_LightSpacePosition;
 
+uniform sampler2D u_ShadowMap;
+uniform vec3 u_LightDirection;
 uniform vec3 u_CameraPosition;
 
 uniform vec4 u_BaseColorFactor;
@@ -65,6 +74,74 @@ vec3 ToneMapACES(vec3 color)
         1.0);
 }
 
+float CalculateShadow(
+    vec4 lightSpacePosition,
+    vec3 N,
+    vec3 L)
+{
+    vec3 projCoords =
+        lightSpacePosition.xyz /
+        lightSpacePosition.w;
+
+    projCoords =
+        projCoords * 0.5 + 0.5;
+
+
+    if (projCoords.z > 1.0)
+    {
+        return 0.0;
+    }
+
+
+    float currentDepth =
+        projCoords.z;
+
+
+    float bias =
+        max(
+            0.0025 *
+            (1.0 - dot(N, L)),
+            0.0005);
+
+
+    vec2 texelSize =
+        1.0 /
+        textureSize(
+            u_ShadowMap,
+            0);
+
+
+    float shadow = 0.0;
+
+
+    // 3x3 PCF
+    for (int x = -1;
+         x <= 1;
+         ++x)
+    {
+        for (int y = -1;
+             y <= 1;
+             ++y)
+        {
+            float closestDepth =
+                texture(
+                    u_ShadowMap,
+                    projCoords.xy +
+                    vec2(x, y) *
+                    texelSize)
+                    .r;
+
+            shadow +=
+                currentDepth - bias >
+                closestDepth
+                    ? 1.0
+                    : 0.0;
+        }
+    }
+
+
+    return shadow / 9.0;
+}
 
 void main()
 {
@@ -82,9 +159,7 @@ void main()
     // surface -> light 방향
     // --------------------------------------------------------
 
-    vec3 L =
-        normalize(
-            vec3(-0.45, 0.85, 0.35));
+    vec3 L =normalize(u_LightDirection);
 
     float NdotL =
         max(
@@ -185,12 +260,19 @@ void main()
     // --------------------------------------------------------
     // Main Light
     // --------------------------------------------------------
+    float shadow =
+    CalculateShadow(
+        v_LightSpacePosition,
+        N,
+        L);
 
     vec3 directLight =
-        (
-            diffuseColor * NdotL +
-            specular
-        ) * 1.7;
+    (
+        diffuseColor * NdotL +
+        specular
+    )
+    * 1.7
+    * (1.0 - shadow);
 
 
     // --------------------------------------------------------

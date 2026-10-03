@@ -58,6 +58,7 @@ function(grasplink_add_graphics_library)
     modules/viewer/src/graphics/VertexArray.cpp
     modules/viewer/src/graphics/VertexBuffer.cpp
     modules/viewer/src/graphics/Window.cpp
+    modules/viewer/src/graphics/ShadowMap.cpp
   )
   set(GRASPLINK_GRAPHICS_HEADERS
     modules/viewer/include/components/TransformComponents.h
@@ -72,6 +73,7 @@ function(grasplink_add_graphics_library)
     modules/viewer/include/graphics/VertexArray.h
     modules/viewer/include/graphics/VertexBuffer.h
     modules/viewer/include/graphics/Window.h
+    modules/viewer/include/graphics/ShadowMap.h
   )
 
   add_library(grasplink_graphics STATIC
