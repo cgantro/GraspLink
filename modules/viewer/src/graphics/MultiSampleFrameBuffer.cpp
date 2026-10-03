@@ -5,17 +5,14 @@
 #include <algorithm>
 #include <stdexcept>
 
-MultisampleFramebuffer::MultisampleFramebuffer(
-    int width,
-    int height,
-    int samples)
+MultisampleFramebuffer::MultisampleFramebuffer(int width, int height, int samples)
     : m_Width(width),
       m_Height(height),
       m_Samples(samples)
 {
+    // GPU가 지원하는 최대 sample 수보다 큰 요청은 실제 지원 범위로 제한한다.
     GLint maxSamples = 1;
     glGetIntegerv(GL_MAX_SAMPLES, &maxSamples);
-
     m_Samples = std::min(m_Samples, static_cast<int>(maxSamples));
 
     if (m_Samples < 2)
@@ -31,13 +28,16 @@ MultisampleFramebuffer::~MultisampleFramebuffer()
 
 void MultisampleFramebuffer::Create()
 {
+    /*
+        MSAA framebuffer에는 pixel당 여러 sample을 가진 color attachment와
+        같은 sample 수를 가진 depth/stencil attachment가 필요하다.
+        두 attachment의 sample count가 다르면 framebuffer가 complete하지 않다.
+    */
     glGenFramebuffers(1, &m_Framebuffer);
     glBindFramebuffer(GL_FRAMEBUFFER, m_Framebuffer);
 
-    // Color
     glGenTextures(1, &m_ColorTexture);
     glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, m_ColorTexture);
-
     glTexImage2DMultisample(
         GL_TEXTURE_2D_MULTISAMPLE,
         m_Samples,
@@ -53,10 +53,8 @@ void MultisampleFramebuffer::Create()
         m_ColorTexture,
         0);
 
-    // Depth + Stencil
     glGenRenderbuffers(1, &m_DepthStencilBuffer);
     glBindRenderbuffer(GL_RENDERBUFFER, m_DepthStencilBuffer);
-
     glRenderbufferStorageMultisample(
         GL_RENDERBUFFER,
         m_Samples,
@@ -83,10 +81,8 @@ void MultisampleFramebuffer::Destroy()
 {
     if (m_DepthStencilBuffer != 0)
         glDeleteRenderbuffers(1, &m_DepthStencilBuffer);
-
     if (m_ColorTexture != 0)
         glDeleteTextures(1, &m_ColorTexture);
-
     if (m_Framebuffer != 0)
         glDeleteFramebuffers(1, &m_Framebuffer);
 
@@ -103,6 +99,10 @@ void MultisampleFramebuffer::Bind() const
 
 void MultisampleFramebuffer::ResolveToDefault() const
 {
+    /*
+        multisample texture는 sample 여러 개를 가진 상태라 그대로 화면 color buffer로 사용할 수 없다.
+        glBlitFramebuffer가 sample들을 하나의 pixel color로 resolve하면서 default framebuffer로 복사한다.
+    */
     glBindFramebuffer(GL_READ_FRAMEBUFFER, m_Framebuffer);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
 
@@ -117,15 +117,13 @@ void MultisampleFramebuffer::ResolveToDefault() const
 
 void MultisampleFramebuffer::Resize(int width, int height)
 {
-    if (width <= 0 || height <= 0)
-        return;
-
-    if (width == m_Width && height == m_Height)
-        return;
+    if (width <= 0 || height <= 0) return;
+    if (width == m_Width && height == m_Height) return;
 
     m_Width = width;
     m_Height = height;
 
+    // OpenGL texture/renderbuffer storage는 크기를 가진 고정 storage이므로 resize 시 재생성한다.
     Destroy();
     Create();
 }

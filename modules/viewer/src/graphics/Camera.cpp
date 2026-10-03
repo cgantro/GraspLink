@@ -27,11 +27,20 @@ Camera::Camera(
 
 glm::mat4 Camera::GetViewMatrix() const
 {
+    /*
+        View Matrix는 "카메라를 움직이는 행렬"이라기보다
+        World 전체를 카메라 기준 좌표계로 옮기는 역변환으로 이해하면 쉽다.
+        lookAt(position, target, up)이 camera basis를 만들어 이 변환을 계산한다.
+    */
     return glm::lookAt(m_Position, m_Target, m_Up);
 }
 
 glm::mat4 Camera::GetProjectionMatrix() const
 {
+    /*
+        Perspective projection은 멀리 있는 물체를 작게 보이게 한다.
+        FOV는 degree로 저장하지만 GLM perspective는 radian을 요구하므로 변환한다.
+    */
     return glm::perspective(
         glm::radians(m_Fov),
         m_AspectRatio,
