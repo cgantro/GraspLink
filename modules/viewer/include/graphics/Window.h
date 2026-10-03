@@ -29,6 +29,7 @@ public:
     bool ShouldClose() const;
     void PollEvents() const;
     void SwapBuffers() const;
+    void GetFramebufferSize(int& width, int& height) const;
 private:
     void Init(const Properties& properties);
     void Shutdown();

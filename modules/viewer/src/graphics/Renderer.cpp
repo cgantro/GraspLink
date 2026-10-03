@@ -5,6 +5,7 @@
 #include "Shader.h"
 #include "components/RenderComponents.h"
 #include "ShadowMap.h"
+#include "MultisampleFramebuffer.h"
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <glad/glad.h>
@@ -14,62 +15,65 @@
 Renderer::Renderer() = default;
 Renderer::~Renderer() = default;
 
-void Renderer::Init()
+void Renderer::Init(int framebufferWidth, int framebufferHeight)
 {
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_MULTISAMPLE);
 
-     m_ShadowMap =
-        std::make_unique<ShadowMap>(
-            2048);
+    m_MSAAFramebuffer =std::make_unique<MultisampleFramebuffer>(framebufferWidth,framebufferHeight,4);
 
-    m_ShadowShader =
-        Shader::Create(
-            "shaders/ShadowDepth.glsl");
+    m_ShadowMap = std::make_unique<ShadowMap>(2048);
+    m_ShadowShader = Shader::Create("shaders/ShadowDepth.glsl");
 
-    m_LightDirection =
-        glm::normalize(
-            m_LightDirection);
+    m_LightDirection = glm::normalize(m_LightDirection);
 
-    const glm::vec3 target{
-        0.0F,
-        0.7F,
-        0.0F
-    };
-
+    const glm::vec3 target{0.0F, 0.7F, 0.0F};
     const glm::vec3 lightPosition =
-        target +
-        m_LightDirection *
-        4.0F;
+        target + m_LightDirection * 4.0F;
 
-    const glm::mat4 lightView =
-        glm::lookAt(
-            lightPosition,
-            target,
-            glm::vec3{
-                0.0F,
-                1.0F,
-                0.0F
-            });
+    const glm::mat4 lightView = glm::lookAt(
+        lightPosition,
+        target,
+        glm::vec3{0.0F, 1.0F, 0.0F});
 
-    const glm::mat4 lightProjection =
-        glm::ortho(
-            -2.5F,
-             2.5F,
-            -2.5F,
-             2.5F,
-             0.1F,
-            10.0F);
+    const glm::mat4 lightProjection = glm::ortho(
+        -2.5F, 2.5F,
+        -2.5F, 2.5F,
+        0.1F, 10.0F);
 
-    m_LightSpaceMatrix =
-        lightProjection *
-        lightView;
+    m_LightSpaceMatrix = lightProjection * lightView;
 }
 
 void Renderer::BeginFrame()
 {
+    m_MSAAFramebuffer->Bind();
+
     glClearColor(0.1F, 0.1F, 0.1F, 1.0F);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    GLint sampleBuffers = 0;
+    GLint samples = 0;
+
+    glGetIntegerv(GL_SAMPLE_BUFFERS, &sampleBuffers);
+    glGetIntegerv(GL_SAMPLES, &samples);
+
+    std::cout
+    << "[MSAA FBO] sample buffers: "
+    << sampleBuffers
+    << ", samples: "
+    << samples
+    << '\n';
+
+}
+void Renderer::EndFrame()
+{
+    m_MSAAFramebuffer->ResolveToDefault();
+}
+
+void Renderer::Resize(int width, int height)
+{
+    if (m_MSAAFramebuffer)
+        m_MSAAFramebuffer->Resize(width, height);
 }
 
 void Renderer::Draw(const glm::mat4& model,

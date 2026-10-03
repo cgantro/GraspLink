@@ -61,7 +61,7 @@ float CalculateShadow(vec4 lightSpacePosition)
         return 0.0;
 
     float currentDepth = projCoords.z;
-    float bias = 0.001;
+    float bias = 0.0003;
 
     vec2 texelSize = 1.0 / vec2(textureSize(u_ShadowMap, 0));
 

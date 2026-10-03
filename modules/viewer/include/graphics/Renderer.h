@@ -4,6 +4,7 @@
 #include <memory>
 struct MeshFilter;
 struct MeshRenderer;
+class MultisampleFramebuffer;
 class Shader;
 class ShadowMap;
 // Flecs나 계층 구조를 알지 않고 GPU draw command만 실행한다.
@@ -13,8 +14,10 @@ public:
     Renderer();
     ~Renderer();
 
-    void Init();
+    void Init(int framebufferWidth, int framebufferHeight);
     void BeginFrame();
+    void EndFrame();
+    void Resize(int width, int height);
 
     void BeginShadowPass();
     void DrawShadow(
@@ -31,7 +34,8 @@ public:
 private:
     std::unique_ptr<ShadowMap> m_ShadowMap;
     std::shared_ptr<Shader> m_ShadowShader;
-
+    std::unique_ptr<MultisampleFramebuffer> m_MSAAFramebuffer;
+    
     glm::vec3 m_LightDirection{-0.45F, 0.85F, 0.35F};
     glm::mat4 m_LightSpaceMatrix{1.0F};
 };

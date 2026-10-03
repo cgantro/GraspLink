@@ -32,7 +32,7 @@ constexpr int kWindowHeight = 720;
 
 const char* kWindowTitle = "GraspLink Viewer";
 
-const glm::vec3 kCameraPosition{2.0F,1.35F,2.15F};
+const glm::vec3 kCameraPosition{-2.0F,1.35F,-1.15F};
 
 const glm::vec3 kCameraTarget{0.05F,0.50F,0.40F};
 
@@ -77,8 +77,12 @@ bool ViewerApp::Init()
     // Renderer
     // -------------------------------------------------------------------------
 
-    m_Renderer =std::make_unique<Renderer>();
-    m_Renderer->Init();
+    int framebufferWidth = 0;
+    int framebufferHeight = 0;
+
+    m_Window->GetFramebufferSize(framebufferWidth,framebufferHeight);
+
+    m_Renderer->Init(framebufferWidth,framebufferHeight);
 
 
     // -------------------------------------------------------------------------
@@ -175,6 +179,15 @@ void ViewerApp::MainLoop()
             dt = 0.1F;
         }
         m_Window->PollEvents();
+        
+        int framebufferWidth = 0;
+        int framebufferHeight = 0;
+        m_Window->GetFramebufferSize(framebufferWidth,framebufferHeight);
+        if (framebufferWidth <= 0 || framebufferHeight <= 0) continue;
+
+        m_Renderer->Resize(framebufferWidth,framebufferHeight);
+        m_Camera->SetAspectRatio(static_cast<float>(framebufferWidth)/static_cast<float>(framebufferHeight));
+
         m_Renderer->BeginFrame();
         /*
             Frame 처리 순서:
@@ -192,6 +205,7 @@ void ViewerApp::MainLoop()
 
         m_SceneManager->OnUpdate(dt);
         m_World.progress(dt);
+        m_Renderer->EndFrame();
         m_Window->SwapBuffers();
     }
 }

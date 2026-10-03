@@ -137,9 +137,7 @@ void ShadowMap::Begin()
     glEnable(
         GL_POLYGON_OFFSET_FILL);
 
-    glPolygonOffset(
-        2.0F,
-        4.0F);
+    glPolygonOffset(1.0F, 1.0F);
 }
 
 void ShadowMap::End()
