@@ -23,6 +23,7 @@ if(GRASPLINK_BUILD_GRAPHICS)
     modules/viewer/src/systems/TransformSystemModule.cpp
     modules/viewer/src/scene/Scene.cpp
     modules/viewer/src/scene/SceneManager.cpp
+    modules/viewer/src/assets/GltfLoader.cpp
   )
   set(GRASPLINK_VIEWER_HEADERS
     modules/viewer/include/Entity.h
@@ -37,6 +38,7 @@ if(GRASPLINK_BUILD_GRAPHICS)
     modules/viewer/include/scene/SceneManager.h
     modules/viewer/include/assets/GraphicsTypes.h
     modules/viewer/include/assets/ResourceID.h
+    modules/viewer/include/assets/GltfLoader.h
   )
 
   add_library(grasplink_viewer STATIC
@@ -53,8 +55,13 @@ if(GRASPLINK_BUILD_GRAPHICS)
   target_link_libraries(grasplink_viewer PUBLIC
     grasplink_graphics
     flecs::flecs_static
-  )
 
+    PRIVATE
+      tinygltf
+  )
+  target_compile_definitions(grasplink_viewer PRIVATE
+    GLM_ENABLE_EXPERIMENTAL
+  )
   set(GRASPLINK_APP_SOURCES
     apps/viewer/main.cpp
     apps/viewer/ViewerApp.cpp
@@ -77,6 +84,11 @@ if(GRASPLINK_BUILD_GRAPHICS)
   add_custom_command(TARGET grasplink_simulator POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
       ${CMAKE_SOURCE_DIR}/assets/shaders
-      $<TARGET_FILE_DIR:grasplink_simulator>/shaders
+      $<TARGET_FILE_DIR:grasplink_simulator>/shaders0
+
+    # GLB 파일 복사
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      ${CMAKE_SOURCE_DIR}/assets/HCR12A_R00.glb
+      $<TARGET_FILE_DIR:grasplink_simulator>/HCR12A_R00.glb
   )
 endif()

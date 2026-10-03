@@ -12,14 +12,14 @@
 class Mesh;
 
 /* 
-    ModelLoader가 GLB/glTF를 읽은 결과를 저장하는 중간 데이터 구조
+    GltfLoader가 GLB/glTF를 읽은 결과를 저장하는 중간 데이터 구조
 
      중요한 데이터 흐름:
         GLB
          ↓
       tinygltf
          ↓
-      ModelLoader
+      GltfLoader
          ↓
       ModelResource
          ↓
@@ -34,7 +34,7 @@ class Mesh;
 
     파일 포맷과 ECS 사이에 존재하는
     IR(Intermediate Representation)
-        ModelLoader와 ECS를 직접 결합하지 않기 위해
+        GltfLoader와 ECS를 직접 결합하지 않기 위해
     
     추후 OBJ, 자체 포맷등의 Loader가 추가되어도
         ModelResource만 만들면 재사용 가능
@@ -111,7 +111,7 @@ struct Vertex
             - Prim 2
     하나의 Prim은 보통 하나의 Material과 index Range를 가짐
 
-    ModelLoader가 각 Primitive를 읽는 중간 단계에서 사용한다.
+    GltfLoader가 각 Primitive를 읽는 중간 단계에서 사용한다.
 */
 struct PrimitiveData
 {
@@ -204,9 +204,9 @@ struct SubMeshInfo{
 /*
     CPU에 로드된 하나의 Mesh Asset.
 
-    ModelLoader는 CPU vertex/index 데이터를 만든다.
+    GltfLoader는 CPU vertex/index 데이터를 만든다.
 
-        ModelLoader
+        GltfLoader
             ↓
         vertices / indices
 
@@ -219,9 +219,9 @@ struct SubMeshInfo{
         VBO / IBO / VAO
 
 
-    ModelLoader가 직접 OpenGL 객체를 만들지 않는 것이 중요하다.
+    GltfLoader가 직접 OpenGL 객체를 만들지 않는 것이 중요하다.
 
-        ModelLoader
+        GltfLoader
             = 파일 해석
 
         AssetManager / Graphics
@@ -319,7 +319,7 @@ struct NodeData
         현재 ECS Rotation이 Euler vec3를 사용하므로
         NodeData도 Euler radians로 맞춘다.
 
-        ModelLoader에서 glTF Quaternion을 읽은 뒤
+        GltfLoader에서 glTF Quaternion을 읽은 뒤
         Euler로 변환한다.
     */
     glm::vec3 rotation{
@@ -393,7 +393,7 @@ struct ModelResource
 
         단, glTF Scene은 여러 root node를 가질 수 있다.
 
-        따라서 ModelLoader 구현 시 이 값 하나만 믿고
+        따라서 GltfLoader 구현 시 이 값 하나만 믿고
         multi-root GLB를 버리는 구조로 만들면 안 된다.
 
         필요해지면:

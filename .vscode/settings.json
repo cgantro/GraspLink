@@ -1,5 +1,17 @@
 {
   "cmake.useCMakePresets": "always",
   "cmake.generator": "Ninja",
-  "cmake.parallelJobs": 0
+  "cmake.parallelJobs": 0,
+  "cmake.debugConfig": {
+        "type": "cppvsdbg",
+        "request": "launch",
+        "console": "internalConsole",
+        "externalConsole": false,
+        "logging": {
+            "programOutput": true,
+            "moduleLoad": false,
+            "exceptions": true,
+            "engineLogging": false
+        }
+    }
 }

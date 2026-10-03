@@ -31,7 +31,20 @@ function(grasplink_add_graphics_library)
     GIT_TAG v4.1.5
     GIT_SHALLOW TRUE
   )
-  FetchContent_MakeAvailable(glfw flecs)
+
+  set(TINYGLTF_BUILD_LOADER_EXAMPLE OFF CACHE BOOL "" FORCE)
+  set(TINYGLTF_BUILD_GL_EXAMPLES OFF CACHE BOOL "" FORCE)
+  set(TINYGLTF_BUILD_VALIDATOR_EXAMPLE OFF CACHE BOOL "" FORCE)
+  set(TINYGLTF_BUILD_BUILDER_EXAMPLE OFF CACHE BOOL "" FORCE)
+  set(TINYGLTF_INSTALL OFF CACHE BOOL "" FORCE)
+
+  FetchContent_Declare(
+    tinygltf
+    GIT_REPOSITORY https://github.com/syoyo/tinygltf.git
+    GIT_TAG v2.9.7
+    GIT_SHALLOW TRUE
+  )
+  FetchContent_MakeAvailable(glfw flecs tinygltf)
   find_package(OpenGL REQUIRED)
 
   set(GRASPLINK_GRAPHICS_SOURCES
