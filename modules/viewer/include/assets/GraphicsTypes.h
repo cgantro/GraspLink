@@ -125,6 +125,17 @@ struct PrimitiveData
    int materialIndex = -1;
 };
 
+struct TextureData
+{
+    ResourceID uniqueID;
+
+    int width = 0;
+    int height = 0;
+    int channels = 0;
+
+    std::vector<unsigned char> pixels;
+};
+
 /*
     glTF PBR Metallic-Roughness Material를
     내부 표현으로 변환한 구조
@@ -134,6 +145,7 @@ struct PrimitiveData
     Texture는 AssetManager가 관리한다.
     여기선 ResourceID만 보관
 */
+
 struct MaterialData
 {
     ResourceID uniqueID;
@@ -387,6 +399,7 @@ struct ModelResource
 
     std::vector<NodeData> nodes;
 
+    std::vector<TextureData> textures;
 
     /*
         단일 Root 모델을 위한 편의 값.

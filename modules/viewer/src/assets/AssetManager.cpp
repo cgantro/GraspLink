@@ -2,6 +2,7 @@
 
 #include "Material.h"
 #include "Mesh.h"
+#include "Texture.h"
 
 #include <glm/glm.hpp>
 
@@ -9,11 +10,39 @@
 #include <limits>
 #include <stdexcept>
 
+std::shared_ptr<Texture> AssetManager::GetTexture(ResourceID id) const
+{
+    auto it = textures_.find(id);
+    if (it == textures_.end())
+        return nullptr;
+
+    return it->second;
+}
+
 AssetManager::AssetManager(){
     defaultMaterial_ = std::make_shared<Material>(glm::vec4{0.7F,0.7F,0.7F,1.0F}, 0.0F, 0.8F);   
 }
 
 void AssetManager::UploadModel(ModelResource& model){
+    // Texture
+    for (const TextureData& textureData : model.textures){
+        if (textures_.find(textureData.uniqueID) != textures_.end())
+            continue;
+
+        if (textureData.pixels.empty())
+            continue;
+
+        auto texture = Texture::Create2D(
+            textureData.width,
+            textureData.height,
+            textureData.channels,
+            textureData.pixels.data(),
+            true);
+
+        textures_.emplace(
+            textureData.uniqueID,
+            texture);
+    }
     // Material
     for(const MaterialData& materialData : model.materials){
         // 이미 GPU Resource가 생성되어 있으면 만들지 않는다.
@@ -98,7 +127,9 @@ AssetManager::GetDefaultMaterial() const{
 }
 
 
-void AssetManager::Clear(){
+void AssetManager::Clear()
+{
     meshes_.clear();
     materials_.clear();
+    textures_.clear();
 }

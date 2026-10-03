@@ -584,6 +584,7 @@ ModelResource GltfLoader::LoadGLB(const std::filesystem::path& path){
     */
 
     const std::string resourcePrefix = path.generic_string();
+    
     // Material
     result.materials.reserve(gltfModel.materials.size());
     for(std::size_t i = 0; i < gltfModel.materials.size(); i++){

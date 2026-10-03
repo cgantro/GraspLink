@@ -1,23 +1,26 @@
 #pragma once
 
 #include <glm/glm.hpp>
-
-
+#include <memory>
+class Texture;
 // 렌더러가 사용할 단순 GPU-side 색상/재질 값이다. 파일 포맷을 해석하지 않는다.
 class Material final
 {
 public:
-    Material(glm::vec4 baseColorFactor, float metallicFactor = 0.0F,
-             float roughnessFactor = 1.0F)
-        : baseColorFactor_(baseColorFactor), metallicFactor_(metallicFactor),
-          roughnessFactor_(roughnessFactor) {}
+    Material(const glm::vec4& baseColorFactor,float metallicFactor,float roughnessFactor);
 
-    const glm::vec4& BaseColorFactor() const noexcept { return baseColorFactor_; }
-    float MetallicFactor() const noexcept { return metallicFactor_; }
-    float RoughnessFactor() const noexcept { return roughnessFactor_; }
+    const glm::vec4& BaseColorFactor() const;
+    float MetallicFactor() const;
+    float RoughnessFactor() const;
+
+    void SetBaseColorTexture(const std::shared_ptr<Texture>& texture);
+    std::shared_ptr<Texture> GetBaseColorTexture() const;
+    bool HasBaseColorTexture() const;
 
 private:
-    glm::vec4 baseColorFactor_;
-    float metallicFactor_;
-    float roughnessFactor_;
+    glm::vec4 m_BaseColorFactor{1.0F};
+    float m_MetallicFactor = 1.0F;
+    float m_RoughnessFactor = 1.0F;
+
+    std::shared_ptr<Texture> m_BaseColorTexture;
 };
