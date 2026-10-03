@@ -20,5 +20,4 @@ void main()
 
 void main()
 {
-    // Depth만 기록한다.
 }
