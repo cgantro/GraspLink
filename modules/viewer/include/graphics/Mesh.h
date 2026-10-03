@@ -19,13 +19,16 @@ class IndexBuffer;
  * VAO는 "VBO의 각 byte를 position/normal/UV 중 무엇으로 해석할지"라는 attribute 상태를 기억한다.
  * 따라서 Draw 시 Mesh::Bind() 한 번으로 필요한 vertex input 상태를 복원할 수 있다.
  *
- * 현재 attribute layout:
+ * 현재 GPU에 연결된 attribute layout:
  * - location 0: position vec3
  * - location 1: normal vec3
  * - location 2: texCoord vec2
- * - location 3: tangent vec3
  *
- * @todo [FUTURE] normal mapping을 정확히 지원할 때 glTF tangent handedness를 위해 tangent를 vec4로 확장한다.
+ * Vertex에는 tangent vec3도 들어 있지만 현재 Mesh.cpp에서 shader attribute로 연결하지 않는다.
+ * 즉 tangent는 향후 normal mapping을 위한 CPU-side 준비 데이터 상태다.
+ *
+ * @todo [FUTURE] normal mapping 구현 시 tangent를 shader attribute에 연결한다.
+ * @todo [FUTURE] glTF tangent handedness까지 보존하기 위해 Vertex::tangent를 vec4로 확장한다.
  */
 class Mesh final
 {
