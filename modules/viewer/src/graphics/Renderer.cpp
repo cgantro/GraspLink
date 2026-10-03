@@ -1,5 +1,6 @@
 ﻿#include "Renderer.h"
 
+#include "Texture.h"
 #include "Material.h"
 #include "Mesh.h"
 #include "Shader.h"
@@ -91,6 +92,18 @@ void Renderer::Draw(const glm::mat4& model,
         "u_MetallicFactor", meshRenderer.material->MetallicFactor());
     meshRenderer.shader->SetFloat(
         "u_RoughnessFactor", meshRenderer.material->RoughnessFactor());
+    constexpr int baseColorTextureSlot = 0;
+
+    if (meshRenderer.material->HasBaseColorTexture()){
+        
+        meshRenderer.material->GetBaseColorTexture()->Bind(baseColorTextureSlot);
+    
+        meshRenderer.shader->SetInt("u_BaseColorTexture",baseColorTextureSlot);
+    
+        meshRenderer.shader->SetInt("u_UseBaseColorTexture",1);
+    }
+    else meshRenderer.shader->SetInt("u_UseBaseColorTexture",0);
+
     meshRenderer.shader->SetFloat3(
         "u_CameraPosition",cameraPosition);
     meshRenderer.shader->SetFloat3(

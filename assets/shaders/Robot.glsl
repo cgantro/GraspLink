@@ -13,6 +13,7 @@ uniform mat4 u_LightSpaceMatrix;
 out vec3 v_Normal;
 out vec3 v_WorldPosition;
 out vec4 v_LightSpacePosition;
+out vec2 v_TexCoord;
 
 void main()
 {
@@ -21,7 +22,7 @@ void main()
     v_WorldPosition = worldPosition.xyz;
     v_Normal = mat3(transpose(inverse(u_Model))) * a_Normal;
     v_LightSpacePosition = u_LightSpaceMatrix * worldPosition;
-
+    v_TexCoord = a_TexCoord;
     gl_Position = u_Projection * u_View * worldPosition;
 }
 
@@ -32,6 +33,7 @@ void main()
 in vec3 v_Normal;
 in vec3 v_WorldPosition;
 in vec4 v_LightSpacePosition;
+in vec2 v_TexCoord;
 
 uniform vec3 u_CameraPosition;
 uniform vec3 u_LightDirection;
@@ -39,6 +41,8 @@ uniform vec3 u_LightDirection;
 uniform vec4 u_BaseColorFactor;
 uniform float u_MetallicFactor;
 uniform float u_RoughnessFactor;
+uniform sampler2D u_BaseColorTexture;
+uniform int u_UseBaseColorTexture;
 
 uniform sampler2D u_ShadowMap;
 
@@ -119,7 +123,18 @@ void main()
     vec3 ambientLight = mix(groundAmbient, skyAmbient, upFactor);
 
     // Material
-    vec3 baseColor = u_BaseColorFactor.rgb;
+
+    vec4 sampledBaseColor = vec4(1.0);
+
+    if (u_UseBaseColorTexture == 1)
+    {
+        sampledBaseColor = texture(u_BaseColorTexture,v_TexCoord);
+    }
+
+    vec3 baseColor = sampledBaseColor.rgb * u_BaseColorFactor.rgb;
+
+    float baseAlpha = sampledBaseColor.a * u_BaseColorFactor.a;
+
     float metallic = clamp(u_MetallicFactor, 0.0, 1.0);
     float roughness = clamp(u_RoughnessFactor, 0.05, 1.0);
 
@@ -156,5 +171,5 @@ void main()
     color = ToneMapACES(color);
     color = pow(color, vec3(1.0 / 2.2));
 
-    FragColor = vec4(color, u_BaseColorFactor.a);
+    FragColor =vec4(color,baseAlpha);
 }

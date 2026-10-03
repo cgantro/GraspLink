@@ -54,6 +54,16 @@ void AssetManager::UploadModel(ModelResource& model){
             materialData.roughnessFactor
         );
 
+        if (materialData.baseColorTexture.IsValid())
+        {
+            const auto textureIterator = textures_.find(materialData.baseColorTexture);
+
+            if (textureIterator == textures_.end())
+                throw std::runtime_error("Base color texture was not uploaded");
+
+            material->SetBaseColorTexture(textureIterator->second);
+        }
+
         materials_.emplace(materialData.uniqueID,std::move(material));
     }
 

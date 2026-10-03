@@ -32,7 +32,7 @@ constexpr int kWindowHeight = 720;
 
 const char* kWindowTitle = "GraspLink Viewer";
 
-const glm::vec3 kCameraPosition{-2.0F,1.35F,-1.15F};
+const glm::vec3 kCameraPosition{2.0F,1.35F,1.15F};
 
 const glm::vec3 kCameraTarget{0.05F,0.50F,0.40F};
 
@@ -81,7 +81,7 @@ bool ViewerApp::Init()
     int framebufferHeight = 0;
 
     m_Window->GetFramebufferSize(framebufferWidth,framebufferHeight);
-    
+
     m_Renderer = std::make_unique<Renderer>();
     m_Renderer->Init(framebufferWidth,framebufferHeight);
 
@@ -145,7 +145,6 @@ bool ViewerApp::Init()
     ModelResource planeModel = GltfLoader::LoadGLB("plane.glb");
     m_AssetManager->UploadModel(planeModel);
     Entity planeRoot = PrefabFactory::CreateModel(*scene,planeModel,*m_AssetManager,gridShader);
-    planeRoot.SetLocalScale({1.f,1.f,1.f});
     return true;
 }
 

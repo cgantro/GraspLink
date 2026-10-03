@@ -287,7 +287,43 @@ std::vector<std::uint32_t> ReadIndices(const tinygltf::Model& model, int accesso
     }
     return result;
 }
+/*
+    Texture
+*/
 
+TextureData ConvertTexture(
+    const tinygltf::Model& model,
+    const tinygltf::Texture& source,
+    const std::string& resourcePrefix,
+    std::size_t textureIndex)
+{
+    TextureData result;
+
+    result.uniqueID = ResourceID{resourcePrefix +"#texture/" +std::to_string(textureIndex)};
+
+    if (source.source < 0 ||
+        source.source >= static_cast<int>(model.images.size()))
+        throw std::runtime_error( "Invalid glTF texture source");
+
+    const tinygltf::Image& image =
+        model.images[source.source];
+
+    if (image.width <= 0 || image.height <= 0) throw std::runtime_error("Invalid glTF image size");
+
+    if (image.component != 3 && image.component != 4) throw std::runtime_error("Only RGB/RGBA glTF images are supported");
+    
+
+    if (image.bits != 8) throw std::runtime_error("Only 8-bit glTF images are supported");
+
+    if (image.image.empty()) throw std::runtime_error("glTF image contains no decoded pixels");
+
+    result.width = image.width;
+    result.height = image.height;
+    result.channels = image.component;
+    result.pixels = image.image;
+
+    return result;
+}
 /*
     Material
 */
@@ -336,6 +372,10 @@ MaterialData ConvertMaterial(
         Texture Resource는 아직 처리 X
         향후 GltfLoader -> Image/Texture IR -> AssetManager -> OpenGL Texture 계층이 생긴 뒤 추가.
     */
+    /* 추가 완료*/
+    if (pbr.baseColorTexture.index >= 0)
+        result.baseColorTexture = ResourceID{resourcePrefix +"#texture/" +std::to_string(pbr.baseColorTexture.index)};
+    
     return result;
 }
 
@@ -395,7 +435,7 @@ MeshData ConvertMesh(
         std::vector<glm::vec3> normals;
         const auto normalIterator = primitive.attributes.find("NORMAL");
         if(normalIterator != primitive.attributes.end()){
-            normals = ReadVec3FloatAccessor(model, positionIterator->second);
+            normals = ReadVec3FloatAccessor(model, normalIterator->second);
             if(normals.size() != vertexCount) throw std::runtime_error("NORMAL count does not match POSITION count");
         }
 
@@ -584,7 +624,13 @@ ModelResource GltfLoader::LoadGLB(const std::filesystem::path& path){
     */
 
     const std::string resourcePrefix = path.generic_string();
-    
+    // Texture
+    result.textures.reserve(
+        gltfModel.textures.size());
+
+    for (std::size_t i = 0; i < gltfModel.textures.size(); ++i){
+        result.textures.push_back(ConvertTexture( gltfModel, gltfModel.textures[i], resourcePrefix, i));
+    }
     // Material
     result.materials.reserve(gltfModel.materials.size());
     for(std::size_t i = 0; i < gltfModel.materials.size(); i++){
