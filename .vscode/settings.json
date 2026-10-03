@@ -11,7 +11,8 @@
             "programOutput": true,
             "moduleLoad": false,
             "exceptions": true,
-            "engineLogging": false
+            "engineLogging": false,
+            "trace": true
         }
     }
 }

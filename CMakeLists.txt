@@ -24,6 +24,8 @@ if(GRASPLINK_BUILD_GRAPHICS)
     modules/viewer/src/scene/Scene.cpp
     modules/viewer/src/scene/SceneManager.cpp
     modules/viewer/src/assets/GltfLoader.cpp
+    modules/viewer/src/assets/AssetManager.cpp
+    modules/viewer/src/assets/PrefabFactory.cpp
   )
   set(GRASPLINK_VIEWER_HEADERS
     modules/viewer/include/Entity.h
@@ -39,6 +41,10 @@ if(GRASPLINK_BUILD_GRAPHICS)
     modules/viewer/include/assets/GraphicsTypes.h
     modules/viewer/include/assets/ResourceID.h
     modules/viewer/include/assets/GltfLoader.h
+    modules/viewer/include/assets/AssetManager.h
+    modules/viewer/include/assets/PrefabFactory.h
+    modules/viewer/include/assets/GraphicsTypes.h
+    modules/viewer/include/assets/ResourceID.h
   )
 
   add_library(grasplink_viewer STATIC

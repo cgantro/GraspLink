@@ -8,13 +8,27 @@
 #include <glad/glad.h>
 
 #include <cstdint>
-
+#include <iostream>
 Renderer::Renderer() = default;
 Renderer::~Renderer() = default;
 
 void Renderer::Init()
 {
     glEnable(GL_DEPTH_TEST);
+    glEnable(GL_MULTISAMPLE);
+
+    GLint sampleBuffers = 0;
+    GLint samples = 0;
+
+    glGetIntegerv(GL_SAMPLE_BUFFERS, &sampleBuffers);
+    glGetIntegerv(GL_SAMPLES, &samples);
+
+    std::cout
+        << "[Renderer] Sample buffers: "
+        << sampleBuffers
+        << ", MSAA samples: "
+        << samples
+        << '\n';
 }
 
 void Renderer::BeginFrame()

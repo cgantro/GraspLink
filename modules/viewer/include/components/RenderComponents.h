@@ -16,6 +16,7 @@ struct MeshFilter
 };
 
 // 렌더 시스템이 사용할 셰이더, 머티리얼, 표시 여부를 보관한다.
+
 struct MeshRenderer
 {
     std::shared_ptr<Shader> shader;

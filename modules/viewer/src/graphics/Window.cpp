@@ -44,6 +44,9 @@ void Window::Init(const Properties& properties){
     // 정점 데이터를 한번에 담아 GPU메모리에 전달 -> 통신 횟수가 줄어든다.
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
+    // 4x MSAA
+    glfwWindowHint(GLFW_SAMPLES, 4);
+
     // 3. 실제 Window 생성
 
     // glfwCreateWindow()
