@@ -10,6 +10,8 @@
 #include "TransformSystemModule.h"
 #include "Window.h"
 
+#include "robot/RobotJointController.h"
+
 #include "assets/GltfLoader.h"
 #include "assets/AssetManager.h"
 #include "assets/PrefabFactory.h"
@@ -145,6 +147,13 @@ bool ViewerApp::Init()
     ModelResource planeModel = GltfLoader::LoadGLB("plane.glb");
     m_AssetManager->UploadModel(planeModel);
     Entity planeRoot = PrefabFactory::CreateModel(*scene,planeModel,*m_AssetManager,gridShader);
+
+    // Robot Controller
+    m_RobotJointController = std::make_unique<RobotJointController>(robotRoot);
+
+    // J1 테스트
+    m_RobotJointController->SetJointPosition(0,glm::radians(30.0F),glm::vec3{0.0F,1.0F,0.0F});
+    
     return true;
 }
 

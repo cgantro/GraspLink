@@ -26,6 +26,7 @@ if(GRASPLINK_BUILD_GRAPHICS)
     modules/viewer/src/assets/GltfLoader.cpp
     modules/viewer/src/assets/AssetManager.cpp
     modules/viewer/src/assets/PrefabFactory.cpp
+    modules/viewer/src/robot/RobotJointController.cpp
   )
   set(GRASPLINK_VIEWER_HEADERS
     modules/viewer/include/Entity.h
@@ -45,6 +46,8 @@ if(GRASPLINK_BUILD_GRAPHICS)
     modules/viewer/include/assets/PrefabFactory.h
     modules/viewer/include/assets/GraphicsTypes.h
     modules/viewer/include/assets/ResourceID.h
+    modules/viewer/include/robot/RobotJointController.h
+
   )
 
   add_library(grasplink_viewer STATIC
