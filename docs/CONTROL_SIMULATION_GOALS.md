@@ -55,6 +55,76 @@ Target / Controller
 6. **Zero Offset**
    - 논리적 Joint Zero와 센서/엔코더 기준점 사이의 차이를 보정할 수 있도록 offset 계층 추가
 
+## Physics Simulation
+
+물리는 직접 엔진을 구현하지 않고 **Jolt Physics**를 사용한다.
+Flecs 자체에도 `flecs.components.physics`, `flecs.systems.physics` 계열이 있지만, 이 프로젝트의 3D rigid-body simulation backend로 사용하지 않는다.
+Flecs는 Entity/Component/System과 상태 소유를 담당하고, Jolt는 rigid body, collision, constraint, physics step을 담당한다.
+
+프로젝트에서 직접 구현하는 범위는 물리 엔진 자체가 아니라 **Flecs Entity / Robot State / Scene Transform과 Jolt Physics World를 연결하는 통합 계층**이다.
+
+```text
+Flecs Entity
+├─ Transform
+├─ RigidBody
+├─ Collider
+└─ PhysicsBodyHandle
+        │
+        ▼
+   Jolt BodyID
+        │
+        ▼
+ Jolt PhysicsSystem
+```
+
+Flecs Entity가 Jolt Body 객체 자체를 소유하지 않고, ECS component에는 `BodyID` 같은 physics handle만 저장한다.
+
+### 선택한 Physics Backend
+
+- ECS: Flecs
+- Physics Engine: Jolt Physics
+- Language/Build 기준: C++17 + CMake
+- Body type: Static / Dynamic / Kinematic
+- ECS ↔ Physics 연결: Flecs component에 Jolt `BodyID` handle 저장
+- Jolt 전용 API는 `modules/physics` 내부에 격리
+
+### 필수 구현
+
+- Jolt Physics 초기화 및 Physics World 생성
+- Fixed Physics Step
+- Dynamic / Static Rigid Body 구분
+- 질량, 중력, 선형/각속도 상태 연동
+- Robot/Environment용 Collision Shape 생성
+- 바닥 및 물체 간 Collision Detection / Response를 라이브러리에 위임
+- Flecs Transform ↔ Jolt Body Transform 동기화
+- Grasp 시 Object를 End Effector에 연결
+- Detach 시 Object를 다시 Dynamic Body로 전환하여 중력/충돌 적용
+- Pick & Place 시 물체가 바닥과 다른 물체를 관통하지 않는지 검증
+
+### 선택 확장
+
+- Friction / Restitution 파라미터 조정
+- Collision Layer / Mask
+- Continuous Collision Detection
+- Gripper 접촉 기반 grasp 판정
+- Constraint 기반 grasp
+
+직접 구현해야 하는 것은 Jolt Wrapper와 Flecs/Robot/Scene/Physics 간 데이터 흐름이며,
+충돌 해결기나 rigid-body solver 자체를 새로 작성하지 않는다.
+
+권장 모듈 경계:
+
+```text
+modules/physics
+├─ PhysicsWorld
+├─ RigidBody
+├─ Collider
+├─ PhysicsBodyHandle
+└─ JoltPhysicsBackend
+```
+
+상위 Robot/Scene 코드는 Jolt API를 직접 호출하지 않고 physics module을 통해서만 접근한다.
+
 ## 기본 상태 / 설정
 
 ```cpp
@@ -89,8 +159,17 @@ Time         s
 3. Velocity Limit
 4. Acceleration Limit
 5. Fixed Control Loop
-6. E-Stop
-7. Zero Offset
+6. Flecs + Jolt Physics 연동
+7. Rigid Body / Collision / Ground 처리
+8. Grasp Attach / Detach와 Physics 상태 전환
+9. E-Stop
+10. Zero Offset
 ```
 
-E-Stop과 Zero Offset은 기본 제어 구조와 제한 처리가 완료된 뒤 확장한다.
+Physics는 Jolt Physics를 사용해 Flecs와 통합하고, E-Stop과 Zero Offset은 기본 제어 구조와 제한 처리가 완료된 뒤 확장한다.
+
+
+## 참고
+
+- Flecs Hub는 physics/movement용 component와 system 모듈을 제공하지만, 본 프로젝트에서는 ECS 역할에 집중시킨다.
+- Jolt Physics는 C++17 기반이며 CMake 통합을 지원하고 Static / Dynamic / Kinematic Body 구조를 제공한다.

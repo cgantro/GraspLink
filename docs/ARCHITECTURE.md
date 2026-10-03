@@ -39,6 +39,8 @@ JointState
     ↓
 Kinematics / Simulation
     ↓
+Physics Integration
+    ↓
 Rendering
 ```
 
@@ -48,6 +50,40 @@ Rendering
 - Joint Angle Limit
 - Joint Velocity / Acceleration Limit
 - Rendering Loop와 Fixed Control Loop 분리
+- Physics Library는 **Jolt Physics**를 사용하고 별도 통합 계층으로 연결
+- Flecs Entity에는 Jolt 객체 자체가 아니라 `BodyID` 기반 handle만 저장
+- Physics World와 Flecs/Rendering Transform의 동기화
+- Grasp Attach / Detach 시 Physics 상태 전환
+
+```text
+Flecs Entity
+├─ Transform
+├─ RigidBody
+├─ Collider
+└─ PhysicsBodyHandle
+        ↓
+   Jolt BodyID
+        ↓
+Jolt PhysicsSystem
+```
+
+권장 모듈 경계:
+
+```text
+modules/
+├─ viewer/
+├─ robotics/
+├─ physics/
+│  ├─ PhysicsWorld
+│  ├─ RigidBody
+│  ├─ Collider
+│  └─ JoltPhysicsBackend
+└─ common/
+```
+
+Flecs는 entity/component/system과 상태 구성에 집중하고, Jolt는 rigid body, collision, constraint, physics step을 담당한다.
+물리 엔진의 충돌 해결기나 rigid-body solver를 직접 구현하지 않고 Jolt에 위임한다.
+프로젝트 코드는 Robot State, Scene State, Physics Body 사이의 변환과 생명주기 관리에 집중한다.
 
 E-Stop과 Zero Offset은 기본 제어 구조 이후 확장한다.
 
