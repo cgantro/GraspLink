@@ -81,7 +81,8 @@ bool ViewerApp::Init()
     int framebufferHeight = 0;
 
     m_Window->GetFramebufferSize(framebufferWidth,framebufferHeight);
-
+    
+    m_Renderer = std::make_unique<Renderer>();
     m_Renderer->Init(framebufferWidth,framebufferHeight);
 
 

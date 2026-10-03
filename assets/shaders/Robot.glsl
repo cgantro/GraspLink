@@ -85,9 +85,9 @@ float CalculateShadow(vec4 lightSpacePosition, vec3 normal, vec3 lightDirection)
 
     float shadow = 0.0;
 
-    for (int x = -1; x <= 1; ++x)
+    for (int x = -2; x <= 2; ++x)
     {
-        for (int y = -1; y <= 1; ++y)
+        for (int y = -2; y <= 2; ++y)
         {
             float closestDepth = texture(
                 u_ShadowMap,
@@ -99,7 +99,7 @@ float CalculateShadow(vec4 lightSpacePosition, vec3 normal, vec3 lightDirection)
         }
     }
 
-    return shadow / 9.0;
+    return shadow / 25.0;
 }
 
 
@@ -114,8 +114,8 @@ void main()
     // Hemisphere ambient
     float upFactor = N.y * 0.5 + 0.5;
 
-    vec3 groundAmbient = vec3(0.035, 0.04, 0.045);
-    vec3 skyAmbient = vec3(0.16, 0.18, 0.20);
+    vec3 groundAmbient = vec3(0.10, 0.105, 0.11);
+    vec3 skyAmbient = vec3(0.24, 0.25, 0.27);
     vec3 ambientLight = mix(groundAmbient, skyAmbient, upFactor);
 
     // Material
@@ -123,33 +123,30 @@ void main()
     float metallic = clamp(u_MetallicFactor, 0.0, 1.0);
     float roughness = clamp(u_RoughnessFactor, 0.05, 1.0);
 
-    vec3 diffuseColor = baseColor * (1.0 - metallic);
+    vec3 diffuseColor = baseColor * mix(1.0, 0.35, metallic);
 
     // Blinn-Phong specular
     vec3 H = normalize(L + V);
     float NdotH = max(dot(N, H), 0.0);
 
-    float shininess = mix(128.0, 8.0, roughness);
+    float shininess = mix(48.0, 5.0, roughness);
     float specularStrength = pow(NdotH, shininess);
 
     if (NdotL <= 0.0)
         specularStrength = 0.0;
 
     vec3 F0 = mix(vec3(0.04), baseColor, metallic);
-    vec3 specular = F0 * specularStrength;
+    vec3 specular = F0 * specularStrength * 0.35;
 
     // Shadow
     float shadow = CalculateShadow(v_LightSpacePosition, N, L);
 
-    vec3 directLight =
-        (diffuseColor * NdotL + specular) *
-        1.7 *
-        (1.0 - shadow);
+    vec3 directLight =(diffuseColor * NdotL + specular) *1.35 *(1.0 - shadow * 0.65);
 
     // 반대쪽 보조광
     vec3 fillDirection = normalize(vec3(0.65, 0.35, -0.65));
     float fillAmount = max(dot(N, fillDirection), 0.0);
-    vec3 fillLight = diffuseColor * fillAmount * 0.18;
+    vec3 fillLight = diffuseColor * fillAmount * 0.42;
 
     vec3 color =
         baseColor * ambientLight +

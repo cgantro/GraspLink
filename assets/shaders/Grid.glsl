@@ -67,9 +67,9 @@ float CalculateShadow(vec4 lightSpacePosition)
 
     float shadow = 0.0;
 
-    for (int x = -1; x <= 1; ++x)
+    for (int x = -2; x <= 2; ++x)
     {
-        for (int y = -1; y <= 1; ++y)
+        for (int y = -2; y <= 2; ++y)
         {
             float closestDepth = texture(
                 u_ShadowMap,
@@ -137,11 +137,7 @@ void main()
     // color가 만들어진 뒤에 shadow 적용
     float shadow = CalculateShadow(v_LightSpacePosition);
 
-    color *= mix(
-        1.0,
-        0.42,
-        shadow
-    );
+    color *= mix(1.0,0.68,shadow);
 
     color = pow(color, vec3(1.0 / 2.2));
 

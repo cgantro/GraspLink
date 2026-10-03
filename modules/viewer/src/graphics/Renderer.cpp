@@ -48,7 +48,7 @@ void Renderer::BeginFrame()
 {
     m_MSAAFramebuffer->Bind();
 
-    glClearColor(0.1F, 0.1F, 0.1F, 1.0F);
+    glClearColor(0.14F, 0.15F, 0.16F, 1.0F);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     GLint sampleBuffers = 0;
@@ -56,13 +56,6 @@ void Renderer::BeginFrame()
 
     glGetIntegerv(GL_SAMPLE_BUFFERS, &sampleBuffers);
     glGetIntegerv(GL_SAMPLES, &samples);
-
-    std::cout
-    << "[MSAA FBO] sample buffers: "
-    << sampleBuffers
-    << ", samples: "
-    << samples
-    << '\n';
 
 }
 void Renderer::EndFrame()
