@@ -2,60 +2,48 @@
 
 #include <glm/glm.hpp>
 
-
 class Camera{
 public:
     /*
         position -> 카메라의 위치
         target -> 바라보는 지점
         aspectRatio -> 화면의 가로 세로 비율 (가로/세로)
-        fov -> 세로 시야각 (Field of View)
-            -> 단위는 degree
-        nearPlane / farPlane
-            -> 카메라가 렌더링할 최소/최대 거리
+        fov -> 세로 시야각 (Field of View), 단위는 degree
+        nearPlane / farPlane -> 렌더링 최소/최대 거리
     */
     Camera(
         const glm::vec3& position,
         const glm::vec3& target,
         float aspectRatio,
-        float fov = 45.0f,
-        float nearPlane = 0.1f,
-        float farPlane = 100.f
+        float fov = 45.0F,
+        float nearPlane = 0.1F,
+        float farPlane = 100.0F
     );
 
-    /*
-        View Matrix
-        
-        World 좌표를 Camera 기준 좌표로 변환한다.
-
-        World 전체를 카메라의 반대방향으로 움직이게 한다.
-    */
+    // World 좌표를 Camera 좌표계로 변환하는 View Matrix.
     glm::mat4 GetViewMatrix() const;
-    /*
-        Projectrion Matirx:
-        카메라 공간의 3D 좌표에 원근감 적용
-        
-        멀리있는 물체 -> 작게
-        가까이 있는 물체 -> 크게
-    */
+
+    // Perspective Projection Matrix.
     glm::mat4 GetProjectionMatrix() const;
 
-    /*
-        윈도우 크기 변하면 aspect ratio 변경
-    */
+    // Window resize 시 projection의 종횡비를 갱신한다.
     void SetAspectRatio(float aspectRatio);
 
+    /*
+        OrbitCameraController가 Camera의 pose를 변경할 때 사용한다.
+        Camera 자체는 입력을 해석하지 않고 최종 position/target만 보관한다.
+    */
+    void SetPosition(const glm::vec3& position);
+    void SetTarget(const glm::vec3& target);
+
     glm::vec3 GetPosition() const;
+    glm::vec3 GetTarget() const;
+
 private:
     glm::vec3 m_Position;
     glm::vec3 m_Target;
 
-    /*
-        카메라의 위쪽 방향
-        보통 +y 방향을 위쪽으로 사용
-    */
-    // 현재 뷰어가 사용하는 Y-up 런타임 좌표계에 맞춘 카메라 위쪽 방향이다.
-    // Z-up을 사용하면 화면이 기울어지고, 바닥 평면의 법선(Y+)과도 일치하지 않는다.
+    // 현재 Viewer는 Y-up 좌표계를 사용한다.
     glm::vec3 m_Up{0.0F, 1.0F, 0.0F};
 
     float m_AspectRatio;

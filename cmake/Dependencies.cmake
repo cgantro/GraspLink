@@ -49,6 +49,7 @@ function(grasplink_add_graphics_library)
 
   set(GRASPLINK_GRAPHICS_SOURCES
     modules/viewer/src/graphics/Camera.cpp
+    modules/viewer/src/graphics/OrbitCameraController.cpp
     modules/viewer/src/graphics/IndexBuffer.cpp
     modules/viewer/src/graphics/Material.cpp
     modules/viewer/src/graphics/Mesh.cpp
@@ -65,6 +66,7 @@ function(grasplink_add_graphics_library)
     modules/viewer/include/components/TransformComponents.h
     modules/viewer/include/components/RenderComponents.h
     modules/viewer/include/graphics/Camera.h
+    modules/viewer/include/graphics/OrbitCameraController.h
     modules/viewer/include/graphics/IndexBuffer.h
     modules/viewer/include/graphics/Material.h
     modules/viewer/include/graphics/Mesh.h
