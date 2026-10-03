@@ -41,6 +41,7 @@ void RenderSystemModule::RegisterSystem(flecs::world& world)
                 meshFilter,
                 meshRenderer,
                 context->camera->GetViewMatrix(),
-                context->camera->GetProjectionMatrix());
+                context->camera->GetProjectionMatrix(),
+                context->camera->GetPosition());
         });
 }

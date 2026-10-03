@@ -32,27 +32,13 @@ constexpr int kWindowHeight = 720;
 
 const char* kWindowTitle = "GraspLink Viewer";
 
-const glm::vec3 kCameraPosition{
-    2.0F,
-    1.35F,
-    2.15F
-};
+const glm::vec3 kCameraPosition{2.0F,1.35F,2.15F};
 
-const glm::vec3 kCameraTarget{
-    0.05F,
-    0.50F,
-    0.40F
-};
+const glm::vec3 kCameraTarget{0.05F,0.50F,0.40F};
 
-const glm::vec3 kDebugPosition{
-    0.0F,
-    0.5F,
-    0.0F
-};
+const glm::vec3 kDebugPosition{0.0F,0.5F,0.0F};
 
-const glm::vec3 kDebugScale{
-    0.25F
-};
+const glm::vec3 kDebugScale{0.25F};
 
 
 } // namespace
@@ -60,7 +46,9 @@ const glm::vec3 kDebugScale{
 
 ViewerApp::ViewerApp() = default;
 
-ViewerApp::~ViewerApp() = default;
+ViewerApp::~ViewerApp(){
+    Shutdown();
+}
 
 
 int ViewerApp::Run()
@@ -71,7 +59,6 @@ int ViewerApp::Run()
     }
 
     MainLoop();
-    Shutdown();
 
     return 0;
 }
@@ -137,7 +124,8 @@ bool ViewerApp::Init()
     // Asset Manager
     m_AssetManager = std::make_unique<AssetManager>();
     
-    auto shader = Shader::Create("shaders/Debug.glsl");
+    auto robotShader = Shader::Create("shaders/Robot.glsl");
+    auto gridShader =Shader::Create("shaders/Grid.glsl");
     // -------------------------------------------------------------------------
     // HCR-12A GLB Loading Test
     // -------------------------------------------------------------------------
@@ -147,7 +135,12 @@ bool ViewerApp::Init()
     m_AssetManager->UploadModel(robotModel);
 
     // ModelResource → Flecs Entity hierarchy
-    Entity robotRoot = PrefabFactory::CreateModel(*scene,robotModel,*m_AssetManager,shader);
+    Entity robotRoot = PrefabFactory::CreateModel(*scene,robotModel,*m_AssetManager,robotShader);
+
+    ModelResource planeModel = GltfLoader::LoadGLB("plane.glb");
+    m_AssetManager->UploadModel(planeModel);
+    Entity planeRoot = PrefabFactory::CreateModel(*scene,planeModel,*m_AssetManager,gridShader);
+    planeRoot.SetLocalScale({1.f,1.f,1.f});
     return true;
 }
 
@@ -214,3 +207,4 @@ void ViewerApp::Shutdown()
     m_Renderer.reset();
     m_Window.reset();
 }
+

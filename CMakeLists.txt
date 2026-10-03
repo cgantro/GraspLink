@@ -90,11 +90,15 @@ if(GRASPLINK_BUILD_GRAPHICS)
   add_custom_command(TARGET grasplink_simulator POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
       ${CMAKE_SOURCE_DIR}/assets/shaders
-      $<TARGET_FILE_DIR:grasplink_simulator>/shaders0
+      $<TARGET_FILE_DIR:grasplink_simulator>/shaders
 
     # GLB 파일 복사
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
       ${CMAKE_SOURCE_DIR}/assets/HCR12A_R00.glb
       $<TARGET_FILE_DIR:grasplink_simulator>/HCR12A_R00.glb
+    
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      ${CMAKE_SOURCE_DIR}/assets/plane.glb
+      $<TARGET_FILE_DIR:grasplink_simulator>/plane.glb
   )
 endif()

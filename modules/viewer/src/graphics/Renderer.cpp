@@ -41,7 +41,8 @@ void Renderer::Draw(const glm::mat4& model,
                     const MeshFilter& meshFilter,
                     const MeshRenderer& meshRenderer,
                     const glm::mat4& view,
-                    const glm::mat4& projection)
+                    const glm::mat4& projection,
+                    const glm::vec3& cameraPosition)
 {
     if (!meshFilter.mesh || !meshRenderer.shader || !meshRenderer.material)
     {
@@ -58,7 +59,9 @@ void Renderer::Draw(const glm::mat4& model,
         "u_MetallicFactor", meshRenderer.material->MetallicFactor());
     meshRenderer.shader->SetFloat(
         "u_RoughnessFactor", meshRenderer.material->RoughnessFactor());
-
+    meshRenderer.shader->SetFloat3(
+        "u_CameraPosition",cameraPosition);
+        
     meshFilter.mesh->Bind();
     const std::size_t indexCount = meshFilter.indexCount == 0U
         ? meshFilter.mesh->GetIndexCount()

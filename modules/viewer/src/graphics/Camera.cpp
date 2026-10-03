@@ -57,3 +57,5 @@ void Camera::SetAspectRatio(float aspectRatio){
     if(aspectRatio <= 0.0f) return;
     m_AspectRatio = aspectRatio;
 }
+
+glm::vec3 Camera::GetPosition() const{ return m_Position; }

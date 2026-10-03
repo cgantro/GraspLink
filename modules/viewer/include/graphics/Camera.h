@@ -44,6 +44,8 @@ public:
         윈도우 크기 변하면 aspect ratio 변경
     */
     void SetAspectRatio(float aspectRatio);
+
+    glm::vec3 GetPosition() const;
 private:
     glm::vec3 m_Position;
     glm::vec3 m_Target;
