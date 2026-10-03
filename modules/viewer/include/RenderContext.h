@@ -3,35 +3,16 @@
 class Renderer;
 class Camera;
 
-/*
-    ============================================================================
-    RenderContext
-    ============================================================================
-
-    RenderSystem이 렌더링 작업을 수행하기 위해 필요한
-    외부 객체들을 묶는다.
-
-    이건 ECS Component라기보다는 "System Context"다.
-
-
-    Component:
-
-        Entity가 어떤 데이터를 가지고 있는가?
-
-        MeshFilter
-        MeshRenderer
-        TransformMatrix
-
-
-    Context:
-
-        RenderSystem이 어떤 Renderer와 Camera를 사용할 것인가?
-
-
-    Renderer와 Camera의 소유권은 RenderContext에 없다.
-
-    따라서 unique_ptr/shared_ptr가 아니라 non-owning pointer만 보관한다.
-*/
+/**
+ * @brief RenderSystem이 Renderer와 Camera에 접근하기 위한 non-owning context.
+ *
+ * @details
+ * ECS Component는 보통 Entity가 가진 상태를 표현하지만 RenderContext는
+ * System 전체가 공통으로 사용하는 외부 객체를 연결한다.
+ *
+ * Renderer와 Camera의 소유권은 ViewerApp에 있으므로 여기서는 raw pointer만 보관한다.
+ * 따라서 RenderContext보다 Renderer/Camera의 수명이 반드시 길어야 한다.
+ */
 struct RenderContext
 {
     Renderer* renderer = nullptr;

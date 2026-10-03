@@ -2,9 +2,13 @@
 
 #include <glm/glm.hpp>
 
-
-
-// 관절의 회전축과 허용 범위를 보관한다. 각도 단위는 라디안이다.
+/**
+ * @brief 회전 관절의 축, 제한, 현재 각도를 표현하는 ECS 데이터 모델.
+ *
+ * @note 각도 단위는 radian이다. 축은 joint local coordinate 기준을 사용해야 한다.
+ * @todo [FUTURE] HCR-12A의 검증된 J1~J6 axis/limit/velocity를 JointDefinition으로 통합하고
+ *       RobotJointController와 중복되는 상태 표현을 제거한다.
+ */
 struct RobotJoint
 {
     glm::vec3 axis{0.0F, 0.0F, 1.0F};
@@ -13,7 +17,7 @@ struct RobotJoint
     float angle = 0.0F;
 };
 
-// 말단장치를 식별하기 위한 태그다.
+/** @brief 로봇의 TCP/말단장치 Entity를 식별하기 위한 tag Component. */
 struct EndEffector
 {
 };
