@@ -1,123 +1,90 @@
 #pragma once
 
-#include <string>
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <unordered_map>
 
 #include <glm/glm.hpp>
 
-
-
-class Shader{
+/**
+ * @brief GLSL source를 컴파일/링크하고 OpenGL Program과 Uniform을 관리한다.
+ *
+ * @details
+ * 하나의 .glsl 파일 안에서 `#type vertex`, `#type fragment` 구역을 나누는 프로젝트 전용 형식을 지원한다.
+ * OpenGL에서 vertex/fragment shader는 각각 컴파일한 뒤 하나의 Program으로 link해야 실제 draw에 사용할 수 있다.
+ * Uniform location은 문자열 검색 비용을 줄이기 위해 캐시한다.
+ *
+ * @todo [FUTURE] geometry/compute shader stage가 필요해지면 PreProcess/Compile stage map을 확장한다.
+ */
+class Shader
+{
 public:
-    // 파일 기반 Shader 생성
-    // 하나의 Shader 파일 안에서
-    // #type vertex
-    // #type fragment 영역을 찾아 각각 컴파일
-    // 예: Shader shader("assets/shaders/Model.glsl");
-    Shader(const std::string& filepath);
+    /** @brief 프로젝트 형식의 Shader 파일을 읽어 OpenGL Program을 생성한다. */
+    explicit Shader(const std::string& filepath);
 
-    // Source Code 기반 Shader 생성
-    // 파일을 사용하지 않고,Vertex / Fragment Shader 코드를 std::string으로 직접 전달할 때 사용
+    /** @brief 메모리에 있는 vertex/fragment GLSL source로 Program을 생성한다. */
     Shader(
-        const std::string& name, 
-        const std::string& vertexSrc, 
-        const std::string& fragmentSrc
-    );
+        const std::string& name,
+        const std::string& vertexSrc,
+        const std::string& fragmentSrc);
 
-    // Shader 프로그램은 GPU 자원 -> 객체 파괴시 정리
+    /** @brief 소유한 OpenGL Program을 삭제한다. */
     ~Shader();
 
-    // 복사 금지
-    // Shader 객체 여러 개가 같은 m_RendererID를 복사해서 가진다면, 소멸 시 같은 프로그램을 두 번 삭제 가능
     Shader(const Shader&) = delete;
     Shader& operator=(const Shader&) = delete;
 
-    // Factory 함수
+    /** @brief 파일 기반 Shader를 shared_ptr로 생성한다. */
+    static std::shared_ptr<Shader> Create(const std::string& filepath);
 
-    // 파일 기반 Shader 객체 생성
-    static std::shared_ptr<Shader> Create(
-        const std::string& filepath
-    );
-
+    /** @brief source string 기반 Shader를 shared_ptr로 생성한다. */
     static std::shared_ptr<Shader> CreateFromSource(
         const std::string& name,
-        const std::string& vertexSrc, 
-        const std::string& fragmentSrc
-    );
+        const std::string& vertexSrc,
+        const std::string& fragmentSrc);
 
-    // Shader 프로그램 사용
-    // 내부적으로 glUseProgram(m_RendererID);
+    /** @brief glUseProgram으로 이 Program을 활성화한다. */
     void Bind() const;
-    // Shader 프로그램 해제
-    // 내부적으로 glUseProgram(0);
+
+    /** @brief 현재 OpenGL Program binding을 해제한다. */
     void UnBind() const;
 
-    // Uniform Setter
-    // GLSL:
-    // uniform int u_Texture;
-    // uniform float u_Opacity;
-    // uniform vec3 u_Color;
-    // 같은 값을 CPU -> GPU로 전달하기 위한 함수들
-
+    /** @brief int uniform을 설정한다. */
     void SetInt(const std::string& name, int value);
+    /** @brief int array uniform을 설정한다. */
     void SetIntArray(const std::string& name, int* value, uint32_t count);
+    /** @brief float uniform을 설정한다. */
     void SetFloat(const std::string& name, float value);
+    /** @brief vec2 uniform을 설정한다. */
     void SetFloat2(const std::string& name, const glm::vec2& value);
+    /** @brief vec3 uniform을 설정한다. */
     void SetFloat3(const std::string& name, const glm::vec3& value);
+    /** @brief vec4 uniform을 설정한다. */
     void SetFloat4(const std::string& name, const glm::vec4& value);
-    
+    /** @brief mat3 uniform을 설정한다. */
     void SetMat3(const std::string& name, const glm::mat3& matrix);
+    /** @brief mat4 uniform을 설정한다. */
     void SetMat4(const std::string& name, const glm::mat4& matrix);
 
-    // Shader의 이름 반환.
-    //
-    // 예:
-    // assets/shaders/Model.glsl
-    //
-    // → "Quad"
-    const std::string& GetName() const {return m_Name;}
+    /** @brief 디버깅용 Shader 이름을 반환한다. */
+    const std::string& GetName() const { return m_Name; }
 
 private:
-
-    // Shader 파일을 읽어서 전체 내용을 std::string으로 반환한다.
+    /** @brief Shader 파일 전체를 문자열로 읽는다. */
     std::string ReadFile(const std::string& filepath);
 
-    // Shader Source 분리
-    // #type vertex
-    // ...
-    // #type fragment
-    // ...
-    // 를 읽어서:
-    // GL_VERTEX_SHADER   → vertex source
-    // GL_FRAGMENT_SHADER → fragment source
-    // 형태로 분리한다.
-
+    /** @brief `#type` 구역을 OpenGL shader stage별 source로 분리한다. */
     std::unordered_map<unsigned int, std::string> PreProcess(const std::string& source);
 
-    // Shader 컴파일 + 프로그램 링크
-    // 셰이더소스안에 들어있는 각 Shader Stage를 컴파일하고, 하나의 OpenGL 프로그램으로 링크한다.
+    /** @brief 각 stage를 컴파일하고 하나의 Program으로 링크한다. */
     void Compile(const std::unordered_map<unsigned int, std::string>& shaderSources);
-    
-    // Uniform Location 조회
-    // glGetUniformLocation() 결과를 캐시에 저장한다.
-    // 같은 uniform을 매 Frame마다 다시 검색하지 않기 위함
-    // uniform이란 셰이더 외부에서 셰이더 프로그램에 전달해주는 변수
-    // CPU->GPU로 정보를 넘겨주는 변수(한 번 정해지면 바뀌지 않는 변수)
 
+    /** @brief Uniform location을 조회하고 이름별 cache에 저장한다. */
     int GetUniformLocation(const std::string& name) const;
+
 private:
-    // 셰이더 프로그램 ID
-    // glCreateProgram()의 반환값
     uint32_t m_RendererID = 0;
-
-    // Debug 관리용 Shader 이름
     std::string m_Name;
-
-    // Uniform 이름 -> GL UniformLocation
-    // "u_texture" -> 0
-    // mutable인 이유:
-    // GetUniformLocation()이 const함수이지만, Cache 자체는 갱신할 수 있게 하기 위해서
     mutable std::unordered_map<std::string, int> m_UniformLocationCache;
 };
