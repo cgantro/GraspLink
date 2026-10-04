@@ -7,18 +7,26 @@
 namespace control::specs
 {
 
-struct Axis3
+struct Vec3
 {
     double x = 0.0;
     double y = 0.0;
     double z = 0.0;
 };
 
+using Axis3 = Vec3;
+
 /** @brief Robot model별로 달라지는 하나의 revolute joint 상수. */
 struct JointSpecification
 {
     std::string_view name;
+
+    /** controller-ready visual/kinematic bind pose에서의 pivot 위치 [m]. */
+    Vec3 bindPivotMeters;
+
+    /** Joint local frame 기준 회전축. */
     Axis3 axis;
+
     double minPositionRadians = 0.0;
     double maxPositionRadians = 0.0;
     double maxVelocityRadiansPerSecond = 0.0;
@@ -40,6 +48,10 @@ struct RobotSpecification
 struct GripperJointSpecification
 {
     std::string_view name;
+
+    /** Gripper root frame 기준 bind pivot 위치 [m]. */
+    Vec3 bindPivotMeters;
+
     Axis3 axis;
     double masterMultiplier = 1.0;
     double minPositionRadians = 0.0;
