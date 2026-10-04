@@ -6,71 +6,95 @@ namespace grasplink::robotics
 {
 
 /**
- * @brief 실제 Robot backend와 Simulation backend가 공통으로 구현하는 로봇 제어 인터페이스.
+ * @brief 실제 Robot과 Simulation이 똑같은 방식으로 제어되도록 만드는 공통 인터페이스.
  *
  * @details
- * 상위 계층(Application/Planner/IK)은 Hanwha TCP/IP, Modbus, Flecs Entity, GLB hierarchy 같은
- * 구현 세부사항을 알지 않는다. 모든 backend는 이 인터페이스에서 같은 단위와 command/state 의미를 사용한다.
+ * 여기서 Interface는 "구현은 다르지만 바깥에서 호출하는 함수 모양은 같게 만든 약속"이다.
  *
- * Robot의 관절 개수, 이름, local axis, angle/velocity limit은 models::RobotSpecification이 결정한다.
- * 따라서 이 인터페이스 자체는 6축 HCR-12A에 고정되지 않는다.
+ * 예를 들어:
+ * - SimRobotController: 메모리 속 관절 상태를 계산해서 움직임을 흉내냄.
+ * - 향후 HanwhaHardwareController: 실제 HCR 장비에 통신 명령을 보냄.
+ *
+ * 두 구현 모두 상위 코드에서는 `MoveJoint()`, `Stop()`, `GetState()`처럼 같은 API로 사용한다.
+ * 따라서 IK/Planner/Application은 장비가 진짜 로봇인지 시뮬레이션인지 몰라도 된다.
+ *
+ * 용어:
+ * - Backend: 이 인터페이스 뒤에서 실제 동작을 구현하는 구체 클래스.
+ * - Joint-space: J1,J2,... 관절각 목록으로 로봇 자세를 표현하는 방식.
+ * - Cartesian: X/Y/Z 위치와 방향으로 로봇 끝단을 표현하는 방식.
+ * - TCP: Tool Center Point. 로봇 끝단 공구의 대표 기준점.
+ * - Update(dt): 시간이 dt만큼 흘렀다고 보고 내부 상태를 한 단계 진행하는 함수.
  */
 class IRobotController
 {
 public:
-    /** @brief Interface를 통한 다형 삭제를 위한 virtual destructor. */
+    /**
+     * @brief 파생 Controller를 base pointer로 삭제할 때 올바른 destructor가 호출되도록 하는 virtual destructor.
+     * @note 로봇 제어 의미보다 C++ 다형성 안전성을 위한 함수다.
+     */
     virtual ~IRobotController() = default;
 
     /**
-     * @brief Backend를 사용 가능한 상태로 초기화/연결한다.
-     * @return 성공 시 Result::Success(). Hardware는 transport 연결, Simulation은 내부 state 초기화를 수행한다.
+     * @brief Controller를 명령 가능한 상태로 연결/초기화한다.
+     * @return 성공 시 Result::Success(). 실패 시 이유가 담긴 Result.
+     *
+     * Simulation에서는 내부 상태 초기화, Hardware에서는 socket/serial/controller 연결 등을 수행할 수 있다.
      */
     virtual Result Connect() = 0;
 
     /**
-     * @brief Backend 연결/리소스를 정리하고 더 이상 command를 받지 않는 상태로 전환한다.
-     * @note noexcept 계약이므로 구현체는 정리 과정의 오류를 예외로 전파하면 안 된다.
+     * @brief Controller 연결과 관련 리소스를 정리하고 더 이상 명령을 받지 않는 상태로 만든다.
+     * @note noexcept이므로 정리 과정에서 예외를 밖으로 던지지 않는 계약이다.
      */
     virtual void Disconnect() noexcept = 0;
 
-    /** @return Connect가 성공하고 backend가 command를 받을 수 있으면 true. */
+    /** @return 현재 Controller가 Connect되어 명령을 받을 수 있으면 true. */
     [[nodiscard]] virtual bool IsConnected() const noexcept = 0;
 
     /**
-     * @brief Joint-space 절대 위치 이동을 요청한다.
-     * @param command J1..Jn 절대 목표각 [rad]과 velocity/acceleration scale.
-     * @return 관절 개수 불일치, limit 초과, 비연결 상태 등을 Result로 반환한다.
+     * @brief J1..Jn의 목표각을 직접 지정해 로봇을 Joint-space로 이동시킨다.
+     * @param command 각 관절의 절대 목표각 [rad]과 속도/가속도 비율.
+     * @return 명령 수락 여부. joint 수 불일치, limit 초과, 비연결 상태 등은 실패 Result로 반환한다.
      *
-     * @note command.targetPositionRadians의 길이/순서는 현재 RobotSpecification과 일치해야 한다.
+     * @details
+     * 예를 들어 HCR-12A에서 `[0.5, 0, 0, 0, 0, 0]`을 주면 J1의 목표각을 0.5 rad로 지정한다.
+     * 첫 원소부터 J1,J2,... 순서이며 RobotSpecification의 joint 순서와 일치해야 한다.
      */
     virtual Result MoveJoint(const JointMoveCommand& command) = 0;
 
     /**
-     * @brief TCP Cartesian 직선 이동을 요청한다.
-     * @param command 목표 위치 [m], 방향 quaternion [x,y,z,w], 최대 선/각속도.
-     * @return backend가 Cartesian motion을 지원하지 않으면 ErrorCode::Unsupported가 가능하다.
+     * @brief TCP를 목표 위치/방향까지 직선 경로로 이동시키는 Cartesian 명령을 요청한다.
+     * @param command 목표 TCP pose와 선/각속도 제한.
+     * @return backend가 아직 Cartesian motion을 지원하지 않으면 ErrorCode::Unsupported 가능.
+     *
+     * @details
+     * 이 함수가 실제로 동작하려면 보통 IK가 "목표 TCP pose -> 관절각"으로 변환하고,
+     * trajectory 계층이 시간에 따른 경로를 만들어야 한다.
      */
     virtual Result MoveLinear(const LinearMoveCommand& command) = 0;
 
     /**
-     * @brief 현재 software motion을 중지한다.
-     * @return backend가 stop 요청을 수락했는지 나타내는 Result.
-     * @warning 실제 로봇의 물리 Emergency Stop 회로 또는 safety-rated stop을 대체하지 않는다.
+     * @brief 현재 소프트웨어 motion을 중단한다.
+     * @return stop 요청 수락 여부.
+     * @warning 실제 산업용 로봇의 Emergency Stop(E-Stop)이나 safety-rated stop 회로를 대체하지 않는다.
      */
     virtual Result Stop() = 0;
 
     /**
-     * @brief 현재 backend의 Robot 상태 snapshot을 반환한다.
-     * @return 관절 위치 [rad], 속도 [rad/s], mode/fault/TCP 정보를 포함한 값 복사본.
+     * @brief 현재 로봇 상태를 값 복사본(snapshot)으로 가져온다.
+     * @return 관절각 [rad], 관절속도 [rad/s], mode/fault/TCP 정보.
+     *
+     * @details 반환값은 복사본이므로 호출자가 수정해도 Controller 내부 상태가 직접 바뀌지 않는다.
      */
     [[nodiscard]] virtual RobotState GetState() const = 0;
 
     /**
-     * @brief Backend 내부 상태를 한 제어 주기 진행한다.
-     * @param dtSeconds 이전 update 이후 경과 시간 [s]. 0 이하/비정상 값 처리 정책은 구현체가 정한다.
+     * @brief 시간이 dtSeconds만큼 진행됐다고 보고 backend 내부 상태를 한 단계 갱신한다.
+     * @param dtSeconds 이전 Update 이후 경과 시간 [s].
      *
-     * Simulation은 target 추종/FSM을 진행하고 Hardware backend는 feedback polling/timeout 갱신 등에 사용할 수 있다.
-     * Rendering FPS와 제어 주기를 분리한 뒤에도 이 함수의 dt 단위는 second로 유지한다.
+     * Simulation에서는 목표각을 향해 관절을 조금 이동시키고,
+     * Hardware에서는 feedback polling/timeout/watchdog 갱신 등에 사용할 수 있다.
+     * 향후 Fixed Control Loop를 적용하면 일정한 dt로 반복 호출하는 것이 목표다.
      */
     virtual void Update(double dtSeconds) = 0;
 };
