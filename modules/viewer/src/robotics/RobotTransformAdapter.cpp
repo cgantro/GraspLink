@@ -70,7 +70,7 @@ void RobotTransformAdapter::Apply(const ::grasplink::robotics::RobotState& state
         if (!std::isfinite(position))
             throw std::invalid_argument("RobotTransformAdapter: non-finite joint position");
 
-        const auto& binding = joints_[i];
+        auto& binding = joints_[i];
         glm::vec3 axis{
             static_cast<float>(binding.axis.x),
             static_cast<float>(binding.axis.y),
