@@ -76,7 +76,7 @@ public:
      */
     Result Stop() override;
 
-    /** @return 현재 q[d rad], dq[rad/s], mode 등을 담은 RobotState 복사본. */
+    /** @return 현재 q[rad], dq[rad/s], mode 등을 담은 RobotState 복사본. */
     [[nodiscard]] RobotState GetState() const override;
 
     /**
