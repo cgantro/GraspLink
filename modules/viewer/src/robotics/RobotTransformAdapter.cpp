@@ -10,13 +10,21 @@ namespace grasplink::viewer::robotics
 {
 namespace
 {
-/** @brief Joint axis가 사실상 0 vector인지 검사하기 위한 squared-length 기준. */
+/**
+ * @brief Joint axis가 사실상 0 vector인지 판정하는 squared-length 기준.
+ *
+ * @details
+ * 회전축은 방향을 나타내야 하므로 길이가 0이면 회전 방향을 정의할 수 없다.
+ * 제곱길이를 사용하면 sqrt 없이 빠르게 검사할 수 있다.
+ */
 constexpr float kAxisEpsilon = 1e-8F;
 
 /**
- * @brief controller-ready GLB Joint bind Euler가 identity인지 검사하는 허용 오차 [rad].
+ * @brief controller-ready GLB Joint의 bind rotation이 identity인지 검사하는 허용 오차 [rad].
  *
- * GLB loader가 quaternion/matrix를 Euler로 변환하므로 부동소수점의 아주 작은 잔차는 허용한다.
+ * @details
+ * Identity rotation은 "처음 로드했을 때 별도 회전이 없는 상태"다.
+ * Loader가 quaternion/matrix를 Euler로 바꾸는 과정에서 아주 작은 부동소수점 잔차가 생길 수 있어 0과 완전 일치만 요구하지 않는다.
  */
 constexpr float kBindRotationEpsilon = 1e-4F;
 }
@@ -38,9 +46,9 @@ RobotTransformAdapter::RobotTransformAdapter(
         const auto& jointSpec = specification.joints[i];
 
         /*
-         * Model specification의 `name`과 GLB Node/Flecs Entity 이름을 binding key로 사용한다.
-         * HCR-12A의 경우 J1..J6가 이에 해당한다. 따라서 asset 이름을 변경하면 model specification도
-         * 같이 바꾸거나 별도의 name mapping 계층을 도입해야 한다.
+         * Binding 단계:
+         * 모델 사양의 이름("J1", "J2"...)과 GLB/Flecs Entity 이름을 key로 사용해 서로 연결한다.
+         * 한 번 찾아 joints_에 저장한 뒤 Apply()에서는 반복 검색하지 않는다.
          */
         Entity joint = robotRoot.FindChildByNameRecursive(std::string(jointSpec.name));
         if (!joint)
@@ -48,9 +56,12 @@ RobotTransformAdapter::RobotTransformAdapter(
                 "RobotTransformAdapter: joint not found: " + std::string(jointSpec.name));
 
         /*
-         * controller-ready GLB에서는 moving Joint Node의 bind rotation을 identity로 정규화했다.
-         * 과거 asset처럼 bind quaternion 보정이 남아 있으면 `bind * delta` 규칙이 다시 필요하고,
-         * model axis와 시각 axis가 어긋날 수 있으므로 여기서 즉시 실패시킨다.
+         * 현재 controller-ready GLB 계약:
+         * moving Joint Node(J1~J6)의 bind rotation은 identity여야 한다.
+         *
+         * 예전 모델처럼 Joint 자체에 90도 보정 quaternion이 남아 있으면
+         * "모델 사양 axis"와 "화면에서 실제 회전하는 axis"가 달라질 수 있다.
+         * 그래서 잘못된 asset을 조용히 받아들이지 않고 초기화 시점에 즉시 실패시킨다.
          */
         const glm::vec3 bindEuler = joint.GetLocalRotation();
         if (glm::dot(bindEuler, bindEuler) >
@@ -62,9 +73,10 @@ RobotTransformAdapter::RobotTransformAdapter(
         }
 
         /*
-         * RobotSpecification은 GLM에 의존하지 않으므로 Axis3(double)를 사용한다.
-         * Viewer 경계에서만 glm::vec3(float)로 변환한다. axis는 방향값이라 물리 단위가 없고,
-         * 실제 회전 계산 전 normalize된다.
+         * Robotics model 계층은 GLM에 의존하지 않기 때문에 axis를 Axis3(double)로 저장한다.
+         * Viewer 경계에 들어왔을 때만 glm::vec3(float)로 변환한다.
+         *
+         * axis는 위치가 아니라 방향이므로 meter 같은 단위가 없다.
          */
         const glm::vec3 axis{
             static_cast<float>(jointSpec.axis.x),
@@ -81,6 +93,7 @@ RobotTransformAdapter::RobotTransformAdapter(
 
 void RobotTransformAdapter::Apply(const ::grasplink::robotics::RobotState& state)
 {
+    // valid=false는 Controller가 "이 snapshot을 화면에 쓰지 말라"고 표시한 상태다.
     if (!state.valid)
         return;
 
@@ -99,19 +112,25 @@ void RobotTransformAdapter::Apply(const ::grasplink::robotics::RobotState& state
             static_cast<float>(binding.axis.x),
             static_cast<float>(binding.axis.y),
             static_cast<float>(binding.axis.z)};
+
+        /*
+         * normalize는 축 벡터의 길이를 1로 만드는 작업이다.
+         * 회전 계산에는 "축의 방향"만 필요하므로 길이는 제거한다.
+         */
         axis = glm::normalize(axis);
 
         /*
-         * 제어값 -> 그래픽 회전 변환:
+         * Controller 값 -> 화면 회전 변환 순서:
          *
-         * 1. Controller angle: position [rad]
-         * 2. Model axis: joint-local unit vector
-         * 3. angleAxis(position, axis) -> quaternion
-         * 4. 현재 ECS Rotation이 vec3 Euler(rad)이므로 eulerAngles()로 저장 형식에 맞춤
-         * 5. TransformSystemModule이 다음 ECS update에서 Euler -> quaternion -> 4x4 rotation matrix로 변환
-         * 6. GLB Node translation이 pivot을 이미 표현하므로 rotation만 바꿔도 자식 Link가 실제 관절 중심에서 회전
+         * 1) position: Controller가 계산한 현재 관절각 q [rad]
+         * 2) axis: Joint 자신의 local 회전축
+         * 3) glm::angleAxis(q, axis): "이 축으로 q만큼 회전"을 quaternion으로 표현
+         * 4) glm::eulerAngles(): 현재 ECS가 Rotation을 vec3 Euler[rad]로 저장하므로 형식 변환
+         * 5) SetLocalRotation(): 부모 Link 기준 local 회전을 Joint Entity에 저장
+         * 6) TransformSystem: ParentWorld * Local을 계산해 자식 Link의 최종 world 위치/방향 결정
          *
-         * 즉 JointSpecification::bindPivotMeters를 여기서 position에 더하지 않는다.
+         * Pivot은 GLB Node의 translation/hierarchy에 이미 들어 있다.
+         * 따라서 여기서는 bindPivotMeters를 더하지 않고 rotation만 바꾼다.
          */
         const glm::quat rotation = glm::angleAxis(static_cast<float>(position), axis);
         binding.entity.SetLocalRotation(glm::eulerAngles(rotation));
