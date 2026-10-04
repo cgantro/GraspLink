@@ -10,6 +10,18 @@ if(MSVC)
   add_compile_options(/utf-8)
 endif()
 
+# Hardware/Simulation 공통 Controller contract.
+# Viewer/Flecs/통신 라이브러리에 의존하지 않는 header-only interface module이다.
+add_library(grasplink_control INTERFACE)
+target_include_directories(grasplink_control INTERFACE
+  modules/control/include
+)
+target_sources(grasplink_control INTERFACE
+  modules/control/include/control/ControlTypes.h
+  modules/control/include/control/IRobotController.h
+  modules/control/include/control/IGripperController.h
+)
+
 option(GRASPLINK_BUILD_GRAPHICS "Build the OpenGL viewer" ON)
 
 if(GRASPLINK_BUILD_GRAPHICS)
@@ -62,6 +74,7 @@ if(GRASPLINK_BUILD_GRAPHICS)
     modules/viewer/include/systems
   )
   target_link_libraries(grasplink_viewer PUBLIC
+    grasplink_control
     grasplink_graphics
     flecs::flecs_static
 
