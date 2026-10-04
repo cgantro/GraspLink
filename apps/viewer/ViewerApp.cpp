@@ -11,7 +11,7 @@
 #include "TransformSystemModule.h"
 #include "Window.h"
 
-#include "robot/RobotJointController.h"
+#include "robot/RobotTransformAdapter.h"
 
 #include "assets/GltfLoader.h"
 #include "assets/AssetManager.h"
@@ -23,24 +23,22 @@
 #include "scene/Scene.h"
 #include "scene/SceneManager.h"
 
+#include "control/IRobotController.h"
+#include "control/simulation/SimRobotController.h"
+#include "control/specs/Hcr12aSpecification.h"
+
 #include <chrono>
 #include <iostream>
 #include <memory>
 
 namespace
 {
-// 실행 환경 기본값. UI/설정 파일이 생기기 전까지 ViewerApp의 bootstrap 값으로 사용한다.
 constexpr int kWindowWidth = 1280;
 constexpr int kWindowHeight = 720;
 const char* kWindowTitle = "GraspLink Viewer";
 
 const glm::vec3 kCameraPosition{2.0F, 1.35F, 1.15F};
 const glm::vec3 kCameraTarget{0.05F, 0.50F, 0.40F};
-
-// TODO(FUTURE): graphics/simulation settings가 생기면 window/camera 기본값을 설정 객체로 이동한다.
-const glm::vec3 kDebugPosition{0.0F, 0.5F, 0.0F};
-const glm::vec3 kDebugScale{0.25F};
-
 } // namespace
 
 ViewerApp::ViewerApp() = default;
@@ -60,11 +58,9 @@ int ViewerApp::Run()
 
 bool ViewerApp::Init()
 {
-    // 1) Window가 OpenGL Context를 만든다. Renderer보다 먼저 생성되어야 GL 호출이 유효하다.
     m_Window = std::make_unique<Window>(
         Window::Properties{kWindowWidth, kWindowHeight, kWindowTitle, true});
 
-    // 2) Renderer는 이미 생성된 Context 위에 framebuffer/shadow resource를 만든다.
     int framebufferWidth = 0;
     int framebufferHeight = 0;
     m_Window->GetFramebufferSize(framebufferWidth, framebufferHeight);
@@ -72,7 +68,6 @@ bool ViewerApp::Init()
     m_Renderer = std::make_unique<Renderer>();
     m_Renderer->Init(framebufferWidth, framebufferHeight);
 
-    // 3) Camera는 수학 상태만 보관하고 mouse 입력 해석은 Controller에 분리한다.
     m_Camera = std::make_unique<Camera>(
         kCameraPosition,
         kCameraTarget,
@@ -82,19 +77,16 @@ bool ViewerApp::Init()
         *m_Camera,
         *m_Window);
 
-    // 4) Flecs World에 System들이 공통으로 사용할 Renderer/Camera context를 등록한다.
     m_World.set<RenderContext>({m_Renderer.get(), m_Camera.get()});
     m_World.import<TransformSystemModule>();
     m_World.import<RenderSystemModule>();
 
-    // TODO(FUTURE): Robot/Plane 생성은 SimulationScene::OnEnter()로 이동한다.
     m_SceneManager = std::make_unique<SceneManager>(m_World);
     m_SceneManager->LoadScene<Scene>();
     m_SceneManager->OnUpdate(0.0F);
 
     Scene* scene = m_SceneManager->GetActiveScene();
 
-    // 5) Loader는 CPU ModelResource를 만들고 AssetManager는 GPU resource로 업로드한다.
     m_AssetManager = std::make_unique<AssetManager>();
 
     auto robotShader = Shader::Create("shaders/Robot.glsl");
@@ -116,18 +108,36 @@ bool ViewerApp::Init()
         planeModel,
         *m_AssetManager,
         gridShader);
-
     (void)planeRoot;
 
-    // 6) Controller는 GLB hierarchy에서 J1~J6를 찾아 bind rotation을 보존한다.
-    m_RobotJointController = std::make_unique<RobotJointController>(robotRoot);
+    const auto& robotSpec = control::specs::hcr12a::kSpecification;
 
-    // TODO(FUTURE): 임시 J1 축 검증 코드. J1~J6 axis/limit 확정 후 RobotModel 초기 상태로 교체한다.
-    // 현재는 HCR-12A 공식 angle limit/velocity limit이 아직 Controller에 적용되지 않는다.
-    m_RobotJointController->SetJointPosition(
-        0,
-        glm::radians(30.0F),
-        glm::vec3{0.0F, 1.0F, 0.0F});
+    auto simController =
+        std::make_unique<control::simulation::SimRobotController>(robotSpec);
+    const control::Result connectResult = simController->Connect();
+    if (!connectResult)
+    {
+        std::cerr << connectResult.message << '\n';
+        return false;
+    }
+
+    m_RobotController = std::move(simController);
+    m_RobotTransformAdapter =
+        std::make_unique<RobotTransformAdapter>(robotRoot, robotSpec);
+
+    // 기존 J1 30도 검증 동작을 공통 Controller 경로로 유지한다.
+    control::JointMoveCommand debugMove;
+    debugMove.targetPositionRadians.assign(robotSpec.jointCount, 0.0);
+    debugMove.targetPositionRadians[0] = glm::radians(30.0);
+    debugMove.velocityScale = 1.0;
+    debugMove.accelerationScale = 1.0;
+
+    const control::Result moveResult = m_RobotController->MoveJoint(debugMove);
+    if (!moveResult)
+    {
+        std::cerr << moveResult.message << '\n';
+        return false;
+    }
 
     return true;
 }
@@ -143,10 +153,8 @@ void ViewerApp::MainLoop()
         float dt = std::chrono::duration<float>(currentFrameTime - lastFrameTime).count();
         lastFrameTime = currentFrameTime;
 
-        // Debugger breakpoint 등으로 큰 dt가 들어오면 simulation이 한 frame에 크게 튈 수 있다.
         if (dt > 0.1F) dt = 0.1F;
 
-        // GLFW event를 먼저 poll해야 scroll callback과 mouse button 상태가 최신 값이 된다.
         m_Window->PollEvents();
         m_CameraController->OnUpdate();
 
@@ -160,13 +168,14 @@ void ViewerApp::MainLoop()
             static_cast<float>(framebufferWidth) /
             static_cast<float>(framebufferHeight));
 
+        m_RobotController->Update(static_cast<double>(dt));
+        m_RobotTransformAdapter->Apply(m_RobotController->GetState());
+
         m_Renderer->BeginFrame();
 
-        // Scene logic -> ECS systems(Transform/Render) 순으로 진행한다.
         m_SceneManager->OnUpdate(dt);
         m_World.progress(dt);
 
-        // MSAA framebuffer를 default framebuffer로 resolve한 뒤 화면에 표시한다.
         m_Renderer->EndFrame();
         m_Window->SwapBuffers();
     }
@@ -174,8 +183,12 @@ void ViewerApp::MainLoop()
 
 void ViewerApp::Shutdown()
 {
-    // 참조를 가진 상위 controller/scene부터 제거하고 마지막에 Window/Context를 파괴한다.
-    m_RobotJointController.reset();
+    m_RobotTransformAdapter.reset();
+
+    if (m_RobotController)
+        m_RobotController->Disconnect();
+    m_RobotController.reset();
+
     m_SceneManager.reset();
     m_AssetManager.reset();
     m_World.reset();
