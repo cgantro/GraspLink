@@ -112,6 +112,9 @@ if(GRASPLINK_BUILD_GRAPHICS)
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
       ${CMAKE_SOURCE_DIR}/assets/HCR12A_R00.glb
       $<TARGET_FILE_DIR:grasplink_simulator>/HCR12A_R00.glb
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      ${CMAKE_SOURCE_DIR}/assets/HCR12A_2F-85.glb
+      $<TARGET_FILE_DIR:grasplink_simulator>/HCR12A_2F-85.glb
     
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
       ${CMAKE_SOURCE_DIR}/assets/plane.glb

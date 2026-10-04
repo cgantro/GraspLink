@@ -1,4 +1,4 @@
-#include "ViewerApp.h"
+﻿#include "ViewerApp.h"
 
 #include "Camera.h"
 #include "OrbitCameraController.h"
@@ -100,7 +100,7 @@ bool ViewerApp::Init()
     auto robotShader = Shader::Create("shaders/Robot.glsl");
     auto gridShader = Shader::Create("shaders/Grid.glsl");
 
-    ModelResource robotModel = GltfLoader::LoadGLB("HCR12A_R00.glb");
+    ModelResource robotModel = GltfLoader::LoadGLB("HCR12A_2F-85.glb");
     m_AssetManager->UploadModel(robotModel);
 
     Entity robotRoot = PrefabFactory::CreateModel(
