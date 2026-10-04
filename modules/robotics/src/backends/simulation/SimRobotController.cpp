@@ -11,18 +11,19 @@ namespace grasplink::robotics::backends::simulation
 namespace
 {
 /**
- * @brief 목표 도달 판정에 사용하는 관절 위치 허용 오차 [rad].
+ * @brief "목표각에 도달했다"고 판단할 때 허용하는 아주 작은 각도 오차 [rad].
  *
- * 부동소수점 연산으로 target과 현재값이 정확히 같은 bit pattern이 되지 않을 수 있으므로
- * 이 값 이하의 차이는 목표 도달로 간주하고 target 값으로 snap한다.
+ * @details
+ * double 계산에서는 수학적으로 같은 값도 bit 단위로 완전히 같지 않을 수 있다.
+ * 그래서 차이가 1e-8 rad 이하이면 더 움직이지 않고 목표값에 정확히 맞춘 것으로 처리한다.
  */
 constexpr double kPositionEpsilon = 1e-8;
 
 /**
- * @brief 실패 Result 생성 시 message 문자열을 불필요하게 복사하지 않도록 묶은 내부 helper.
- * @param code 공통 ErrorCode.
- * @param message 호출자에게 전달할 진단 문자열.
- * @return 실패 상태 Result.
+ * @brief 실패 Result를 짧게 만드는 내부 helper 함수.
+ * @param code 실패 종류.
+ * @param message 사람이 읽을 수 있는 실패 이유.
+ * @return `Result{code, message}`.
  */
 Result Failure(ErrorCode code, std::string message)
 {
@@ -30,9 +31,11 @@ Result Failure(ErrorCode code, std::string message)
 }
 
 /**
- * @brief velocityScale/accelerationScale이 현재 command contract의 유효 범위인지 검사한다.
- * @param value 검사할 무차원 scale.
- * @return finite이고 (0,1] 범위면 true.
+ * @brief 속도/가속도 scale이 현재 계약 `(0,1]` 범위의 정상 실수인지 확인한다.
+ *
+ * @details
+ * scale은 물리 단위가 없는 배율이다.
+ * 1.0은 모델 제한의 100%, 0.5는 50%를 뜻한다.
  */
 bool IsScaleValid(double value)
 {
@@ -43,6 +46,7 @@ bool IsScaleValid(double value)
 SimRobotController::SimRobotController(const models::RobotSpecification& specification)
     : specification_(&specification)
 {
+    // 관절 정의가 하나도 없는 모델은 Simulation Controller가 의미 있게 동작할 수 없다.
     if (specification_->joints == nullptr || specification_->jointCount == 0)
         throw std::invalid_argument("SimRobotController: empty robot specification");
 }
@@ -50,9 +54,11 @@ SimRobotController::SimRobotController(const models::RobotSpecification& specifi
 Result SimRobotController::Connect()
 {
     /*
-     * Simulation의 logical zero pose에서 시작한다.
-     * 실제 HCR hardware의 encoder zero/home offset과 동일하다는 의미가 아니라
-     * 현재 simulation model의 q={0,...,0} 상태다. Zero Offset 계층은 향후 별도 구현한다.
+     * q={0,...,0}, dq={0,...,0}의 논리적 simulation zero에서 시작한다.
+     * q는 관절각, dq는 관절 각속도를 뜻하는 로보틱스의 흔한 표기다.
+     *
+     * 이 0은 실제 HCR encoder의 공장 calibration/home zero를 의미하지 않는다.
+     * 실제 장비 offset은 별도의 Hardware/Calibration 계층에서 다뤄야 한다.
      */
     state_ = {};
     state_.jointPositionRadians.assign(specification_->jointCount, 0.0);
@@ -61,6 +67,7 @@ Result SimRobotController::Connect()
     state_.valid = true;
     state_.tcpPoseValid = false;
 
+    // 처음에는 현재 자세가 곧 목표자세이므로 로봇이 움직이지 않는다.
     targetPositionRadians_ = state_.jointPositionRadians;
     velocityScale_ = 1.0;
     accelerationScale_ = 1.0;
@@ -73,6 +80,8 @@ void SimRobotController::Disconnect() noexcept
     connected_ = false;
     state_.mode = RobotMode::Disconnected;
     state_.valid = false;
+
+    // 연결이 끊긴 상태에서 이전 속도값이 남아 "아직 움직인다"고 오해하지 않도록 0으로 만든다.
     std::fill(
         state_.jointVelocityRadiansPerSecond.begin(),
         state_.jointVelocityRadiansPerSecond.end(),
@@ -89,7 +98,10 @@ Result SimRobotController::MoveJoint(const JointMoveCommand& command)
     if (!connected_)
         return Failure(ErrorCode::NotConnected, "SimRobotController: not connected");
 
-    /* RobotSpecification의 joint order/count가 모든 JointVector의 contract다. */
+    /*
+     * RobotSpecification의 jointCount/order가 모든 JointVector의 기준이다.
+     * HCR-12A라면 정확히 6개이고 순서는 J1,J2,J3,J4,J5,J6다.
+     */
     if (command.targetPositionRadians.size() != specification_->jointCount)
         return Failure(ErrorCode::InvalidCommand, "SimRobotController: joint count mismatch");
 
@@ -97,8 +109,9 @@ Result SimRobotController::MoveJoint(const JointMoveCommand& command)
         return Failure(ErrorCode::InvalidCommand, "SimRobotController: scale must be in (0, 1]");
 
     /*
-     * 모델별 angle limit [rad]을 command 수락 시점에 검사한다.
-     * limit을 넘어온 값을 조용히 clamp하지 않고 command 자체를 InvalidCommand로 거절한다.
+     * Joint limit은 "이 관절이 허용되는 최소/최대 각도 범위"다.
+     * 범위를 넘은 command를 임의로 경계값에 붙여(clamp) 실행하지 않고 명령 자체를 거절한다.
+     * 이렇게 해야 호출자가 잘못된 목표를 보냈다는 사실을 숨기지 않는다.
      */
     for (std::size_t i = 0; i < specification_->jointCount; ++i)
     {
@@ -114,10 +127,12 @@ Result SimRobotController::MoveJoint(const JointMoveCommand& command)
         }
     }
 
+    // 검증이 끝난 뒤에만 새 target과 scale을 저장한다.
     targetPositionRadians_ = command.targetPositionRadians;
     velocityScale_ = command.velocityScale;
     accelerationScale_ = command.accelerationScale;
 
+    // 현재 q와 target q가 하나라도 다르면 Moving, 전부 이미 같으면 Idle이다.
     bool needsMotion = false;
     for (std::size_t i = 0; i < specification_->jointCount; ++i)
     {
@@ -137,7 +152,12 @@ Result SimRobotController::MoveLinear(const LinearMoveCommand&)
     if (!connected_)
         return Failure(ErrorCode::NotConnected, "SimRobotController: not connected");
 
-    /* Cartesian target을 joint target으로 바꿀 IK/trajectory 계층이 아직 없으므로 의도적으로 거절한다. */
+    /*
+     * Cartesian target은 TCP의 위치/방향으로 주어진다.
+     * 이를 실제 J1..Jn 목표각으로 바꾸려면 IK가 필요하고,
+     * 시간에 따른 직선 경로를 만들려면 trajectory 계층도 필요하다.
+     * 아직 둘 다 연결되지 않았으므로 의도적으로 Unsupported를 반환한다.
+     */
     return Failure(
         ErrorCode::Unsupported,
         "SimRobotController: MoveLinear requires the FK/IK layer and is not wired yet");
@@ -148,7 +168,10 @@ Result SimRobotController::Stop()
     if (!connected_)
         return Failure(ErrorCode::NotConnected, "SimRobotController: not connected");
 
-    /* 현재 위치를 새 target으로 만들어 다음 Update부터 추가 이동이 일어나지 않게 한다. */
+    /*
+     * 새 target을 현재 q와 같게 만들면 다음 Update에서 더 이동할 이유가 없어진다.
+     * 이것은 software stop이며 실제 산업용 로봇의 안전회로 E-Stop을 의미하지 않는다.
+     */
     targetPositionRadians_ = state_.jointPositionRadians;
     std::fill(
         state_.jointVelocityRadiansPerSecond.begin(),
@@ -160,12 +183,13 @@ Result SimRobotController::Stop()
 
 RobotState SimRobotController::GetState() const
 {
-    /* 값 복사 snapshot을 반환해 외부 코드가 Controller 내부 state를 직접 수정하지 못하게 한다. */
+    // snapshot을 값으로 복사해 외부 코드가 Controller 내부 state를 직접 수정하지 못하게 한다.
     return state_;
 }
 
 void SimRobotController::Update(double dtSeconds)
 {
+    // 움직이는 상태이고 dt가 정상적인 양수일 때만 simulation step을 진행한다.
     if (!connected_ || state_.mode != RobotMode::Moving ||
         !std::isfinite(dtSeconds) || dtSeconds <= 0.0)
     {
@@ -178,7 +202,10 @@ void SimRobotController::Update(double dtSeconds)
     {
         const auto& joint = specification_->joints[i];
 
-        // 목표까지 남은 signed angular displacement [rad].
+        /*
+         * delta는 목표각까지 남은 "부호가 있는 각도 차이" [rad].
+         * 양수면 +axis 방향으로, 음수면 반대 방향으로 더 움직여야 한다.
+         */
         const double delta = targetPositionRadians_[i] - state_.jointPositionRadians[i];
 
         if (std::abs(delta) <= kPositionEpsilon)
@@ -189,10 +216,14 @@ void SimRobotController::Update(double dtSeconds)
         }
 
         /*
-         * JointSpecification의 max velocity [rad/s]를 현재 command의 무차원 scale과 dt [s]에 곱해
-         * 이번 simulation step에서 이동 가능한 최대 각도 [rad]를 구한다.
+         * 이번 한 step에서 움직일 수 있는 최대 각도 계산:
          *
-         * maxStep[rad] = maxVelocity[rad/s] * velocityScale[-] * dt[s]
+         * maxStep[rad]
+         * = 모델 최대각속도[rad/s]
+         * * 사용자가 요청한 속도비율[-]
+         * * 이번 step 시간[s]
+         *
+         * 예) 2 rad/s * 0.5 * 0.01 s = 0.01 rad
          */
         const double maxStep = joint.maxVelocityRadiansPerSecond * velocityScale_ * dtSeconds;
         if (maxStep <= 0.0)
@@ -202,11 +233,14 @@ void SimRobotController::Update(double dtSeconds)
             continue;
         }
 
-        // 목표를 지나치지 않도록 signed delta를 이번 step의 허용 범위로 제한한다.
+        /*
+         * std::clamp로 delta를 [-maxStep,+maxStep] 범위에 제한한다.
+         * 그래서 목표를 향해 최대속도 이하로 움직이면서 목표각을 지나쳐 overshoot하지 않는다.
+         */
         const double step = std::clamp(delta, -maxStep, maxStep);
         state_.jointPositionRadians[i] += step;
 
-        // 실제 이번 step 이동량으로 feedback velocity [rad/s]를 계산한다.
+        // 실제 이번 step 이동각 / 시간으로 현재 feedback 각속도 [rad/s]를 계산한다.
         state_.jointVelocityRadiansPerSecond[i] = step / dtSeconds;
 
         if (std::abs(targetPositionRadians_[i] - state_.jointPositionRadians[i]) > kPositionEpsilon)
@@ -215,18 +249,21 @@ void SimRobotController::Update(double dtSeconds)
         }
         else
         {
+            // epsilon 안에 들어오면 오차를 남기지 않고 target에 정확히 맞춘다.
             state_.jointPositionRadians[i] = targetPositionRadians_[i];
         }
     }
 
     /*
-     * accelerationScale_은 command contract에 보존하지만 현재 HCR specification에 검증된 max acceleration 값이 없다.
-     * 임의 상수를 제조사 사양처럼 만들지 않기 위해 acceleration limiting은 의도적으로 아직 적용하지 않는다.
+     * accelerationScale_은 API 계약에는 존재하지만 아직 실제 제한에 쓰지 않는다.
+     * HCR specification에 검증된 max acceleration을 넣기 전 임의 숫자로 가속도를 제한하면
+     * "제조사 사양을 구현했다"는 잘못된 인상을 줄 수 있기 때문이다.
      */
     (void)accelerationScale_;
 
     if (allReached)
     {
+        // 모든 관절이 목표각에 도달하면 속도 0, 상태 Idle로 전환한다.
         std::fill(
             state_.jointVelocityRadiansPerSecond.begin(),
             state_.jointVelocityRadiansPerSecond.end(),
