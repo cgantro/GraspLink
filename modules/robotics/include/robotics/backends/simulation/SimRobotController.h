@@ -1,15 +1,15 @@
 #pragma once
 
-#include "control/IRobotController.h"
-#include "control/specs/DeviceSpecifications.h"
+#include "robotics/core/IRobotController.h"
+#include "robotics/models/RobotSpecification.h"
 
-namespace control::simulation
+namespace grasplink::robotics::backends::simulation
 {
 
 class SimRobotController final : public IRobotController
 {
 public:
-    explicit SimRobotController(const specs::RobotSpecification& specification);
+    explicit SimRobotController(const models::RobotSpecification& specification);
 
     Result Connect() override;
     void Disconnect() noexcept override;
@@ -22,10 +22,10 @@ public:
     [[nodiscard]] RobotState GetState() const override;
     void Update(double dtSeconds) override;
 
-    [[nodiscard]] const specs::RobotSpecification& GetSpecification() const noexcept;
+    [[nodiscard]] const models::RobotSpecification& GetSpecification() const noexcept;
 
 private:
-    const specs::RobotSpecification* specification_ = nullptr;
+    const models::RobotSpecification* specification_ = nullptr;
     RobotState state_{};
     JointVector targetPositionRadians_;
     double velocityScale_ = 1.0;
@@ -33,4 +33,4 @@ private:
     bool connected_ = false;
 };
 
-} // namespace control::simulation
+} // namespace grasplink::robotics::backends::simulation

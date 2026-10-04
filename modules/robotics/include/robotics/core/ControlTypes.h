@@ -7,14 +7,12 @@
 
 /**
  * @file ControlTypes.h
- * @brief Hardware/Simulation Controller 계층이 공유하는 backend-neutral 데이터 타입.
+ * @brief Hardware/Simulation backend가 공유하는 robotics 제어 타입.
  *
- * @details
- * Viewer/Flecs/GLM/제조사 통신 프로토콜에 의존하지 않는다.
+ * Viewer/Flecs/GLM/제조사 protocol에 의존하지 않는다.
  * 각도는 radian, 위치는 meter, 시간은 second를 사용한다.
- * Joint 개수는 RobotSpecification이 결정하므로 고정 6축 배열을 사용하지 않는다.
  */
-namespace control
+namespace grasplink::robotics
 {
 
 using JointVector = std::vector<double>;
@@ -82,8 +80,10 @@ struct RobotState
 };
 
 /**
- * @brief 현재 2F-85 backend가 사용하는 0~255 position/speed/force command contract.
- * @note 다른 gripper command 체계는 model-specific adapter에서 공통 의미로 변환한다.
+ * @brief normalized gripper position/speed/force request.
+ *
+ * 현재 2F-85는 이 값을 rPR/rSP/rFR에 1:1 매핑한다.
+ * 다른 gripper backend는 같은 0~255 의미로 변환한다.
  */
 struct GripperCommand
 {
@@ -113,4 +113,4 @@ struct GripperState
     bool valid = false;
 };
 
-} // namespace control
+} // namespace grasplink::robotics

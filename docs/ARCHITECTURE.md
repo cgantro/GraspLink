@@ -1,59 +1,78 @@
-﻿# Architecture
+# Architecture
 
-## 책임 경계
-
-`ViewerApp`은 창, 카메라, Flecs world와 렌더 시스템을 조립한다.
-`modules/viewer`는 GPU mesh, shader, material, camera와 draw 호출만 담당한다.
-`modules/common`은 그래픽 모듈이 공유하는 기본 타입만 둔다.
-
-현재 범위에는 로봇 kinematics, GLB/OBJ importer, asset manifest, CAD 변환기가 없다.
-따라서 런타임에서 외부 좌표계 보정이나 로봇 전용 node 이름을 해석하지 않는다.
-
-## 실행 흐름
-
-1. ViewerApp의 실행 상수로 창과 카메라를 초기화한다.
-2. OpenGL context와 Flecs render system을 초기화한다.
-3. 디버그 cube 하나를 GPU resource로 만든다.
-4. 매 프레임 world를 진행하고 render system이 cube를 그린다.
-
-새 모델 형식이나 로봇 제어를 추가할 때는 기존 viewer 책임을 침범하지 않는 별도 모듈로
-설계하고, 현재 최소 실행 구조를 먼저 깨뜨리지 않도록 한다.
-
-## 향후 Robot Control 경계
-
-로봇 제어가 추가되면 Controller가 GLB node나 Flecs render component를 직접 수정하지 않는다.
-제어 결과는 공통 Joint 상태를 통해 시뮬레이션과 렌더링으로 전달한다.
+## 모듈 경계
 
 ```text
-Controller
-    ↓
-JointCommand
-    ↓
-Limit / Safety
-    ↓
-IRobotHardware
-    ├─ SimRobotHardware
-    └─ RealRobotHardware
-    ↓
-JointState
-    ↓
-Kinematics / Simulation
-    ↓
-Physics Integration
-    ↓
-Rendering
+modules/
+├─ robotics/
+│  ├─ core/                 Controller interface / state contract
+│  ├─ models/               Robot/Gripper model constants
+│  └─ backends/             Simulation / Hardware implementations
+├─ viewer/                  OpenGL / Flecs / GLB visualization
+└─ physics/                 Jolt integration (future)
 ```
 
-필수 제어 경계는 다음과 같다.
+실제 파일은 public header를 `modules/robotics/include/robotics/...` 아래에 둔다.
 
-- Hardware / Simulation 구현 분리
-- Joint Angle Limit
-- Joint Velocity / Acceleration Limit
-- Rendering Loop와 Fixed Control Loop 분리
-- Physics Library는 **Jolt Physics**를 사용하고 별도 통합 계층으로 연결
-- Flecs Entity에는 Jolt 객체 자체가 아니라 `BodyID` 기반 handle만 저장
-- Physics World와 Flecs/Rendering Transform의 동기화
-- Grasp Attach / Detach 시 Physics 상태 전환
+## Robotics 데이터 흐름
+
+```text
+Application / Planner / IK
+            ↓
+      IRobotController
+            ↓
+       backend 구현
+      ├─ simulation
+      └─ hardware (future)
+            ↓
+         RobotState
+            ↓
+    RobotTransformAdapter
+            ↓
+       Flecs Joint Entity
+            ↓
+          Renderer
+```
+
+`modules/robotics`는 Viewer/Flecs/GLM에 의존하지 않는다.
+`modules/viewer/include/viewer/robotics/RobotTransformAdapter.h`만 robotics domain state를 Viewer transform으로 변환한다.
+
+## Model과 Backend 분리
+
+`models/`는 장치의 고정된 기구/사양을 보관한다.
+
+```text
+models/
+├─ RobotSpecification.h
+├─ GripperSpecification.h
+├─ hanwha/Hcr12a.h
+└─ robotiq/TwoF85.h
+```
+
+여기에는 joint 이름, pivot, axis, angle limit, max velocity, gripper linkage 같은 model-specific 상수만 둔다.
+
+`backends/`는 상태 변화와 외부 장치 연결을 구현한다.
+
+```text
+backends/
+├─ simulation/
+│  └─ SimRobotController
+└─ hardware/               # future
+   ├─ hanwha/
+   └─ robotiq/
+```
+
+따라서 다른 6축/7축 로봇을 추가할 때 `IRobotController`를 다시 만들지 않고 새 `RobotSpecification`을 추가해 동일한 Simulation backend를 재사용할 수 있다.
+
+## Viewer 책임
+
+Viewer는 motion limit, trajectory, FK/IK를 계산하지 않는다.
+`RobotTransformAdapter`는 `RobotState`의 관절 각도를 GLB Joint Entity local rotation에 적용하는 마지막 표현 계층이다.
+
+## 향후 Physics
+
+Jolt Physics는 별도 `modules/physics`에서 통합한다.
+Flecs에는 Jolt 객체 자체가 아니라 `BodyID` 같은 handle만 저장한다.
 
 ```text
 Flecs Entity
@@ -63,28 +82,6 @@ Flecs Entity
 └─ PhysicsBodyHandle
         ↓
    Jolt BodyID
-        ↓
-Jolt PhysicsSystem
 ```
 
-권장 모듈 경계:
-
-```text
-modules/
-├─ viewer/
-├─ robotics/
-├─ physics/
-│  ├─ PhysicsWorld
-│  ├─ RigidBody
-│  ├─ Collider
-│  └─ JoltPhysicsBackend
-└─ common/
-```
-
-Flecs는 entity/component/system과 상태 구성에 집중하고, Jolt는 rigid body, collision, constraint, physics step을 담당한다.
-물리 엔진의 충돌 해결기나 rigid-body solver를 직접 구현하지 않고 Jolt에 위임한다.
-프로젝트 코드는 Robot State, Scene State, Physics Body 사이의 변환과 생명주기 관리에 집중한다.
-
-E-Stop과 Zero Offset은 기본 제어 구조 이후 확장한다.
-
-세부 기준은 [CONTROL_SIMULATION_GOALS.md](CONTROL_SIMULATION_GOALS.md)를 따른다.
+Fixed Control Loop와 Physics Step은 Rendering FPS와 분리한다.

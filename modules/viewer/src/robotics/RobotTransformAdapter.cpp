@@ -1,4 +1,4 @@
-#include "robot/RobotTransformAdapter.h"
+#include "viewer/robotics/RobotTransformAdapter.h"
 
 #include <glm/gtx/quaternion.hpp>
 
@@ -6,6 +6,8 @@
 #include <stdexcept>
 #include <string>
 
+namespace grasplink::viewer::robotics
+{
 namespace
 {
 constexpr float kAxisEpsilon = 1e-8F;
@@ -14,7 +16,7 @@ constexpr float kBindRotationEpsilon = 1e-4F;
 
 RobotTransformAdapter::RobotTransformAdapter(
     const Entity& robotRoot,
-    const control::specs::RobotSpecification& specification)
+    const ::grasplink::robotics::models::RobotSpecification& specification)
 {
     if (!robotRoot)
         throw std::runtime_error("RobotTransformAdapter: invalid robot root");
@@ -54,7 +56,7 @@ RobotTransformAdapter::RobotTransformAdapter(
     }
 }
 
-void RobotTransformAdapter::Apply(const control::RobotState& state)
+void RobotTransformAdapter::Apply(const ::grasplink::robotics::RobotState& state)
 {
     if (!state.valid)
         return;
@@ -79,3 +81,5 @@ void RobotTransformAdapter::Apply(const control::RobotState& state)
         binding.entity.SetLocalRotation(glm::eulerAngles(rotation));
     }
 }
+
+} // namespace grasplink::viewer::robotics

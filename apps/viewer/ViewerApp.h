@@ -9,18 +9,19 @@ class Camera;
 class OrbitCameraController;
 class SceneManager;
 class AssetManager;
-class RobotTransformAdapter;
 
-namespace control
+namespace grasplink::robotics
 {
 class IRobotController;
 }
 
+namespace grasplink::viewer::robotics
+{
+class RobotTransformAdapter;
+}
+
 /**
- * @brief GraspLink Viewer 실행 객체를 조립하고 전체 생명주기를 관리한다.
- *
- * ViewerApp은 실제 제어 로직을 직접 수행하지 않는다.
- * Simulation/Hardware Controller와 Viewer-side Transform Adapter를 조립하는 Composition Root다.
+ * @brief Viewer 실행 객체를 조립하고 전체 생명주기를 관리하는 Composition Root.
  */
 class ViewerApp
 {
@@ -43,8 +44,8 @@ private:
     std::unique_ptr<SceneManager> m_SceneManager;
     std::unique_ptr<AssetManager> m_AssetManager;
 
-    std::unique_ptr<control::IRobotController> m_RobotController;
-    std::unique_ptr<RobotTransformAdapter> m_RobotTransformAdapter;
+    std::unique_ptr<grasplink::robotics::IRobotController> m_RobotController;
+    std::unique_ptr<grasplink::viewer::robotics::RobotTransformAdapter> m_RobotTransformAdapter;
 
     flecs::world m_World;
 };

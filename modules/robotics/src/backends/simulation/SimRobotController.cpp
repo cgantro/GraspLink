@@ -1,4 +1,4 @@
-#include "control/simulation/SimRobotController.h"
+#include "robotics/backends/simulation/SimRobotController.h"
 
 #include <algorithm>
 #include <cmath>
@@ -6,7 +6,7 @@
 #include <string>
 #include <utility>
 
-namespace control::simulation
+namespace grasplink::robotics::backends::simulation
 {
 namespace
 {
@@ -23,7 +23,7 @@ bool IsScaleValid(double value)
 }
 } // namespace
 
-SimRobotController::SimRobotController(const specs::RobotSpecification& specification)
+SimRobotController::SimRobotController(const models::RobotSpecification& specification)
     : specification_(&specification)
 {
     if (specification_->joints == nullptr || specification_->jointCount == 0)
@@ -192,9 +192,9 @@ void SimRobotController::Update(double dtSeconds)
     }
 }
 
-const specs::RobotSpecification& SimRobotController::GetSpecification() const noexcept
+const models::RobotSpecification& SimRobotController::GetSpecification() const noexcept
 {
     return *specification_;
 }
 
-} // namespace control::simulation
+} // namespace grasplink::robotics::backends::simulation

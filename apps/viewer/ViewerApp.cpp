@@ -11,7 +11,7 @@
 #include "TransformSystemModule.h"
 #include "Window.h"
 
-#include "robot/RobotTransformAdapter.h"
+#include "viewer/robotics/RobotTransformAdapter.h"
 
 #include "assets/GltfLoader.h"
 #include "assets/AssetManager.h"
@@ -23,9 +23,9 @@
 #include "scene/Scene.h"
 #include "scene/SceneManager.h"
 
-#include "control/IRobotController.h"
-#include "control/simulation/SimRobotController.h"
-#include "control/specs/Hcr12aSpecification.h"
+#include "robotics/backends/simulation/SimRobotController.h"
+#include "robotics/core/IRobotController.h"
+#include "robotics/models/hanwha/Hcr12a.h"
 
 #include <chrono>
 #include <iostream>
@@ -110,11 +110,11 @@ bool ViewerApp::Init()
         gridShader);
     (void)planeRoot;
 
-    const auto& robotSpec = control::specs::hcr12a::kSpecification;
+    const auto& robotSpec = grasplink::robotics::models::hanwha::kHcr12a;
 
     auto simController =
-        std::make_unique<control::simulation::SimRobotController>(robotSpec);
-    const control::Result connectResult = simController->Connect();
+        std::make_unique<grasplink::robotics::backends::simulation::SimRobotController>(robotSpec);
+    const grasplink::robotics::Result connectResult = simController->Connect();
     if (!connectResult)
     {
         std::cerr << connectResult.message << '\n';
@@ -123,16 +123,16 @@ bool ViewerApp::Init()
 
     m_RobotController = std::move(simController);
     m_RobotTransformAdapter =
-        std::make_unique<RobotTransformAdapter>(robotRoot, robotSpec);
+        std::make_unique<grasplink::viewer::robotics::RobotTransformAdapter>(robotRoot, robotSpec);
 
-    // 기존 J1 30도 검증 동작을 공통 Controller 경로로 유지한다.
-    control::JointMoveCommand debugMove;
+    // 임시 J1 30도 검증 동작. 향후 입력/UI/trajectory 계층으로 교체한다.
+    grasplink::robotics::JointMoveCommand debugMove;
     debugMove.targetPositionRadians.assign(robotSpec.jointCount, 0.0);
     debugMove.targetPositionRadians[0] = glm::radians(30.0);
     debugMove.velocityScale = 1.0;
     debugMove.accelerationScale = 1.0;
 
-    const control::Result moveResult = m_RobotController->MoveJoint(debugMove);
+    const grasplink::robotics::Result moveResult = m_RobotController->MoveJoint(debugMove);
     if (!moveResult)
     {
         std::cerr << moveResult.message << '\n';
@@ -172,10 +172,8 @@ void ViewerApp::MainLoop()
         m_RobotTransformAdapter->Apply(m_RobotController->GetState());
 
         m_Renderer->BeginFrame();
-
         m_SceneManager->OnUpdate(dt);
         m_World.progress(dt);
-
         m_Renderer->EndFrame();
         m_Window->SwapBuffers();
     }

@@ -10,22 +10,24 @@ if(MSVC)
   add_compile_options(/utf-8)
 endif()
 
-# Hardware/Simulation 공통 Controller 계층.
-# Viewer/Flecs/GLM에 의존하지 않고 model specification + backend contract를 제공한다.
-add_library(grasplink_control STATIC
-  modules/control/src/simulation/SimRobotController.cpp
+# Robot/Gripper model + Hardware/Simulation backend contract.
+# Viewer/Flecs/GLM에 의존하지 않는 robotics domain library다.
+add_library(grasplink_robotics STATIC
+  modules/robotics/src/backends/simulation/SimRobotController.cpp
 )
-target_include_directories(grasplink_control PUBLIC
-  modules/control/include
+target_include_directories(grasplink_robotics PUBLIC
+  modules/robotics/include
 )
-target_sources(grasplink_control PUBLIC
-  modules/control/include/control/ControlTypes.h
-  modules/control/include/control/IRobotController.h
-  modules/control/include/control/IGripperController.h
-  modules/control/include/control/specs/DeviceSpecifications.h
-  modules/control/include/control/specs/Hcr12aSpecification.h
-  modules/control/include/control/specs/Robotiq2F85Specification.h
-  modules/control/include/control/simulation/SimRobotController.h
+target_sources(grasplink_robotics PUBLIC
+  modules/robotics/include/robotics/core/ControlTypes.h
+  modules/robotics/include/robotics/core/IRobotController.h
+  modules/robotics/include/robotics/core/IGripperController.h
+  modules/robotics/include/robotics/models/ModelTypes.h
+  modules/robotics/include/robotics/models/RobotSpecification.h
+  modules/robotics/include/robotics/models/GripperSpecification.h
+  modules/robotics/include/robotics/models/hanwha/Hcr12a.h
+  modules/robotics/include/robotics/models/robotiq/TwoF85.h
+  modules/robotics/include/robotics/backends/simulation/SimRobotController.h
 )
 
 option(GRASPLINK_BUILD_GRAPHICS "Build the OpenGL viewer" ON)
@@ -44,7 +46,7 @@ if(GRASPLINK_BUILD_GRAPHICS)
     modules/viewer/src/assets/GltfLoader.cpp
     modules/viewer/src/assets/AssetManager.cpp
     modules/viewer/src/assets/PrefabFactory.cpp
-    modules/viewer/src/robot/RobotTransformAdapter.cpp
+    modules/viewer/src/robotics/RobotTransformAdapter.cpp
   )
   set(GRASPLINK_VIEWER_HEADERS
     modules/viewer/include/Entity.h
@@ -62,7 +64,7 @@ if(GRASPLINK_BUILD_GRAPHICS)
     modules/viewer/include/assets/GltfLoader.h
     modules/viewer/include/assets/AssetManager.h
     modules/viewer/include/assets/PrefabFactory.h
-    modules/viewer/include/robot/RobotTransformAdapter.h
+    modules/viewer/include/viewer/robotics/RobotTransformAdapter.h
   )
 
   add_library(grasplink_viewer STATIC
@@ -70,14 +72,13 @@ if(GRASPLINK_BUILD_GRAPHICS)
     ${GRASPLINK_VIEWER_HEADERS}
   )
   target_include_directories(grasplink_viewer PUBLIC
-    modules/common/include
     modules/viewer/include
     modules/viewer/include/components
     modules/viewer/include/graphics
     modules/viewer/include/systems
   )
   target_link_libraries(grasplink_viewer PUBLIC
-    grasplink_control
+    grasplink_robotics
     grasplink_graphics
     flecs::flecs_static
 
