@@ -129,8 +129,8 @@ bool ViewerApp::Init()
     grasplink::robotics::JointMoveCommand debugMove;
     debugMove.targetPositionRadians.assign(robotSpec.jointCount, 0.0);
     debugMove.targetPositionRadians[0] = glm::radians(30.0);
-    debugMove.velocityScale = 1.0;
-    debugMove.accelerationScale = 1.0;
+    debugMove.velocityScale = 0.06;
+    debugMove.accelerationScale = 0.06;
 
     const grasplink::robotics::Result moveResult = m_RobotController->MoveJoint(debugMove);
     if (!moveResult)

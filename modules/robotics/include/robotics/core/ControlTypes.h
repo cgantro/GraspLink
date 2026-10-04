@@ -115,7 +115,7 @@ struct JointMoveCommand
 };
 
 /**
- * @brief TCP를 Cartesian 직선 경로로 이동시키기 위한 고수준 요청.
+ * @brief TCP(Tool Center Point, 로봇 말단 공구 중심점)를 Cartesian 직선 경로로 이동시키기 위한 고수준 요청.
  *
  * @note 현재 SimRobotController는 FK/IK/trajectory 계층이 연결되지 않아 Unsupported를 반환한다.
  */
