@@ -23,6 +23,18 @@ inline constexpr std::uint64_t kFnvPrime64 = 1099511628211ULL;
  * @note Hash collision 가능성은 이론적으로 존재한다. 현재 프로젝트 규모에서는 단순/빠른 FNV-1a를 사용한다.
  * @todo [FUTURE] 외부 asset database/serialization이 커지면 collision 검증 또는 stable asset GUID 도입을 검토한다.
  */
+/*
+ * [추가 용어 설명]
+ * - Handle: 실제 객체를 직접 담지 않고 그 객체를 찾거나 가리키기 위한 작은 식별값.
+ * - Hash: 문자열처럼 긴 입력을 일정 크기의 숫자로 바꾸는 함수 결과.
+ * - FNV-1a: 구현이 단순하고 빠른 비암호학적 hash 알고리즘. 보안용 암호 hash가 아니다.
+ * - Hash Collision: 서로 다른 문자열이 우연히 같은 hash 값을 만드는 경우.
+ * - Sentinel: 특별한 상태를 표시하기 위해 예약한 값. 여기서는 value==0을 invalid로 예약한다.
+ * - Cache Key: AssetManager의 unordered_map에서 리소스를 찾을 때 사용하는 key.
+ * - GUID: 장기적으로 asset을 안정적으로 식별하기 위해 사용할 수 있는 별도 고유 식별자 방식.
+ *
+ * ResourceID는 GPU object ID가 아니다. AssetManager 내부에서 실제 Mesh/Material/Texture를 찾기 위한 프로젝트 측 ID다.
+ */
 struct ResourceID
 {
     std::uint64_t value = 0;

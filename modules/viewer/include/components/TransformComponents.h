@@ -4,101 +4,75 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
 
-/**
- * @brief Entity의 위치를 저장하는 vec3 기반 ECS Component.
- *
- * @details
- * `(Position, Local)` pair는 부모 Entity 기준 local translation이고,
- * `(Position, World)`는 현재 구조에서 직접 저장하지 않는다. World 위치는 TransformMatrix에서 읽는다.
- *
- * 단위는 asset/scene의 공간 단위를 따른다. controller-ready HCR-12A GLB와 robotics 계층은 meter [m]로 정규화되어 있다.
+/** @brief Entity 위치를 저장하는 vec3 기반 ECS Component. */
+/*
+ * [추가 그래픽스 용어 설명]
+ * Position은 3차원 위치 (x,y,z)를 저장한다.
+ * Local로 붙으면 부모 Entity 기준 위치이고, World는 전체 Scene 기준 위치/행렬을 뜻한다.
+ * 현재 HCR controller-ready asset이 meter 기준이므로 해당 robot hierarchy의 Position은 [m]로 해석한다.
  */
 struct Position : public glm::vec3
 {
     using glm::vec3::vec3;
 
-    /** @brief 원점 (0,0,0)으로 초기화한다. */
     Position() : glm::vec3(0.0F) {}
-
-    /** @brief 기존 glm::vec3 값을 Position component로 복사한다. */
     Position(const glm::vec3& value) : glm::vec3(value) {}
 };
 
 /**
- * @brief Entity local 회전을 Euler XYZ angle로 저장하는 ECS Component.
+ * @brief Entity 회전을 Euler radian XYZ로 저장하는 ECS Component.
+ * @warning Euler 표현은 회전 합성에서 순서 문제와 특이점이 생길 수 있다.
+ * @todo [FUTURE] FK/IK와 Joint 회전의 정확도가 중요해지는 시점에 quaternion 저장 방식으로 전환을 검토한다.
+ */
+/*
+ * [추가 그래픽스 용어 설명]
+ * - Euler Angle: X/Y/Z 축 회전량 세 개로 방향을 표현하는 방식. 여기서는 [rad].
+ * - Quaternion: 회전을 네 성분으로 표현해 회전 합성/보간에서 Euler의 일부 문제를 줄이는 방식.
+ * - Gimbal Lock/특이점: 특정 Euler 자세에서 두 회전축이 겹쳐 자유도가 줄어드는 현상.
  *
- * @details
- * 각 성분 단위는 radian [rad]이다. TransformSystemModule에서 `glm::quat(vec3)`로 quaternion을 만든 뒤
- * 4x4 rotation matrix로 변환한다. RobotTransformAdapter도 joint quaternion을 최종적으로 이 저장 형식에 맞춰
- * Euler radian으로 바꾼 뒤 SetLocalRotation()을 호출한다.
- *
- * @warning Euler 표현은 회전 합성 순서/특이점 문제가 있다. Joint state의 원본 수학 표현으로 사용하지 말고
- *          현재 Viewer transform 저장 형식으로만 취급한다.
- * @todo [FUTURE] FK/IK/복합 회전 정확도를 위해 quaternion component로 전환하고 중간 Euler 변환을 제거한다.
+ * 현재 저장 형식이 Euler vec3이므로 RobotTransformAdapter도 quaternion 계산 후 다시 Euler로 변환해 저장한다.
  */
 struct Rotation : public glm::vec3
 {
     using glm::vec3::vec3;
 
-    /** @brief identity rotation에 해당하는 (0,0,0) rad로 초기화한다. */
     Rotation() : glm::vec3(0.0F) {}
-
-    /** @brief Euler radian vec3를 Rotation component로 복사한다. */
     Rotation(const glm::vec3& value) : glm::vec3(value) {}
 };
 
-/**
- * @brief Entity의 부모 기준 local scale을 저장하는 vec3 기반 ECS Component.
- *
- * @note Scale은 무차원 배율이다. (1,1,1)이 원본 크기이며 position의 meter 단위와 혼동하지 않는다.
- */
+/** @brief Entity의 local scale을 저장하는 vec3 기반 ECS Component. */
+/* Scale은 각 축의 크기 배율이며 물리 단위가 없다. (1,1,1)은 원래 크기 그대로라는 뜻이다. */
 struct Scale : public glm::vec3
 {
     using glm::vec3::vec3;
 
-    /** @brief 원본 크기 (1,1,1)로 초기화한다. */
     Scale() : glm::vec3(1.0F) {}
-
-    /** @brief 세 축에 같은 배율을 적용한다. */
     explicit Scale(float value) : glm::vec3(value) {}
-
-    /** @brief 축별 scale 값을 복사한다. */
     Scale(const glm::vec3& value) : glm::vec3(value) {}
 };
 
-/**
- * @brief Local 또는 World 변환 결과를 저장하는 4x4 homogeneous transform matrix.
- *
- * @details
- * `(TransformMatrix, Local)`은 `Translation * Rotation * Scale`,
- * `(TransformMatrix, World)`은 `ParentWorld * Local` 결과다.
- * column-major storage는 GLM/OpenGL convention을 따른다.
+/** @brief Local 또는 World 변환 결과를 저장하는 4x4 homogeneous transform matrix. */
+/*
+ * [추가 그래픽스 용어 설명]
+ * Homogeneous 4x4 Matrix는 3D Position/Rotation/Scale과 Translation을 하나의 행렬 곱으로 다루기 위한 표현이다.
+ * TransformSystem에서 Local = T * R * S, World = ParentWorld * Local 순서로 계산한다.
  */
 struct TransformMatrix : public glm::mat4
 {
     using glm::mat4::mat4;
 
-    /** @brief Identity transform으로 초기화한다. */
     TransformMatrix() : glm::mat4(1.0F) {}
-
-    /** @brief 기존 glm::mat4를 복사한다. */
     TransformMatrix(const glm::mat4& value) : glm::mat4(value) {}
 };
 
-/**
- * @brief Flecs pair의 값이 부모 Entity 기준 Local space임을 표시하는 tag.
- *
- * 예: `(Position, Local)`, `(Rotation, Local)`, `(TransformMatrix, Local)`.
- */
+/** @brief Flecs pair에서 부모 기준 Local 공간임을 나타내는 tag. */
+/* Local tag 자체는 값을 저장하지 않고 같은 Position/Rotation/Matrix 타입이 어느 공간 기준인지 구분한다. */
 struct Local
 {
 };
 
-/**
- * @brief Flecs pair의 값이 Scene hierarchy 기준 World space임을 표시하는 tag.
- *
- * 현재 주 사용 예는 `(TransformMatrix, World)`다.
- */
+/** @brief Flecs pair에서 Scene 전체 기준 World 공간임을 나타내는 tag. */
+/* World transform은 부모 hierarchy를 모두 누적한 최종 결과다. */
 struct World
 {
 };
