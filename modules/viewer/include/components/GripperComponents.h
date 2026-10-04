@@ -1,29 +1,45 @@
 #pragma once
 
 /**
- * @brief Viewer/ECS에서 사용하는 간단한 논리적 gripper 개방 상태 Component.
+ * @file GripperComponents.h
+ * @brief Viewer/ECS에서 gripper 관련 Entity를 표시하기 위한 보조 Component.
  *
  * @details
- * 현재 `openness`는 legacy/viewer-side 상태 표현이며 Robotiq 2F-85의 실제 rPR(0..255),
- * fingertip opening [m], master linkage angle [rad] 중 어느 하나로 공식 정의된 값이 아니다.
- * 따라서 robotics controller의 source of truth로 사용하면 안 된다.
+ * 용어:
+ * - Gripper: 물체를 잡기 위해 열리고 닫히는 말단장치.
+ * - Finger: 물체에 직접 닿는 좌/우 손가락 부품.
+ * - Mirrored motion: 좌우 손가락이 거울처럼 반대 방향으로 움직이는 관계.
+ * - Grabbable: 나중에 collision/grasp 대상이 될 수 있다고 표시된 물체.
  *
- * 향후 SimGripperController가 도입되면 Controller의 GripperState/2F-85 model specification을 기준으로
- * Viewer가 필요한 표시 상태만 파생하거나 이 Component 자체를 제거하는 것이 적절하다.
+ * 아래 값들은 현재 Viewer 쪽 legacy 표현이며, 실제 2F-85 Controller 모델의 source of truth가 아니다.
+ */
+
+/**
+ * @brief Viewer에서 gripper가 얼마나 열려 있는지 간단히 표현하던 legacy Component.
+ *
+ * @details
+ * `openness`는 현재 물리적으로 정의된 공식 값이 아니다.
+ * 즉 다음 중 어느 것과도 1:1로 동일하다고 가정하면 안 된다.
+ * - Robotiq rPR 0..255
+ * - fingertip opening [m/mm]
+ * - master linkage angle [rad]
+ *
+ * 향후 SimGripperController가 들어오면 Controller state에서 Viewer 표시값을 파생하거나
+ * 이 Component를 제거하는 방향이 적절하다.
  */
 struct Gripper
 {
-    /** @brief 현재 legacy normalized openness 값. 물리 단위/범위가 아직 고정되지 않았으므로 제어 입력으로 사용하지 않는다. */
+    /** @brief legacy normalized openness 값. 공식 물리 단위/범위가 고정되지 않았으므로 제어 입력으로 사용하지 않는다. */
     float openness = 0.0F;
 };
 
 /**
- * @brief 좌/우 또는 mirrored gripper part의 방향 부호를 표시하는 legacy 보조 Component.
+ * @brief 좌/우 finger가 서로 반대 방향으로 움직이는 부호 관계를 표현하던 legacy 보조 Component.
  *
  * @details
- * `direction=+1/-1`처럼 대칭 움직임의 부호를 표현하기 위한 값이다.
- * controller-ready 2F-85 모델의 실제 linkage 관계는 robotics::models::robotiq::kTwoF85Joints의
- * masterMultiplier가 source of truth다.
+ * 예를 들어 direction=+1/-1을 사용하면 같은 입력값으로 좌우가 반대 방향으로 움직이게 만들 수 있다.
+ * 현재 controller-ready 2F-85의 실제 free-space linkage 관계는
+ * `robotics::models::robotiq::kTwoF85Joints`의 `masterMultiplier`가 기준이다.
  */
 struct GripperFinger
 {
@@ -32,9 +48,11 @@ struct GripperFinger
 };
 
 /**
- * @brief 이 Entity가 향후 grasp/collision 대상이 될 수 있음을 표시하는 값 없는 ECS tag.
+ * @brief 이 Entity가 향후 물리 충돌/파지 대상이 될 수 있음을 표시하는 값 없는 ECS tag.
  *
- * @note 실제 파지 판정이나 attach/detach physics 로직을 수행하는 Component는 아니다.
+ * @details
+ * Tag는 데이터를 저장하지 않고 "이 Entity는 이런 성격을 가진다"는 표식 역할만 한다.
+ * 실제 collision detection, grasp 판정, attach/detach는 Physics 계층에서 구현해야 한다.
  */
 struct Grabbable
 {
