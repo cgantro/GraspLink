@@ -1,4 +1,7 @@
-#pragma once
+﻿#pragma once
+
+#include "PhysicsTypes.h"
+#include "robotics/runtime/FixedControlLoop.h"
 
 #include <flecs.h>
 #include <memory>
@@ -9,6 +12,13 @@ class Camera;
 class OrbitCameraController;
 class SceneManager;
 class AssetManager;
+class PhysicsSyncSystem;
+class Entity;
+
+namespace grasplink::physics
+{
+class PhysicsWorld;
+}
 
 namespace grasplink::robotics
 {
@@ -20,71 +30,86 @@ namespace grasplink::viewer::robotics
 class RobotTransformAdapter;
 }
 
-/**
- * @brief Viewer 실행 객체를 조립하고 전체 생명주기를 관리하는 Composition Root.
- */
 /*
- * [추가 구조/용어 설명]
- * - Composition Root: 프로그램 시작 지점에서 실제 구현 객체를 만들고 서로 연결하는 장소.
- * - Lifetime: 객체가 생성되어 사용되고 파괴될 때까지의 수명.
- * - Dependency: 어떤 객체가 동작하기 위해 다른 객체를 필요로 하는 관계.
- * - ECS World: Flecs의 Entity/Component/System 전체를 보관하는 컨테이너.
+ * Viewer 실행에 필요한 객체를 생성하고 서로 연결한다.
  *
- * 현재 주요 흐름:
- * Window/Input -> OrbitCameraController -> Camera
- * GLB -> GltfLoader -> AssetManager/PrefabFactory -> Flecs Entity
- * Sim/Hardware IRobotController -> RobotState -> RobotTransformAdapter -> Flecs Transform
- * Flecs RenderSystem -> Renderer -> OpenGL
+ * 주요 흐름:
  *
- * ViewerApp 자체가 FK/IK, robot limit, OpenGL shader 수학을 직접 구현하는 것이 아니라
- * 각 책임 객체를 올바른 순서로 생성하고 연결하는 역할을 한다.
+ * Window/Input -> Camera
+ * GLB -> Flecs Entity
+ * RobotController -> RobotTransformAdapter -> Flecs Transform
+ * PhysicsWorld -> PhysicsSyncSystem -> Flecs Transform
+ * Flecs -> Renderer -> OpenGL
+ *
+ * ViewerApp은 각 기능을 직접 구현하지 않고
+ * Runtime 객체의 생성, 연결, 실행 순서를 관리한다.
  */
 class ViewerApp
 {
 public:
-    /** @brief 아직 runtime 자원을 만들지 않은 application 객체를 생성한다. */
     ViewerApp();
-
-    /** @brief Shutdown을 통해 소유 자원을 의존성 역순으로 정리한다. */
     ~ViewerApp();
 
-    /** @brief Init 후 Window가 닫힐 때까지 MainLoop를 실행한다. 정상 종료 시 0을 반환한다. */
     int Run();
 
 private:
-    /** @brief Window/OpenGL/ECS/Scene/Asset/Robot Controller/Adapter를 생성하고 연결한다. */
+    // 전체 초기화 순서를 관리한다.
     bool Init();
 
-    /** @brief 입력, 제어 상태, ECS, 렌더링을 frame마다 갱신한다. */
+    // Window, Renderer, Camera, ECS, Scene 기본 객체를 준비한다.
+    bool InitViewer();
+
+    // Robot과 바닥 GLB를 Scene에 생성하고 Robot Root를 반환한다.
+    Entity InitScene();
+
+    // Simulation Robot Controller와 GLB Robot을 연결한다.
+    bool InitRobot(const Entity& robotRoot);
+
+    // Jolt Physics World와 테스트 Body를 생성한다.
+    void InitPhysics();
+
+    // 입력, Simulation, ECS, Rendering을 반복 실행한다.
     void MainLoop();
 
-    /** @brief 참조 관계가 남지 않도록 상위 객체부터 역순으로 자원을 정리한다. */
+    // 생성한 Runtime 객체를 안전한 순서로 정리한다.
     void Shutdown();
 
-    // GLFW Window와 OpenGL Context owner.
+    // GLFW Window와 OpenGL Context.
     std::unique_ptr<Window> m_Window;
 
-    // 실제 OpenGL frame/draw pass를 수행하는 Renderer owner.
+    // OpenGL Rendering 담당.
     std::unique_ptr<Renderer> m_Renderer;
 
-    // View/Projection 상태 owner.
+    // View / Projection 상태.
     std::unique_ptr<Camera> m_Camera;
 
-    // Mouse 입력을 Orbit/Pan/Zoom camera 조작으로 변환하는 객체 owner.
+    // Mouse 입력을 Camera 이동으로 변환한다.
     std::unique_ptr<OrbitCameraController> m_CameraController;
 
-    // 현재/다음 Scene의 lifetime owner.
+    // Scene 생성과 수명 관리.
     std::unique_ptr<SceneManager> m_SceneManager;
 
-    // GPU Mesh/Material/Texture cache owner.
+    // Mesh / Material / Texture GPU Resource 관리.
     std::unique_ptr<AssetManager> m_AssetManager;
 
-    // 현재 선택된 robot backend owner. 인터페이스로 보관해 Simulation/Hardware 교체가 가능하다.
+    // 모든 Flecs Entity / Component / System을 소유한다.
+    flecs::world m_World;
+
+    // 현재 사용하는 Robot Backend.
     std::unique_ptr<grasplink::robotics::IRobotController> m_RobotController;
 
-    // RobotState 관절각을 GLB/Flecs Joint Local Rotation으로 표시하는 viewer adapter owner.
+    // RobotState 관절각을 GLB Joint Transform에 적용한다.
     std::unique_ptr<grasplink::viewer::robotics::RobotTransformAdapter> m_RobotTransformAdapter;
 
-    // 모든 Flecs Entity/Component/System을 소유하는 ECS World.
-    flecs::world m_World;
+    // Robot과 Physics를 Rendering FPS와 관계없이 일정한 dt로 실행한다.
+    grasplink::robotics::runtime::FixedControlLoop m_ControlLoop;
+
+    // Jolt Physics World.
+    std::unique_ptr<grasplink::physics::PhysicsWorld> m_PhysicsWorld;
+
+    // Physics Body Transform을 Flecs Entity Transform에 반영한다.
+    std::unique_ptr<PhysicsSyncSystem> m_PhysicsSyncSystem;
+
+    // 현재 낙하 테스트용 Dynamic Box.
+    grasplink::physics::PhysicsBodyHandle m_DebugBoxBody;
 };

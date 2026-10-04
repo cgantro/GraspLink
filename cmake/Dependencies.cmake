@@ -100,3 +100,41 @@ function(grasplink_add_graphics_library)
   )
   target_compile_definitions(grasplink_graphics PUBLIC GLFW_INCLUDE_NONE)
 endfunction()
+
+
+function(grasplink_add_physics_dependencies)
+
+  # Jolt의 기본값은 MSVC에서 Static Runtime(/MT, /MTd)을 사용한다.
+  #
+  # GraspLink는 기본 MSVC Dynamic Runtime(/MD, /MDd)을 사용하므로
+  # Jolt도 같은 Runtime Library를 사용하도록 Static Runtime을 끈다.
+  #
+  # Debug:
+  #   GraspLink -> /MDd
+  #   Jolt      -> /MDd
+  #
+  # Release:
+  #   GraspLink -> /MD
+  #   Jolt      -> /MD
+  #
+  # FORCE를 사용하는 이유:
+  # 이전 CMake configure에서 ON 값이 Cache에 남아 있을 수 있기 때문이다.
+  set(
+    USE_STATIC_MSVC_RUNTIME_LIBRARY
+    OFF
+    CACHE BOOL
+    "Use the static MSVC runtime library"
+    FORCE
+  )
+
+  FetchContent_Declare(
+    JoltPhysics
+    GIT_REPOSITORY https://github.com/jrouwe/JoltPhysics.git
+    GIT_TAG v5.6.0
+    GIT_SHALLOW TRUE
+    SOURCE_SUBDIR Build
+  )
+
+  FetchContent_MakeAvailable(JoltPhysics)
+
+endfunction()
