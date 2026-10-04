@@ -21,6 +21,18 @@ struct ModelResource;
  *
  * @todo [FUTURE] 동일 모델을 여러 번 생성할 때 이름 충돌을 피할 instance namespace/prefix를 지원한다.
  */
+/*
+ * [추가 그래픽스/ECS 용어 설명]
+ * - Prefab: 같은 ModelResource에서 반복해서 Scene 객체를 만들 수 있게 하는 생성용 원본 개념.
+ * - Factory: 복잡한 객체 생성 절차를 한 곳에 모아 호출자가 세부 과정을 몰라도 되게 하는 객체/함수.
+ * - ECS(Entity Component System): Entity에 작은 데이터 Component를 붙이고 System이 해당 조합을 처리하는 구조.
+ * - Flecs: 이 프로젝트에서 사용하는 ECS library.
+ * - Entity Hierarchy: Parent/Child 관계로 연결된 Entity tree. GLB Node hierarchy를 그대로 표현하는 데 사용한다.
+ * - Transform-only Node: Mesh 없이 위치/회전/부모자식 구조만 가진 Node. Robot Joint pivot에 중요하다.
+ * - SubMesh: 하나의 GPU Mesh 안에서 특정 Material/Index 범위만 따로 그리는 하위 단위.
+ *
+ * PrefabFactory는 GLB를 다시 읽지 않는다. 이미 GltfLoader가 만든 ModelResource를 Scene/Flecs 표현으로 옮기는 역할만 한다.
+ */
 class PrefabFactory final
 {
 public:

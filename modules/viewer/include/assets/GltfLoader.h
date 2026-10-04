@@ -21,6 +21,20 @@
  * @todo [FUTURE] 현재 지원 범위를 넘어 multi-root scene, 더 다양한 accessor format,
  *       전체 PBR texture/sampler semantics가 필요해지면 이 계층에서 확장한다.
  */
+/*
+ * [추가 그래픽스 용어 설명]
+ * - glTF: 3D Mesh/Material/Texture/Node/Animation 등을 교환하기 위한 표준 3D 포맷.
+ * - GLB: glTF의 JSON과 binary 데이터를 하나의 binary 파일에 묶은 형식.
+ * - TinyGLTF: glTF/GLB 파일 구조를 읽기 위해 사용하는 외부 C++ library.
+ * - Loader: 파일 포맷을 읽어 프로그램 내부 데이터 구조로 바꾸는 계층.
+ * - Node Hierarchy: 부모/자식 Node 관계. Robot Joint처럼 Mesh가 없는 transform-only Node도 포함된다.
+ * - Primitive: 하나의 Material과 draw 방식으로 그릴 수 있는 Mesh의 하위 렌더링 단위.
+ * - Accessor: glTF에서 buffer의 어느 위치/형식으로 Vertex/Index 값을 읽을지 설명하는 메타데이터.
+ * - IR(Intermediate Representation): 파일 포맷과 GPU/ECS 사이에서 사용하는 중간 데이터 표현. 여기서는 ModelResource.
+ *
+ * 이 Loader는 asset 숫자의 물리 단위를 임의로 바꾸지 않는다.
+ * 현재 controller-ready HCR GLB가 meter로 정규화되어 있으므로 그 파일의 translation/vertex 값이 [m]인 것은 asset contract 때문이다.
+ */
 class GltfLoader final
 {
 public:

@@ -22,6 +22,18 @@ class SceneManager;
  *
  * @todo [FUTURE] Robot/Target/Physics 환경을 생성하는 SimulationScene을 별도 파생 클래스로 추가한다.
  */
+/*
+ * [추가 ECS/그래픽스 용어 설명]
+ * - Scene: 한 화면/시뮬레이션 공간에서 함께 존재하는 Entity 집합과 그 lifetime 경계.
+ * - Entity: 객체를 식별하는 ECS handle. 실제 데이터는 Component에 저장된다.
+ * - Component: Position, MeshFilter처럼 Entity에 붙는 작은 데이터 단위.
+ * - System: 특정 Component 조합을 가진 Entity들을 찾아 계산하는 로직.
+ * - Flecs World: 모든 Entity/Component/System을 보관하고 실행하는 ECS 전체 컨테이너.
+ * - Hierarchy: Parent/Child 관계로 연결된 tree 구조.
+ * - SceneRoot: Scene 전체를 한 번에 정리하기 위해 모든 Scene Entity가 매달리는 lifetime용 root.
+ *
+ * SceneRoot는 HCR RobotRoot처럼 공간상 로봇의 root라는 뜻이 아니라 Scene lifetime을 묶기 위한 상위 Entity다.
+ */
 class Scene
 {
 public:
