@@ -89,10 +89,11 @@ fixed dt
 ...
 ```
 
-5. **Physics Base Integration**
-   - Fixed Control Loop 다음에 Jolt Physics 최소 기반을 먼저 통합
-   - 이 단계에서는 Robot/Gripper 물리를 완성하지 않는다.
-   - Jolt가 프로젝트 구조 안에서 정상 동작하는 것부터 확인한다.
+5. **Physics Base Integration — implemented**
+   - `modules/physics`는 Jolt 초기화와 Body 생성·삭제·step만 담당한다.
+   - Viewer ECS integration은 Entity 설정 컴포넌트를 읽어 Body를 생성하고 수명을 연결한다.
+   - Render FPS와 독립적인 fixed step에서 Kinematic 입력과 Dynamic 결과 반영을 처리한다.
+   - SceneRoot 아래 Entity는 World pose를 부모 역행렬로 Local Transform에 되돌린다.
 
 최소 구현 범위:
 
@@ -103,7 +104,9 @@ Static Floor
 Dynamic Box
 Collision
 Fixed Physics Step
-Physics Transform -> Flecs Transform
+Flecs Entity physics config -> Jolt Body
+Kinematic Entity Transform -> Physics
+Dynamic Physics World pose -> Entity Local Transform
 ```
 
 구조:
@@ -118,9 +121,8 @@ Flecs Transform
 Renderer
 ```
 
-Jolt 전용 API는 `modules/physics` 내부에 격리한다.
-
-Viewer나 Robotics Core에서 Jolt 타입에 직접 의존하지 않도록 한다.
+Jolt 전용 타입은 `modules/physics` 내부에 격리한다. Viewer integration에는 GLM과
+프로젝트의 `PhysicsBodyHandle`만 보이며 Jolt `BodyID`는 노출하지 않는다.
 
 6. **Robot Model / FK**
    - HCR-12A Joint State로부터 TCP Pose 계산
@@ -178,9 +180,9 @@ Joint Controller
 - Unreachable Target
 
 8. **Gripper Runtime Controller**
-   - `IGripperController`의 Simulation backend 구현
-   - Robotiq 2F-85 request를 runtime state로 변환
-   - Free-space에서는 mimic relation 사용
+   - `IGripperController` contract와 2F-85 specification은 준비됨
+   - request를 runtime state로 바꾸는 Simulation backend는 아직 구현하지 않음
+   - 이후 free-space mimic relation을 적용
    - contact 이후 under-actuated 동작은 여기서 처리하지 않는다.
 
 ```text
@@ -208,7 +210,9 @@ RightTip   = +q
 ```
 
 9. **Robot / Gripper Physics**
-   - 기본 Jolt integration 위에 실제 Robot/Gripper 물리 추가
+   - J1~J6에 Kinematic box collision proxy를 붙이는 기반은 구현됨
+   - proxy는 관절 hierarchy를 따라가지만 관절 제약이나 토크를 푸는 articulated dynamics는 아님
+   - Gripper collision과 실제 Robot/Gripper 물리는 다음 단계
 
 ```text
 Robot Link
@@ -277,16 +281,19 @@ Grasp State
 
 ```text
 Flecs Entity
-├─ Transform
+├─ Transform / Render Components
 ├─ RigidBody
-├─ Collider
-└─ PhysicsBodyHandle
-        │
-        ▼
-   Jolt BodyID
-        │
-        ▼
- Jolt PhysicsSystem
+└─ BoxCollider
+       │
+       ▼
+PhysicsSystemModule
+  - config observer / private runtime binding
+  - Local ↔ World 변환과 fixed-step 동기화
+       │
+       ▼
+PhysicsWorld
+  - PhysicsBodyHandle API
+  - Jolt 내부 구현
 ```
 
 역할:
@@ -295,14 +302,23 @@ Flecs Entity
 Flecs
 = Entity / ECS / Application State
 
-Jolt
-= Rigid Body / Collision / Constraint / Contact
+PhysicsWorld
+= Jolt lifetime / rigid body / collision / fixed step
+
+PhysicsSystemModule
+= Flecs component 해석 / Body 연결 / Transform 동기화
 
 Renderer
 = 결과 시각화
 ```
 
-Jolt 전용 API는 `modules/physics` 내부에 격리한다.
+두 계층은 기능 중복이 아니다. `PhysicsWorld`는 Flecs를 몰라야 하고, ViewerApp은 Body handle이나
+좌표 변환 세부사항을 직접 관리하지 않아야 한다. `PhysicsBodyBinding`은 Entity에 붙는 private
+runtime component이며 Entity나 물리 설정이 제거될 때 observer가 Jolt Body를 삭제한다.
+
+Collider 반 크기는 meter 단위이며 Entity scale을 자동 곱하지 않는다. Robot Link와 Dynamic Entity는 unit
+scale을 쓰고, Floor는 렌더 GLB scale과 독립된 collider 크기를 명시한다. Dynamic Entity의 parent가
+scale/shear를 가지는 경우는 아직 지원 범위가 아니다.
 
 ## 구현 순서
 
@@ -314,19 +330,22 @@ Jolt 전용 API는 `modules/physics` 내부에 격리한다.
                     ✅ 기본 구현
 
 3. Fixed Control Loop
-                    ← 현재 작업
+                    ✅ 250 Hz fixed step
 
 4. Jolt Physics 최소 기반
    - PhysicsWorld
    - Gravity
    - Floor
    - Dynamic Box
-   - Flecs Transform Sync
+   - ECS 설정 컴포넌트와 lifetime 연동
+   - Robot J1~J6 Kinematic collision proxy
+                    ✅ 기본 기반
 
 5. Robot Model / FK
    - Kinematic Chain
    - ToolFrame
    - FK 검증
+                    ← 다음 계산 기능
 
 6. IK / MoveLinear
 
@@ -334,17 +353,18 @@ Jolt 전용 API는 `modules/physics` 내부에 격리한다.
    - 2F-85 request
    - master q
    - free-space mimic
+                    ← contract/spec 준비, backend 미구현
 
 8. Robot / Gripper Physics
-   - Collider
+   - Gripper Collider
    - Constraint
-   - Contact
+   - Articulated dynamics
+                    ← 다음 물리 확장
 
-9. Grasp
-   - Under-actuated contact
-   - Attach
-   - Detach
-   - Pick & Place
+9. Physics / Grasp
+   - Contact와 under-actuated adaptation
+   - Attach / Detach / Release
+                    ← 미구현
 
 10. Safety
     - Watchdog

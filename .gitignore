@@ -43,6 +43,7 @@ _deps/
 *.user
 *.userosscache
 *.sln.docstates
+/docs/diary/
 
 # Operating system files
 .DS_Store

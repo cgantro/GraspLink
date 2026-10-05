@@ -187,10 +187,25 @@ mimic multiplier
 - `modules/viewer/include/graphics/Window.h`
   - 함수 parameter/return, pixel/byte/index/scene-unit, GPU ownership과 lifetime 의미를 점검/보강
 
+### Viewer - Physics / ECS Integration
+
+- `modules/physics/include/PhysicsTypes.h`, `PhysicsWorld.h`
+  - Jolt 경계, handle validity, World pose와 meter 단위 명시
+- `modules/viewer/include/components/PhysicsComponents.h`
+  - Motion Type의 상태 방향, collider 크기 단위와 Entity-local offset 명시
+- `modules/viewer/include/systems/PhysicsSystemModule.h`
+  - Flecs와 PhysicsWorld 사이의 책임 및 참조 lifetime 명시
+- `modules/viewer/src/systems/PhysicsSystemModule.cpp`
+  - Body 생성·삭제 방향, Kinematic 입력과 Dynamic 결과 흐름, World/Local 변환 이유 명시
+- `modules/viewer/include/scene/EntityFactory.h`
+  - Factory가 설정 Component만 붙이고 Jolt Body 생성은 시스템에 맡기는 경계 명시
+- `docs/PHYSICS_ECS_INTEGRATION.md`
+  - ownership, fixed-step 순서, 현재 지원 범위와 Gripper/Grasp 미구현 범위 기록
+
 ### Application
 
 - `apps/viewer/ViewerApp.h`
-  - Composition Root의 객체별 소유권, Controller -> Adapter -> ECS -> Renderer 흐름, 현재 variable frame dt와 향후 Fixed Control Loop 경계를 명시
+  - Composition Root의 객체별 소유권, Controller -> Adapter -> Physics -> ECS -> Renderer 흐름과 fixed timestep 경계를 명시
 
 ## 기존 구현부 주석 점검
 
@@ -199,7 +214,7 @@ mimic multiplier
 - `modules/viewer/src/assets/GltfLoader.cpp`
   - accessor byte/stride, glTF index type 정규화, quaternion 순서, matrix decomposition 설명 존재
 - `modules/viewer/src/systems/TransformSystemModule.cpp`
-  - `T * R * S`, `ParentWorld * Local` 계산 설명 존재
+  - 공유 Local 조립 함수의 `T * R * S`, system의 `ParentWorld * Local` 계산 설명 존재
 - `modules/viewer/src/graphics/Camera.cpp`
   - View matrix 의미, degree -> radian projection 변환 설명 존재
 - `modules/viewer/src/graphics/OrbitCameraController.cpp`

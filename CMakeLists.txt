@@ -110,9 +110,10 @@ if(GRASPLINK_BUILD_GRAPHICS)
 
     modules/viewer/src/systems/RenderSystemModule.cpp
     modules/viewer/src/systems/TransformSystemModule.cpp
-    modules/viewer/src/systems/PhysicsSyncSystem.cpp
+    modules/viewer/src/systems/PhysicsSystemModule.cpp
     modules/viewer/src/scene/Scene.cpp
     modules/viewer/src/scene/SceneManager.cpp
+    modules/viewer/src/scene/EntityFactory.cpp
 
     modules/viewer/src/assets/GltfLoader.cpp
     modules/viewer/src/assets/AssetManager.cpp
@@ -133,10 +134,11 @@ if(GRASPLINK_BUILD_GRAPHICS)
 
     modules/viewer/include/systems/RenderSystemModule.h
     modules/viewer/include/systems/TransformSystemModule.h
-    modules/viewer/include/systems/PhysicsSyncSystem.h
+    modules/viewer/include/systems/PhysicsSystemModule.h
 
     modules/viewer/include/scene/Scene.h
     modules/viewer/include/scene/SceneManager.h
+    modules/viewer/include/scene/EntityFactory.h
 
     modules/viewer/include/assets/GraphicsTypes.h
     modules/viewer/include/assets/ResourceID.h

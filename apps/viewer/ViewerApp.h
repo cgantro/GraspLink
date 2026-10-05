@@ -1,6 +1,5 @@
 ﻿#pragma once
 
-#include "PhysicsTypes.h"
 #include "robotics/runtime/FixedControlLoop.h"
 
 #include <flecs.h>
@@ -12,7 +11,7 @@ class Camera;
 class OrbitCameraController;
 class SceneManager;
 class AssetManager;
-class PhysicsSyncSystem;
+class PhysicsSystemModule;
 class Entity;
 
 namespace grasplink::physics
@@ -30,19 +29,11 @@ namespace grasplink::viewer::robotics
 class RobotTransformAdapter;
 }
 
-/*
- * Viewer 실행에 필요한 객체를 생성하고 서로 연결한다.
+/**
+ * @brief Viewer Runtime 객체의 생성·연결·종료 순서 관리
  *
- * 주요 흐름:
- *
- * Window/Input -> Camera
- * GLB -> Flecs Entity
- * RobotController -> RobotTransformAdapter -> Flecs Transform
- * PhysicsWorld -> PhysicsSyncSystem -> Flecs Transform
- * Flecs -> Renderer -> OpenGL
- *
- * ViewerApp은 각 기능을 직접 구현하지 않고
- * Runtime 객체의 생성, 연결, 실행 순서를 관리한다.
+ * 흐름: Window → Camera / GLB → Entity / Controller → Transform / Physics → Entity / Flecs → Renderer
+ * 역할: 세부 기능 구현 없이 객체 구성과 실행 순서만 담당
  */
 class ViewerApp
 {
@@ -53,63 +44,60 @@ public:
     int Run();
 
 private:
-    // 전체 초기화 순서를 관리한다.
+    // 전체 초기화 순서
     bool Init();
 
-    // Window, Renderer, Camera, ECS, Scene 기본 객체를 준비한다.
+    // Window·Renderer·Camera·ECS·Scene 준비
     bool InitViewer();
 
-    // Robot과 바닥 GLB를 Scene에 생성하고 Robot Root를 반환한다.
-    Entity InitScene();
+    // Robot·Floor GLB를 Scene Entity로 생성
+    void InitScene(Entity& robotRoot, Entity& floorEntity);
 
-    // Simulation Robot Controller와 GLB Robot을 연결한다.
+    // Simulation Controller와 GLB Robot 연결
     bool InitRobot(const Entity& robotRoot);
 
-    // Jolt Physics World와 테스트 Body를 생성한다.
-    void InitPhysics();
+    // PhysicsWorld와 Floor·Robot 설정 연결
+    void InitPhysics(const Entity& robotRoot, Entity& floorEntity);
 
-    // 입력, Simulation, ECS, Rendering을 반복 실행한다.
+    // 입력·Simulation·ECS·Render 반복
     void MainLoop();
 
-    // 생성한 Runtime 객체를 안전한 순서로 정리한다.
+    // 참조 관계에 맞춰 Runtime 객체 정리
     void Shutdown();
 
-    // GLFW Window와 OpenGL Context.
+    // GLFW Window·OpenGL Context 소유
     std::unique_ptr<Window> m_Window;
 
-    // OpenGL Rendering 담당.
+    // OpenGL Render 담당
     std::unique_ptr<Renderer> m_Renderer;
 
-    // View / Projection 상태.
+    // View·Projection 행렬 관리
     std::unique_ptr<Camera> m_Camera;
 
-    // Mouse 입력을 Camera 이동으로 변환한다.
+    // Mouse 입력 → Camera 조작
     std::unique_ptr<OrbitCameraController> m_CameraController;
 
-    // Scene 생성과 수명 관리.
+    // Scene 생성·수명 관리
     std::unique_ptr<SceneManager> m_SceneManager;
 
-    // Mesh / Material / Texture GPU Resource 관리.
+    // GPU Mesh·Material·Texture 관리
     std::unique_ptr<AssetManager> m_AssetManager;
 
-    // 모든 Flecs Entity / Component / System을 소유한다.
+    // Flecs Entity·Component·System 소유
     flecs::world m_World;
 
-    // 현재 사용하는 Robot Backend.
+    // Robot 제어 Backend
     std::unique_ptr<grasplink::robotics::IRobotController> m_RobotController;
 
-    // RobotState 관절각을 GLB Joint Transform에 적용한다.
+    // RobotState 관절각 → GLB Joint 회전
     std::unique_ptr<grasplink::viewer::robotics::RobotTransformAdapter> m_RobotTransformAdapter;
 
-    // Robot과 Physics를 Rendering FPS와 관계없이 일정한 dt로 실행한다.
+    // Robot·Physics 고정 시간 업데이트
     grasplink::robotics::runtime::FixedControlLoop m_ControlLoop;
 
-    // Jolt Physics World.
+    // Jolt World 소유
     std::unique_ptr<grasplink::physics::PhysicsWorld> m_PhysicsWorld;
 
-    // Physics Body Transform을 Flecs Entity Transform에 반영한다.
-    std::unique_ptr<PhysicsSyncSystem> m_PhysicsSyncSystem;
-
-    // 현재 낙하 테스트용 Dynamic Box.
-    grasplink::physics::PhysicsBodyHandle m_DebugBoxBody;
+    // Flecs 물리 설정과 Jolt 연결·고정 Step 실행
+    std::unique_ptr<PhysicsSystemModule> m_PhysicsSystemModule;
 };

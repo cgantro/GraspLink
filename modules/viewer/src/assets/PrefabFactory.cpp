@@ -18,19 +18,19 @@
 namespace
 {
 /**
- * @brief SubMesh의 material index를 실제 runtime Material로 해석한다.
- * @param model MaterialData 배열을 가진 CPU-side model.
- * @param assets GPU Material cache를 가진 AssetManager.
- * @param materialIndex ModelResource::materials index. -1이면 fallback material을 뜻한다.
- * @return SubMesh를 그릴 runtime Material.
- * @throws std::runtime_error 범위를 벗어난 material index 또는 아직 업로드되지 않은 Material인 경우.
+ * @brief SubMesh 재질 조회
+ * @param model MaterialData를 가진 CPU 모델
+ * @param assets GPU Material 저장소
+ * @param materialIndex 재질 번호. -1이면 기본 재질
+ * @return SubMesh에 연결할 Material
+ * @throws std::runtime_error 번호가 범위를 벗어나거나 GPU 업로드가 안 된 경우
  */
 std::shared_ptr<Material> ResolveMaterial(
     const ModelResource& model,
     const AssetManager& assets,
     int materialIndex)
 {
-    // glTF에서 material=-1은 "Material 미지정"이므로 fallback을 사용한다.
+    // glTF 재질 없음 (-1): 기본 Material 사용
     if (materialIndex < 0) return assets.GetDefaultMaterial();
 
     if (materialIndex >= static_cast<int>(model.materials.size()))
@@ -47,23 +47,11 @@ std::shared_ptr<Material> ResolveMaterial(
 }
 
 /**
- * @brief 하나의 공간 Node 아래에 SubMesh별 Render Entity를 만든다.
+ * @brief Node 아래에 Render Entity 연결
  *
- * @details
- * glTF Mesh 하나는 서로 다른 Material을 가진 여러 Primitive를 포함할 수 있다.
- * 현재 ECS의 MeshRenderer는 하나의 Material만 가지므로 Primitive마다 별도 Render Entity를 만들고,
- * 모든 Render Entity를 원본 Node의 child로 둔다. Render Entity의 Local Transform은 identity이므로
- * 부모 Node의 World Transform을 그대로 상속한다.
- *
- * @param scene Render Entity를 생성할 Scene.
- * @param model CPU-side ModelResource.
- * @param assets GPU Mesh/Material cache.
- * @param shader Primitive를 그릴 공통 Shader.
- * @param node 현재 공간 Node 데이터.
- * @param nodeIndex ModelResource::nodes에서의 index. 이름 충돌 방지를 위해 render entity 이름에 사용한다.
- * @param nodeEntity 현재 공간 Node에 대응하는 Flecs Entity.
- *
- * @todo [FUTURE] 인스턴스 namespace가 도입되면 render entity 이름 조합 정책을 별도 helper로 분리한다.
+ * Mesh 하나에 여러 Primitive·Material 가능
+ * MeshRenderer는 Material 하나만 사용 → Primitive마다 Render Entity 생성
+ * 생성한 Entity는 Node의 자식 → 부모 Transform 상속
  */
 void CreateRenderEntities(
     Scene& scene,
@@ -72,9 +60,10 @@ void CreateRenderEntities(
     const std::shared_ptr<Shader>& shader,
     const NodeData& node,
     std::size_t nodeIndex,
-    Entity& nodeEntity)
+    Entity& nodeEntity,
+    bool renderSinglePrimitiveOnNode)
 {
-    // Mesh가 없는 Joint/Transform-only Node도 hierarchy에는 반드시 남겨야 한다.
+    // Mesh 없는 Node도 유지: 로봇 Joint pivot 보존
     if (node.meshIndex < 0) return;
 
     if (node.meshIndex >= static_cast<int>(model.meshes.size()))
@@ -83,6 +72,18 @@ void CreateRenderEntities(
     const MeshData& meshData = model.meshes[static_cast<std::size_t>(node.meshIndex)];
     if (!meshData.gpuMesh)
         throw std::runtime_error("Mesh has not been uploaded: " + meshData.name);
+
+    if (renderSinglePrimitiveOnNode && meshData.subMeshes.size() == 1)
+    {
+        const SubMeshInfo& subMesh = meshData.subMeshes.front();
+        nodeEntity
+            .set<MeshFilter>(MeshFilter{meshData.gpuMesh, subMesh.indexStart, subMesh.indexCount})
+            .set<MeshRenderer>(MeshRenderer{
+                shader,
+                ResolveMaterial(model, assets, subMesh.defaultMaterialIndex),
+                true});
+        return;
+    }
 
     for (std::size_t primitiveIndex = 0;
          primitiveIndex < meshData.subMeshes.size();
@@ -118,7 +119,8 @@ Entity PrefabFactory::CreateModel(
     Scene& scene,
     const ModelResource& model,
     const AssetManager& assets,
-    const std::shared_ptr<Shader>& shader)
+    const std::shared_ptr<Shader>& shader,
+    bool renderSinglePrimitiveOnNode)
 {
     if (!shader)
         throw std::runtime_error("PrefabFactory requires a shader");
@@ -132,17 +134,10 @@ Entity PrefabFactory::CreateModel(
         throw std::runtime_error("Model has invalid root node");
     }
 
-    /*
-        NodeData index와 Flecs Entity index를 1:1로 대응시킨다.
-
-        model.nodes[3] = J1
-        entities[3]    = J1 Entity
-
-        pointer tree를 따로 만들지 않아도 parentIndex로 hierarchy를 복원할 수 있다.
-    */
+    /* Node와 Entity의 같은 index 사용: parentIndex로 부모 복원 */
     std::vector<Entity> entities(model.nodes.size());
 
-    // 1) 모든 공간 Node를 먼저 만들고 GLB Local TRS를 복원한다.
+    // 1. 모든 Node 생성 + GLB Local 위치·회전·크기 복원
     for (std::size_t i = 0; i < model.nodes.size(); ++i)
     {
         const NodeData& node = model.nodes[i];
@@ -155,12 +150,12 @@ Entity PrefabFactory::CreateModel(
         entities[i] = entity;
     }
 
-    // 2) parentIndex를 이용해 ChildOf hierarchy를 복원한다.
+    // 2. parentIndex로 부모·자식 연결
     for (std::size_t i = 0; i < model.nodes.size(); ++i)
     {
         const NodeData& node = model.nodes[i];
 
-        // Root는 Scene::CreateEntity가 이미 SceneRoot 아래에 둔 상태다.
+        // Root: Scene::CreateEntity가 이미 SceneRoot에 연결
         if (node.parentIndex < 0) continue;
 
         if (node.parentIndex >= static_cast<int>(entities.size()))
@@ -170,7 +165,7 @@ Entity PrefabFactory::CreateModel(
             entities[static_cast<std::size_t>(node.parentIndex)]);
     }
 
-    // 3) Mesh가 있는 Node마다 Primitive 단위 Render Entity를 생성한다.
+    // 3. Mesh가 있는 Node에 Primitive별 Render Component 연결
     for (std::size_t i = 0; i < model.nodes.size(); ++i)
     {
         CreateRenderEntities(
@@ -180,7 +175,8 @@ Entity PrefabFactory::CreateModel(
             shader,
             model.nodes[i],
             i,
-            entities[i]);
+            entities[i],
+            renderSinglePrimitiveOnNode);
     }
 
     return entities[static_cast<std::size_t>(model.rootNodeIndex)];

@@ -343,3 +343,16 @@ Controller architecture:
 docs/ARCHITECTURE.md
 docs/CONTROLLER_INTERFACE.md
 ```
+
+## 13. 현재 Physics 구현 상태
+
+HCR-12A의 J1~J6 Entity에는 Kinematic Box Collider가 연결되어 있다. Controller가 만든 관절 Local
+Transform을 Physics integration이 World pose로 바꿔 Jolt에 전달하므로 링크 proxy가 환경 충돌에 참여할
+수 있다. 이 proxy는 관절 축 제약이나 모터 토크를 계산하지 않는다.
+
+2F-85에는 현재 `IGripperController` contract와 model specification, controller-ready GLB linkage 구조가
+있다. Simulation gripper controller와 gripper Collider는 아직 연결되지 않았으며, 물체 접촉·수동 linkage
+적응·grasp도 구현 범위 밖이다. `0.7929 rad`는 현재 GLB geometry 기준의 nominal closed master linkage
+angle이며 실제 motor shaft angle이나 접촉 후 finger 자세를 뜻하지 않는다.
+
+Physics/Flecs 설정, ownership, fixed-step 및 좌표 변환은 [`PHYSICS_ECS_INTEGRATION.md`](PHYSICS_ECS_INTEGRATION.md)에 정리한다.

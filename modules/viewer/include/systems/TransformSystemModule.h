@@ -1,41 +1,62 @@
 #pragma once
 
 #include <flecs.h>
+#include <glm/glm.hpp>
 
 /**
- * @brief Local TRS를 행렬로 만들고 부모 계층을 따라 World Transform을 계산하는 Flecs module.
+ * @brief Entity 변환 행렬 계산
  *
- * @details
- * Local Matrix = Translation * Rotation * Scale
- * World Matrix = Parent World * Local
+ * Local: 부모 기준 위치·회전·크기
+ * World: 모든 부모 변환을 반영한 Scene 기준 위치·회전·크기
+ * 예: 관절 회전 → 아래 링크의 World 위치·회전 변경
  *
- * 부모부터 자식 순서로 계산해야 하므로 World 계산 query는 Flecs cascade를 사용한다.
- *
- * @todo [FUTURE] 현재는 매 frame 전체 Transform을 다시 계산한다. Entity 수가 커지면
- *       변경된 Transform만 갱신하는 dirty/observer 방식으로 최적화할 수 있다.
- */
-/*
- * [추가 그래픽스/ECS 용어 설명]
- * - TRS: Translation(이동), Rotation(회전), Scale(크기)의 약자.
- * - Local Matrix: 부모 좌표계에서 이 Entity가 어디에 있고 어떻게 회전/확대됐는지 나타내는 행렬.
- * - World Matrix: 부모의 World Transform까지 모두 누적해 Scene 전체 기준으로 계산한 최종 행렬.
- * - Hierarchy: Parent/Child로 연결된 Transform tree.
- * - Cascade: 부모부터 자식 순서가 보장되도록 ECS query를 실행하는 방식.
- * - Dirty Flag: 값이 실제로 바뀐 Entity만 다시 계산하기 위해 변경 여부를 기록하는 표시.
- * - Observer: Component 변경 event를 감지해 추가 처리를 실행하는 ECS 기능.
- *
- * 예: Joint Entity의 Local Rotation이 바뀌면 그 아래 Link/J2/... 자식들의 World Matrix도 부모 행렬을 통해 함께 달라진다.
+ * Render: Flecs System이 행렬 갱신
+ * Physics: 고정 업데이트에서 최신 Local 값으로 World 행렬 계산
  */
 class TransformSystemModule
 {
 public:
-    /** @brief World에 Local/World Transform 계산 System을 등록한다. */
+    /**
+     * @brief Local·World 행렬 계산 System 등록
+     * @param world Entity와 Transform Component를 보관하는 Flecs World
+     */
     explicit TransformSystemModule(flecs::world& world);
 
+    /**
+     * @brief Local 위치·회전·크기를 행렬로 조합
+     * @param position 부모 기준 위치
+     * @param rotationRadians 부모 기준 Euler 회전 (라디안)
+     * @param scale 축별 크기 배율
+     * @return 이동·회전·크기 순서의 Local 행렬
+     *
+     * Render와 Physics에서 같은 계산 순서 사용
+     */
+    static glm::mat4 ComposeLocalMatrix(
+        const glm::vec3& position,
+        const glm::vec3& rotationRadians,
+        const glm::vec3& scale);
+
+    /**
+     * @brief Entity의 현재 Local 값으로 Local 행렬 계산
+     * @param entity 변환을 계산할 Entity
+     * @return Transform 값이 없거나 Entity가 사라진 경우 기본 행렬
+     */
+    static glm::mat4 CalculateLocalMatrix(flecs::entity entity);
+
+    /**
+     * @brief Entity와 모든 부모의 Local 값을 합쳐 World 행렬 계산
+     * @param entity World 행렬을 구할 Entity
+     * @return 부모 변환이 반영된 Scene 기준 행렬
+     *
+     * 이유: Fixed Update가 Render 행렬 갱신보다 먼저 실행될 수 있음
+     * 방법: 캐시 대신 현재 Local 값을 부모부터 다시 계산
+     */
+    static glm::mat4 CalculateWorldMatrix(flecs::entity entity);
+
 private:
-    /** @brief Transform 변경 감시 확장을 위한 등록 지점. 현재 구현은 no-op이다. */
+    // 매 프레임 전체 계산. 변경 감시자 미사용
     void RegisterObserver(flecs::world& world);
 
-    /** @brief Local matrix와 hierarchy 기반 World matrix 계산 System을 등록한다. */
+    // Local 행렬 System + 부모를 반영한 World 행렬 System 등록
     void RegisterSystem(flecs::world& world);
 };
