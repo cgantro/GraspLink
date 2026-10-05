@@ -85,6 +85,19 @@ target_link_libraries(grasplink_physics PUBLIC
   glm::glm
 )
 
+if(BUILD_TESTING)
+  add_executable(grasplink_physics_tests tests/PhysicsWorldTests.cpp)
+  target_link_libraries(grasplink_physics_tests PRIVATE grasplink_physics)
+  add_test(NAME PhysicsWorld COMMAND grasplink_physics_tests)
+
+  add_executable(grasplink_control_tests tests/ControlRuntimeTests.cpp)
+  target_link_libraries(grasplink_control_tests PRIVATE grasplink_robotics)
+  add_test(NAME ControlRuntime COMMAND grasplink_control_tests)
+
+  add_executable(grasplink_kinematics_tests tests/RobotKinematicsTests.cpp)
+  target_link_libraries(grasplink_kinematics_tests PRIVATE grasplink_robotics)
+  add_test(NAME RobotKinematics COMMAND grasplink_kinematics_tests)
+endif()
 
 # ============================================================
 # Graphics / Viewer
