@@ -211,7 +211,7 @@ const char* GripperObjectStatusName(grasplink::robotics::GripperObjectStatus sta
     using grasplink::robotics::GripperObjectStatus;
     switch (status)
     {
-    case GripperObjectStatus::Moving: return "Moving";
+    case GripperObjectStatus::Moving: return "No contact / target not reached";
     case GripperObjectStatus::ContactWhileOpening: return "Contact while opening";
     case GripperObjectStatus::ContactWhileClosing: return "Contact while closing";
     case GripperObjectStatus::AtRequestedPosition: return "At requested position";
@@ -339,7 +339,18 @@ struct GuiModule::Impl
     void DrawGripperPanel(grasplink::robotics::IGripperController& gripper)
     {
         using grasplink::robotics::GripperCommand;
+        ImGui::SetNextWindowPos(ImVec2(20, 160), ImGuiCond_FirstUseEver);
         ImGui::Begin("Gripper control");
+        const auto submitClosure = [&]()
+        {
+            GripperCommand command;
+            command.positionRequest = static_cast<std::uint8_t>(std::lround(
+                static_cast<double>(requestedClosurePercent) * 255.0 / 100.0));
+            command.speedRequest = static_cast<std::uint8_t>(requestedSpeed);
+            command.forceRequest = 128;
+            lastGripperResult = gripper.Command(command);
+            hasGripperResult = true;
+        };
         ImGui::Text("Connection: %s", gripper.IsConnected() ? "Connected" : "Disconnected");
 
         if (ImGui::Button("Activate"))
@@ -363,38 +374,20 @@ struct GuiModule::Impl
         if (ImGui::Button("Open"))
         {
             requestedClosurePercent = 0;
-            GripperCommand command;
-            command.positionRequest = 0;
-            command.speedRequest = static_cast<std::uint8_t>(requestedSpeed);
-            command.forceRequest = 128;
-            lastGripperResult = gripper.Command(command);
-            hasGripperResult = true;
+            submitClosure();
         }
         ImGui::SameLine();
         if (ImGui::Button("Close"))
         {
             requestedClosurePercent = 100;
-            GripperCommand command;
-            command.positionRequest = 255;
-            command.speedRequest = static_cast<std::uint8_t>(requestedSpeed);
-            command.forceRequest = 128;
-            lastGripperResult = gripper.Command(command);
-            hasGripperResult = true;
+            submitClosure();
         }
 
         ImGui::SliderInt("Requested closure (%)", &requestedClosurePercent, 0, 100);
         ImGui::SliderInt("Speed request (raw)", &requestedSpeed, 0, 255);
         ImGui::TextUnformatted("Force request: 128 (fixed; effect is not simulated)");
         if (ImGui::Button("Move to requested closure"))
-        {
-            GripperCommand command;
-            command.positionRequest = static_cast<std::uint8_t>(std::lround(
-                static_cast<double>(requestedClosurePercent) * 255.0 / 100.0));
-            command.speedRequest = static_cast<std::uint8_t>(requestedSpeed);
-            command.forceRequest = 128;
-            lastGripperResult = gripper.Command(command);
-            hasGripperResult = true;
-        }
+            submitClosure();
 
         const grasplink::robotics::GripperState state = gripper.GetState();
         if (state.valid)

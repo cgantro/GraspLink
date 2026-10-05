@@ -12,7 +12,7 @@ namespace grasplink::gui
 {
 
 /**
- * @brief ECS Collider 설정을 화면 위 선으로 표시하고 ImGui 입력 상태를 제공한다.
+ * @brief Collider 설정을 시각화하고 Gripper 조작·상태와 ImGui 입력을 제공한다.
  * @details
  * flecs::world, Window, Camera는 ViewerApp에서 빌린 참조이며 이 모듈이 소유하지 않는다. 따라서 query와
  * ImGui/OpenGL backend를 정리할 때 세 객체가 살아 있어야 한다. 선은 ECS Colliders 설정을 투영한 근사
