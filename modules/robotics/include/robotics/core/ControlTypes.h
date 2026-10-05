@@ -148,20 +148,40 @@ struct GripperCommand
 /** @brief Gripper backend가 분류한 물체 상태 code. */
 enum class GripperObjectStatus : std::uint8_t
 {
-    Moving = 0,              // 접촉 없이 요청 위치로 이동 중.
+    Moving = 0,              // 접촉·목표 도달 확인 없음. 실제 이동 여부는 mode와 goToActive로 확인한다.
     ContactWhileOpening = 1, // 열다가 물체에 닿아 정지.
     ContactWhileClosing = 2, // 닫다가 물체에 닿아 정지.
     AtRequestedPosition = 3  // 요청 위치에 도달.
 };
 
 /**
+ * @brief Gripper backend가 제공하는 논리 동작 상태.
+ * @details objectStatus는 접촉·목표 도달 분류이고 mode는 연결·활성화·이동·정지를 구분한다.
+ * 중간 위치에서 Stop한 상태를 목표 도달로 오인하지 않도록 Stopped를 별도로 둔다.
+ */
+enum class GripperMode : std::uint8_t
+{
+    Disconnected,
+    Inactive,
+    Idle,
+    Moving,
+    Stopped,
+    Fault
+};
+
+/**
  * @brief 한 시점의 Gripper 상태 복사본.
  * @details protocol 상태와 위치·전류 raw 값을 보존한다. actualPosition과 currentRaw는 SI 단위가
- * 아니다. valid가 false이면 feedback을 유효한 현재 상태로 간주하지 않는다. 접촉 판정, 보호 정지,
+ * 아니다. 선택적 closureFraction은 0=열림, 1=닫힘인 무차원 위치이며 raw 값과 별도로 유효성을 확인한다.
+ * 연속 위치를 지원하는 backend는 이를 제공해 raw 8-bit 반올림이 관절 움직임으로 전파되는 것을 피한다.
+ * valid가 false이면 feedback을 유효한 현재 상태로 간주하지 않는다. 접촉 판정, 보호 정지,
  * adaptive 또는 mimic 동작의 의미는 backend별로 정의된다.
  */
 struct GripperState
 {
+    /// 연결·활성화·동작의 논리 상태. raw objectStatus와 별개다.
+    GripperMode mode = GripperMode::Disconnected;
+
     /// backend 또는 장치가 보고한 activation 상태.
     bool activated = false;
 
@@ -185,6 +205,15 @@ struct GripperState
 
     /// 전류 feedback raw code.
     std::uint8_t currentRaw = 0;
+
+    /// currentRaw가 실제 제공된 전류 feedback인지 여부. Simulation은 전류를 계산하지 않는다.
+    bool currentValid = false;
+
+    /// 연속 개폐 위치 [0,1]. 0은 열린 기준, 1은 닫힌 기준이며 물리 거리·힘 단위가 아니다.
+    double closureFraction = 0.0;
+
+    /// closureFraction이 유한한 [0,1] 위치로 제공되었는지 여부.
+    bool closureFractionValid = false;
 
     /// 전체 snapshot의 유효성.
     bool valid = false;

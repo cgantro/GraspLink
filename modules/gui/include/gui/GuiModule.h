@@ -6,6 +6,7 @@
 
 class Camera;
 class Window;
+namespace grasplink::robotics { class IGripperController; }
 
 namespace grasplink::gui
 {
@@ -30,8 +31,11 @@ public:
      * @brief ImGui 패널과 설정 Collider 선을 현재 프레임에 그린다.
      * @details Collider 선과 투영 결과는 약 100 ms 간격으로 다시 계산해 캐시한다. Screen 좌표 캐시이므로
      * 그 사이 Camera가 움직여도 다음 갱신 전까지 선이 이전 위치에 남을 수 있고, 깊이 검사 없이 전경에 그린다.
+     * 선택적 Gripper 패널은 전달된 Controller에만 명령을 요청하고 상태를 표시한다. 포인터는 이 호출 동안만 빌리며 저장하지 않는다.
+     * 인자를 생략하면 기존 Collider 패널만 그린다.
+     * @param gripper 이번 프레임에 사용할 선택적 Gripper Controller. nullptr이면 Gripper 패널을 표시하지 않는다.
      */
-    void Draw();
+    void Draw(::grasplink::robotics::IGripperController* gripper = nullptr);
 
     /** @brief ImGui가 마우스를 잡고 있어 Camera 입력을 막아야 하는지 알려준다. */
     bool WantsMouse() const;

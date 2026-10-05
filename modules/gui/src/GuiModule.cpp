@@ -2,6 +2,7 @@
 
 #include "Camera.h"
 #include "Window.h"
+#include "robotics/core/IGripperController.h"
 #include "simulation/components/PhysicsComponents.h"
 #include "components/TransformComponents.h"
 
@@ -190,6 +191,50 @@ ImU32 LayerColor(grasplink::physics::CollisionLayer layer)
     return IM_COL32_WHITE;
 }
 
+const char* GripperModeName(grasplink::robotics::GripperMode mode)
+{
+    using grasplink::robotics::GripperMode;
+    switch (mode)
+    {
+    case GripperMode::Disconnected: return "Disconnected";
+    case GripperMode::Inactive: return "Inactive";
+    case GripperMode::Idle: return "Idle";
+    case GripperMode::Moving: return "Moving";
+    case GripperMode::Stopped: return "Stopped";
+    case GripperMode::Fault: return "Fault";
+    }
+    return "Unknown";
+}
+
+const char* GripperObjectStatusName(grasplink::robotics::GripperObjectStatus status)
+{
+    using grasplink::robotics::GripperObjectStatus;
+    switch (status)
+    {
+    case GripperObjectStatus::Moving: return "Moving";
+    case GripperObjectStatus::ContactWhileOpening: return "Contact while opening";
+    case GripperObjectStatus::ContactWhileClosing: return "Contact while closing";
+    case GripperObjectStatus::AtRequestedPosition: return "At requested position";
+    }
+    return "Unknown";
+}
+
+const char* ErrorCodeName(grasplink::robotics::ErrorCode code)
+{
+    using grasplink::robotics::ErrorCode;
+    switch (code)
+    {
+    case ErrorCode::None: return "Success";
+    case ErrorCode::NotConnected: return "Not connected";
+    case ErrorCode::InvalidCommand: return "Invalid command";
+    case ErrorCode::Busy: return "Busy";
+    case ErrorCode::Fault: return "Fault";
+    case ErrorCode::Unsupported: return "Unsupported";
+    case ErrorCode::TransportError: return "Transport error";
+    }
+    return "Unknown";
+}
+
 glm::mat4 AsMatrix(const TransformMatrix& matrix)
 {
     return static_cast<const glm::mat4&>(matrix);
@@ -219,6 +264,10 @@ struct GuiModule::Impl
     ImVec2 cachedDisplaySize{};
     bool visible = false;
     bool wasVisible = false;
+    int requestedClosurePercent = 0;
+    int requestedSpeed = 255;
+    bool hasGripperResult = false;
+    grasplink::robotics::Result lastGripperResult{};
 
     Impl(flecs::world& world, Window& window, Camera& cameraValue)
         : camera(cameraValue), colliderQuery(world.query_builder<
@@ -239,7 +288,7 @@ struct GuiModule::Impl
         ImGui::DestroyContext();
     }
 
-    void Draw()
+    void Draw(grasplink::robotics::IGripperController* gripper)
     {
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
@@ -251,6 +300,9 @@ struct GuiModule::Impl
         ImGui::TextUnformatted("ECS approximation; refresh: 100 ms");
         ImGui::TextUnformatted("X-ray: Robot orange, Gripper purple, Dynamic cyan, Floor green");
         ImGui::End();
+
+        if (gripper != nullptr)
+            DrawGripperPanel(*gripper);
 
         if (visible)
         {
@@ -282,6 +334,106 @@ struct GuiModule::Impl
     bool WantsMouse() const
     {
         return ImGui::GetIO().WantCaptureMouse;
+    }
+
+    void DrawGripperPanel(grasplink::robotics::IGripperController& gripper)
+    {
+        using grasplink::robotics::GripperCommand;
+        ImGui::Begin("Gripper control");
+        ImGui::Text("Connection: %s", gripper.IsConnected() ? "Connected" : "Disconnected");
+
+        if (ImGui::Button("Activate"))
+        {
+            lastGripperResult = gripper.Activate();
+            hasGripperResult = true;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Reset"))
+        {
+            lastGripperResult = gripper.Reset();
+            hasGripperResult = true;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Stop"))
+        {
+            lastGripperResult = gripper.Stop();
+            hasGripperResult = true;
+        }
+
+        if (ImGui::Button("Open"))
+        {
+            requestedClosurePercent = 0;
+            GripperCommand command;
+            command.positionRequest = 0;
+            command.speedRequest = static_cast<std::uint8_t>(requestedSpeed);
+            command.forceRequest = 128;
+            lastGripperResult = gripper.Command(command);
+            hasGripperResult = true;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Close"))
+        {
+            requestedClosurePercent = 100;
+            GripperCommand command;
+            command.positionRequest = 255;
+            command.speedRequest = static_cast<std::uint8_t>(requestedSpeed);
+            command.forceRequest = 128;
+            lastGripperResult = gripper.Command(command);
+            hasGripperResult = true;
+        }
+
+        ImGui::SliderInt("Requested closure (%)", &requestedClosurePercent, 0, 100);
+        ImGui::SliderInt("Speed request (raw)", &requestedSpeed, 0, 255);
+        ImGui::TextUnformatted("Force request: 128 (fixed; effect is not simulated)");
+        if (ImGui::Button("Move to requested closure"))
+        {
+            GripperCommand command;
+            command.positionRequest = static_cast<std::uint8_t>(std::lround(
+                static_cast<double>(requestedClosurePercent) * 255.0 / 100.0));
+            command.speedRequest = static_cast<std::uint8_t>(requestedSpeed);
+            command.forceRequest = 128;
+            lastGripperResult = gripper.Command(command);
+            hasGripperResult = true;
+        }
+
+        const grasplink::robotics::GripperState state = gripper.GetState();
+        if (state.valid)
+        {
+            ImGui::Text("Mode: %s", GripperModeName(state.mode));
+            ImGui::Text("Activated: %s", state.activated ? "Yes" : "No");
+            ImGui::Text("Actual position (raw): %u", static_cast<unsigned int>(state.actualPosition));
+            if (state.closureFractionValid && std::isfinite(state.closureFraction) &&
+                state.closureFraction >= 0.0 && state.closureFraction <= 1.0)
+                ImGui::Text("Actual closure: %.1f%%", state.closureFraction * 100.0);
+            else
+                ImGui::TextUnformatted("Actual closure: unavailable");
+            ImGui::Text("Object status: %s", GripperObjectStatusName(state.objectStatus));
+            if (state.currentValid)
+                ImGui::Text("Current (raw): %u", static_cast<unsigned int>(state.currentRaw));
+            else
+                ImGui::TextUnformatted("Current: unavailable");
+        }
+        else
+        {
+            ImGui::TextUnformatted("Gripper state: unavailable");
+            ImGui::TextUnformatted("Actual position: unavailable");
+            ImGui::TextUnformatted("Actual closure: unavailable");
+            ImGui::TextUnformatted("Object status: unavailable");
+            ImGui::TextUnformatted("Current: unavailable");
+        }
+
+        if (hasGripperResult)
+        {
+            ImGui::Text("Last result: %s", ErrorCodeName(lastGripperResult.code));
+            if (!lastGripperResult.message.empty())
+                ImGui::TextWrapped("%s", lastGripperResult.message.c_str());
+        }
+        else
+        {
+            ImGui::TextUnformatted("Last result: no command sent");
+        }
+        ImGui::TextWrapped("Free-space motion display only; contact response and grasping are not simulated.");
+        ImGui::End();
     }
 
     void RefreshCollisionLines()
@@ -324,9 +476,9 @@ GuiModule::GuiModule(flecs::world& world, Window& window, Camera& camera)
 
 GuiModule::~GuiModule() = default;
 
-void GuiModule::Draw()
+void GuiModule::Draw(::grasplink::robotics::IGripperController* gripper)
 {
-    m_Impl->Draw();
+    m_Impl->Draw(gripper);
 }
 
 bool GuiModule::WantsMouse() const

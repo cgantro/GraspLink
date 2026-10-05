@@ -23,12 +23,14 @@ class PhysicsWorld;
 namespace grasplink::robotics
 {
 class IRobotController;
-namespace kinematics { class RobotKinematics; }
+class IGripperController;
+namespace kinematics { class RobotKinematics; class GripperKinematics; }
 }
 
 namespace grasplink::viewer::robotics
 {
 class RobotTransformAdapter;
+class GripperTransformAdapter;
 }
 
 namespace grasplink::gui
@@ -82,8 +84,14 @@ private:
     // Controller 상태 → FK 결과 → 시각 Entity와 Kinematic collider Entity 연결을 구성한다.
     bool InitRobot(const Entity& robotRoot);
 
+    // Gripper의 연속 상태와 Local 회전 계산을 연결한다. 원본 GLB의 장착·관절 위치는 유지한다.
+    bool InitGripper(const Entity& robotRoot);
+
     // ECS 설정에서 Jolt Body를 만들고, 시각/물리 프록시의 첫 자세를 동기화한다.
     void InitPhysics(const Entity& robotRoot, Entity& floorEntity);
+
+    // 두 Controller snapshot에서 계산한 자세를 적용한다. World 행렬은 호출자가 이 뒤 갱신한다.
+    void ApplyControllerPoses();
 
     // 입력, 누적 Fixed Update, 렌더 프레임 처리를 서로 다른 주기로 반복한다.
     void MainLoop();
@@ -121,10 +129,15 @@ private:
     // Robot 제어 Backend
     std::unique_ptr<grasplink::robotics::IRobotController> m_RobotController;
 
+    // Gripper 개폐 위치의 기준 상태를 소유한다. GUI는 요청을 보내고 snapshot을 읽는다.
+    std::unique_ptr<grasplink::robotics::IGripperController> m_GripperController;
+
     // Adapter는 Scene Entity handle을 빌린다. Scene 정리 전에 파괴한다.
     std::unique_ptr<grasplink::robotics::kinematics::RobotKinematics> m_RobotKinematics;
     std::unique_ptr<grasplink::viewer::robotics::RobotTransformAdapter> m_RobotTransformAdapter;
     std::unique_ptr<grasplink::simulation::RobotPhysicsAdapter> m_RobotPhysicsAdapter;
+    std::unique_ptr<grasplink::robotics::kinematics::GripperKinematics> m_GripperKinematics;
+    std::unique_ptr<grasplink::viewer::robotics::GripperTransformAdapter> m_GripperTransformAdapter;
 
     // Robot·Physics 고정 시간 업데이트
     grasplink::robotics::runtime::FixedControlLoop m_ControlLoop;

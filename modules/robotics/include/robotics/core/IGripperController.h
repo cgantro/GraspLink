@@ -61,9 +61,10 @@ public:
 
     /**
      * @brief 현재 Gripper feedback snapshot을 값으로 반환한다.
-     * @return activation, 상태 분류, fault, raw 위치와 전류 복사본.
+     * @return activation, 동작 mode, 상태 분류, fault, raw 위치와 선택적 연속 위치·전류 복사본.
      * @details valid가 false이면 현재 유효 feedback으로 간주할 수 없다. raw 값은 mm, rad, N 등으로
-     * 변환되지 않으며 fault/contact code의 해석은 backend 계약에 따른다.
+     * 변환되지 않으며 fault/contact code의 해석은 backend 계약에 따른다. closureFraction과 currentRaw는
+     * 각각 closureFractionValid와 currentValid도 확인한다. Simulation의 자유공간 목표 도달은 파지 성공을 뜻하지 않는다.
      */
     [[nodiscard]] virtual GripperState GetState() const = 0;
 

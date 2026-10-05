@@ -1,0 +1,76 @@
+# 2F-85 자유공간 개폐 제어
+
+## 상태와 좌표의 기준
+
+개폐 위치의 기준은 `IGripperController::GetState()`가 제공하는 `GripperState`다.
+`closureFraction`은 무차원 연속 위치이며 0은 열린 기준, 1은 모델의 nominal closed 기준이다.
+`closureFractionValid`와 전체 `valid`를 함께 확인한다. raw 0..255 위치는 요청·표시용이고,
+연속 위치를 다시 8-bit로 반올림한 값을 관절 계산에 입력하지 않는다.
+
+`GripperMode`는 연결·활성화·이동·정지를 나타낸다. `objectStatus`는 접촉 또는 목표 도달의 분류다.
+중간 위치의 Stop은 `Stopped`, `goToActive=false`이며 도달하지 않은 목표를 도달했다고 보고하지 않는다.
+
+흐름은 다음과 같다.
+
+```text
+GUI 요청 -> IGripperController
+                |
+                v
+4 ms tick: Controller Update -> GripperState -> GripperKinematics
+                                                |
+                                                v
+                                  GripperTransformAdapter
+                                                |
+                                                v
+                     원본 GLB 관절 Local 회전 -> World 변환 갱신
+                                                |
+                                                v
+                          기존 7개 Kinematic 프록시 -> Jolt step
+```
+
+Robotics는 Flecs·GLM·Jolt를 참조하지 않는다. GUI는 Controller 인터페이스에 요청을 보내며
+Entity 자세를 직접 바꾸지 않는다. 앱이 Controller와 계산기의 수명, 고정 갱신 순서를 연결한다.
+
+## 분기형 기구와 GLB bind
+
+팔의 `RobotKinematics`는 직렬 체인의 base 기준 pivot을 누적한다. 그리퍼의 여섯 관절은 좌우 분기 구조이므로
+이를 그대로 재사용하지 않는다. `GripperKinematics`는 master 각도와 mimic 계수에서 각 관절의 Local 회전
+변화만 계산한다. 위치나 World 자세를 중복 생성하지 않는다.
+
+현재 모델에서 master 각도는 `closureFraction * nominalMasterClosedRadians`이며 관절각은
+`masterMultiplier * masterAngle`이다. 축은 관절 bind Local 기준이고 회전 형식은 모델의 [w,x,y,z]다.
+nominal closed 값과 raw 위치의 선형 관계는 자유공간 시뮬레이션 근사이며 실제 장치 보정식이 아니다.
+
+`GripperTransformAdapter`는 원본 Local 위치·크기를 보존하고 저장한 bind quaternion에 회전 변화를
+오른쪽으로 곱한다: `bindRotation * deltaRotation`. 매번 저장된 bind에서 시작해 반복 적용의 누적 오차를 막는다.
+Gripper root와 ToolFrame의 장착 변환도 그대로 둔다. root 기준 pivot을 중첩 관절의 Local 위치로 덮어쓰지 않는다.
+
+실제 `assets/HCR12A_2F-85.glb`의 Gripper 노드에는 비항등 `matrix`가 있다. TRS 필드가 없다는 이유로
+항등이라고 판단하면 안 된다. Tip 관절은 OuterKnuckle과 Finger 아래 중첩되어 있으며 부모 회전은
+기존 TransformSystem의 계층 전파로 적용한다.
+
+## Simulation backend 계약
+
+`SimGripperController(specification, settings={})`는 사양을 빌리고 설정을 값으로 보관한다.
+`SimGripperMotionSettings`의 기본 master 각속도 범위는 0.1..1.0 rad/s다.
+이 값은 프로젝트의 시뮬레이션 기본값이며 제조사 속도 사양으로 취급하지 않는다.
+raw speed는 사양의 최소..최대 범위를 위 각속도에 선형 대응한다. raw 0도 가장 느린 양의 속도로 움직인다.
+
+- Connect: 연결되지 않은 상태에서 열린 위치로 초기화하고 Inactive로 진입한다. 이미 연결되어 있으면 현재 상태를 보존한다.
+- Activate: 연결 상태에서 즉시 활성화한다. 이미 활성화되어 있으면 이동·위치를 유지한다.
+- Command: 활성화가 필요하다. 위치·속도·힘 raw 범위를 먼저 검사하고 유효 요청만 목표로 교체한다.
+- Update: 유한한 양의 dt에서 각속도 상한으로 연속 위치를 진행하고 목표에서 정확히 멈춘다.
+- Stop: 현재 위치를 유지하고 Stopped로 전환한다. 요청 echo는 마지막 수락한 요청을 유지한다.
+- Reset: 현재 위치를 유지하면서 이동을 중단하고 비활성화한다. 자동 열림 동작을 만들지 않는다.
+- Disconnect: snapshot 유효성을 해제한다. 다시 Connect하면 열린 상태에서 시작한다.
+
+forceRequest는 범위만 검사한다. 접촉력·전류 계산·물체 검출·접촉 시 정지·파지를 구현하지 않는다.
+`currentValid=false`이며 ContactWhileOpening/Closing을 만들어내지 않는다. 목표 도달은 자유공간에서
+요청한 기구학 위치를 계산했다는 뜻이고 실제 접촉 후 손가락 적응은 후속 물리 작업이다.
+
+## 검증
+
+CPU 회귀는 연결·활성화·raw 범위·속도·dt·목표 교체·정지·reset·재연결·상태 복사,
+모델 축·계수·한계와 회전 계산, invalid snapshot의 원자적 거부를 검증한다.
+실제 GLB 통합 회귀는 bind 유지, 좌우 mimic, 중첩 tip World 자세, 반복 적용, 장착부 이동,
+기존 7개 프록시의 수명과 움직임을 확인한다. 일반 Viewer와 물리 데모 숨김 실행도 유지한다.

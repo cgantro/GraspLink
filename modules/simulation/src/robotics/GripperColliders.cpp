@@ -226,7 +226,7 @@ void ConfigureTwoF85Colliders(Scene& scene, const Entity& robotRoot, const Model
     }
 
     // proxy를 authored body/joint 자식으로 두고 local pose를 항등으로 둔다. 관절 Local 변경이 계층에 전파된다.
-    // 현재는 원본 ECS joint hierarchy가 7개 part의 pose source다. Gripper backend나 별도 FK 계산은 연결되지 않았다.
+    // 앱이 GripperState에서 계산한 회전을 원본 관절에 적용하면 같은 계층의 7개 프록시도 움직인다.
     // Fixed Update가 World transform을 갱신한 다음 PhysicsSystemModule이 Kinematic 목표 자세를 동기화한다.
     for (Prepared& item : prepared)
     {

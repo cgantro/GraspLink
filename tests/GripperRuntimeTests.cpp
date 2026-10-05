@@ -1,0 +1,251 @@
+#include "robotics/backends/simulation/SimGripperController.h"
+#include "robotics/models/robotiq/TwoF85.h"
+#include "TestSupport.h"
+
+#include <cmath>
+#include <iostream>
+#include <limits>
+
+using namespace grasplink::robotics;
+using grasplink::robotics::backends::simulation::SimGripperController;
+using grasplink::robotics::backends::simulation::SimGripperMotionSettings;
+using grasplink::robotics::models::robotiq::kTwoF85;
+
+namespace
+{
+GripperCommand Request(std::uint8_t position, std::uint8_t speed = 255, std::uint8_t force = 128)
+{
+    return {position, speed, force};
+}
+
+void AdvanceTicks(SimGripperController& controller, int count, double dtSeconds)
+{
+    for (int i = 0; i < count; ++i)
+        controller.Update(dtSeconds);
+}
+
+void AdvanceToTarget(SimGripperController& controller)
+{
+    for (int i = 0; i < 3000 && controller.GetState().mode == GripperMode::Moving; ++i)
+        controller.Update(0.004);
+    Require(controller.GetState().mode == GripperMode::Idle, "target completes within fixed steps");
+}
+
+void RequireSnapshotEqual(const GripperState& left, const GripperState& right, const std::string& label)
+{
+    Require(left.mode == right.mode && left.activated == right.activated && left.goToActive == right.goToActive &&
+        left.objectStatus == right.objectStatus && left.requestedPositionEcho == right.requestedPositionEcho &&
+        left.actualPosition == right.actualPosition && left.currentRaw == right.currentRaw &&
+        left.currentValid == right.currentValid && left.closureFractionValid == right.closureFractionValid &&
+        left.valid == right.valid, label + ": flags and raw values unchanged");
+    RequireNear(left.closureFraction, right.closureFraction, 0.0, label + ": closure unchanged");
+}
+
+void CheckLifecycleAndCommands()
+{
+    SimGripperController controller(kTwoF85);
+    Require(controller.Command(Request(255)).code == ErrorCode::NotConnected, "command requires connection");
+    Require(controller.Activate().code == ErrorCode::NotConnected, "activation requires connection");
+
+    Require(static_cast<bool>(controller.Connect()), "connect");
+    auto state = controller.GetState();
+    Require(state.valid && state.closureFractionValid && state.mode == GripperMode::Inactive,
+        "connect exposes inactive valid snapshot");
+    Require(state.actualPosition == kTwoF85.positionRequestMin && state.closureFraction == 0.0,
+        "connect starts at the open raw endpoint");
+    Require(!state.currentValid && state.currentRaw == 0, "simulation does not invent current feedback");
+
+    Require(static_cast<bool>(controller.Connect()), "connect is idempotent");
+    Require(static_cast<bool>(controller.Activate()), "activate");
+    Require(controller.GetState().activated && controller.GetState().mode == GripperMode::Idle,
+        "activate enters idle");
+    Require(static_cast<bool>(controller.Activate()), "activation is idempotent");
+    Require(controller.Command(Request(255)).code == ErrorCode::Busy, "command requires activation");
+
+    Require(static_cast<bool>(controller.Command(Request(255, 0, 255))), "full close request accepted");
+    state = controller.GetState();
+    Require(state.mode == GripperMode::Moving && state.goToActive && state.objectStatus == GripperObjectStatus::Moving,
+        "accepted request starts free-space motion");
+    Require(state.requestedPositionEcho == 255 && state.closureFraction == 0.0,
+        "request echo is separate from current continuous position");
+    const GripperState beforeIdempotentActivate = controller.GetState();
+    Require(static_cast<bool>(controller.Activate()), "activate during movement succeeds");
+    RequireSnapshotEqual(beforeIdempotentActivate, controller.GetState(), "activate during movement preserves state");
+
+    AdvanceTicks(controller, 1, 0.004);
+    state = controller.GetState();
+    const double expectedMinimumSpeedStep = 0.1 * 0.004 / kTwoF85.nominalMasterClosedRadians;
+    RequireNear(state.closureFraction, expectedMinimumSpeedStep, 1e-15, "raw minimum maps to minimum positive speed");
+    Require(state.actualPosition == 0, "raw position is rounded only for the snapshot");
+    const GripperState copied = state;
+    AdvanceTicks(controller, 2, 0.004);
+    RequireNear(copied.closureFraction, expectedMinimumSpeedStep, 0.0, "snapshot is an independent value copy");
+
+    const auto beforeInvalid = controller.GetState();
+    Require(controller.Command(Request(255, 255, 0)).code == ErrorCode::InvalidCommand,
+        "force below model range rejected");
+    RequireSnapshotEqual(beforeInvalid, controller.GetState(), "invalid request is atomic");
+
+    // 속도 raw 최솟값과 최댓값의 차이는 시뮬레이션 설정 각속도 0.1..1.0 rad/s에 대응한다.
+    SimGripperController maximumSpeed(kTwoF85);
+    maximumSpeed.Connect();
+    maximumSpeed.Activate();
+    maximumSpeed.Command(Request(255, 255));
+    maximumSpeed.Update(0.004);
+    RequireNear(maximumSpeed.GetState().closureFraction,
+        1.0 * 0.004 / kTwoF85.nominalMasterClosedRadians, 1e-15, "raw maximum maps to maximum speed");
+
+    SimGripperController splitTicks(kTwoF85);
+    SimGripperController oneInterval(kTwoF85);
+    for (auto* item : {&splitTicks, &oneInterval})
+    {
+        item->Connect();
+        item->Activate();
+        item->Command(Request(255, 128));
+    }
+    AdvanceTicks(splitTicks, 10, 0.004);
+    oneInterval.Update(0.040);
+    RequireNear(splitTicks.GetState().closureFraction, oneInterval.GetState().closureFraction,
+        1e-14, "250 Hz partition and equivalent elapsed interval agree");
+
+    maximumSpeed.Update(std::numeric_limits<double>::quiet_NaN());
+    maximumSpeed.Update(std::numeric_limits<double>::infinity());
+    maximumSpeed.Update(0.0);
+    maximumSpeed.Update(-1.0);
+    RequireNear(maximumSpeed.GetState().closureFraction,
+        1.0 * 0.004 / kTwoF85.nominalMasterClosedRadians, 0.0, "invalid dt is ignored");
+
+    maximumSpeed.Update(100.0);
+    state = maximumSpeed.GetState();
+    Require(state.closureFraction == 1.0 && state.actualPosition == 255 &&
+        state.mode == GripperMode::Idle && !state.goToActive &&
+        state.objectStatus == GripperObjectStatus::AtRequestedPosition,
+        "large dt clamps exactly to target without reporting contact");
+
+    // Retargeting replaces the destination from the current continuous position.
+    Require(static_cast<bool>(maximumSpeed.Command(Request(255, 255))), "repeat close request accepted");
+    Require(static_cast<bool>(maximumSpeed.Command(Request(0, 255))), "open retarget accepted");
+    maximumSpeed.Update(0.1);
+    Require(maximumSpeed.GetState().closureFraction < 1.0, "retarget moves toward replacement goal");
+    AdvanceToTarget(maximumSpeed);
+    Require(maximumSpeed.GetState().closureFraction == 0.0 && maximumSpeed.GetState().actualPosition == 0,
+        "replacement open target completes");
+}
+
+void CheckStopResetAndReconnect()
+{
+    SimGripperController controller(kTwoF85);
+    controller.Connect();
+    controller.Activate();
+    controller.Command(Request(255, 255, 128));
+    AdvanceTicks(controller, 25, 0.004);
+    const GripperState beforeStop = controller.GetState();
+    Require(beforeStop.closureFraction > 0.0 && beforeStop.closureFraction < 1.0, "stop fixture is mid travel");
+
+    Require(static_cast<bool>(controller.Stop()), "stop");
+    auto stopped = controller.GetState();
+    Require(stopped.mode == GripperMode::Stopped && !stopped.goToActive &&
+        stopped.requestedPositionEcho == 255 && stopped.objectStatus == GripperObjectStatus::Moving,
+        "stop retains request echo without claiming target reached");
+    AdvanceTicks(controller, 20, 0.004);
+    RequireNear(controller.GetState().closureFraction, beforeStop.closureFraction, 0.0,
+        "stopped position does not advance");
+
+    Require(static_cast<bool>(controller.Reset()), "reset");
+    const auto reset = controller.GetState();
+    Require(reset.mode == GripperMode::Inactive && !reset.activated && !reset.goToActive,
+        "reset stops and deactivates");
+    RequireNear(reset.closureFraction, beforeStop.closureFraction, 0.0, "reset preserves position");
+    Require(reset.requestedPositionEcho == 255 && reset.objectStatus == GripperObjectStatus::Moving,
+        "reset preserves request history and unreached classification");
+    Require(static_cast<bool>(controller.Activate()), "reactivate after reset");
+    controller.Update(1.0);
+    RequireNear(controller.GetState().closureFraction, beforeStop.closureFraction, 0.0,
+        "reset does not resume previous target");
+
+    Require(static_cast<bool>(controller.Command(Request(0, 255))), "new request after reset");
+    AdvanceToTarget(controller);
+    Require(static_cast<bool>(controller.Stop()), "stop at target");
+    Require(controller.GetState().objectStatus == GripperObjectStatus::AtRequestedPosition,
+        "stop at a reached target preserves target classification");
+
+    controller.Disconnect();
+    Require(!controller.IsConnected() && !controller.GetState().valid &&
+        !controller.GetState().closureFractionValid && controller.GetState().mode == GripperMode::Disconnected,
+        "disconnect invalidates snapshot");
+    Require(static_cast<bool>(controller.Connect()), "reconnect");
+    const auto reconnected = controller.GetState();
+    Require(reconnected.valid && reconnected.mode == GripperMode::Inactive &&
+        reconnected.closureFraction == 0.0 && reconnected.actualPosition == kTwoF85.positionRequestMin,
+        "reconnect starts a fresh open state");
+}
+
+void CheckSpecificationAndSettingsValidation()
+{
+    const auto invalidSpecification = [](const GripperSpecification& specification)
+    {
+        ExpectThrows<std::invalid_argument>([&] { SimGripperController invalid(specification); },
+            "invalid gripper specification rejected");
+    };
+
+    auto specification = kTwoF85;
+    specification.positionRequestMax = specification.positionRequestMin;
+    invalidSpecification(specification);
+    specification = kTwoF85;
+    specification.speedRequestMax = specification.speedRequestMin;
+    invalidSpecification(specification);
+    specification = kTwoF85;
+    specification.forceRequestMin = 200;
+    specification.forceRequestMax = 100;
+    invalidSpecification(specification);
+    specification = kTwoF85;
+    specification.nominalMasterClosedRadians = 0.0;
+    invalidSpecification(specification);
+    specification = kTwoF85;
+    specification.nominalMasterClosedRadians = std::numeric_limits<double>::infinity();
+    invalidSpecification(specification);
+    specification = kTwoF85;
+    specification.joints = nullptr;
+    invalidSpecification(specification);
+    specification = kTwoF85;
+    specification.jointCount = 0;
+    invalidSpecification(specification);
+
+    for (const SimGripperMotionSettings settings : {
+        SimGripperMotionSettings{0.0, 1.0},
+        SimGripperMotionSettings{0.1, std::numeric_limits<double>::infinity()},
+        SimGripperMotionSettings{0.5, 0.1},
+        SimGripperMotionSettings{std::numeric_limits<double>::quiet_NaN(), 1.0}})
+    {
+        ExpectThrows<std::invalid_argument>([&] { SimGripperController invalid(kTwoF85, settings); },
+            "invalid motion settings rejected");
+    }
+
+    // 동등한 양의 각속도 범위는 raw speed에 상관없이 일정한 시뮬레이션 속도를 뜻한다.
+    SimGripperController fixedSpeed(kTwoF85, {0.25, 0.25});
+    Require(static_cast<bool>(fixedSpeed.Connect()) && static_cast<bool>(fixedSpeed.Activate()),
+        "equal positive settings accepted");
+}
+}
+
+/**
+ * @brief 자유공간 Gripper Controller의 상태 전이, 시간 진행과 입력 검증을 회귀 검사한다.
+ * @details 위치 raw는 비단위 요청 code, closureFraction은 연속 무차원 위치, master 속도는 rad/s,
+ * dt는 s다. 이 테스트는 힘/전류/접촉이나 실제 grasp 동작을 주장하지 않는다.
+ */
+int main()
+{
+    try
+    {
+        CheckLifecycleAndCommands();
+        CheckStopResetAndReconnect();
+        CheckSpecificationAndSettingsValidation();
+        std::cout << "Gripper runtime lifecycle and free-space motion checks passed\n";
+        return 0;
+    }
+    catch (const std::exception& error)
+    {
+        std::cerr << error.what() << '\n';
+        return 1;
+    }
+}

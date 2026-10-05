@@ -23,14 +23,19 @@
 #include "simulation/systems/PhysicsSystemModule.h"
 
 #include "robotics/backends/simulation/SimRobotController.h"
+#include "robotics/backends/simulation/SimGripperController.h"
 #include "robotics/core/IRobotController.h"
+#include "robotics/core/IGripperController.h"
 #include "robotics/models/hanwha/Hcr12a.h"
+#include "robotics/models/robotiq/TwoF85.h"
 #include "robotics/kinematics/RobotKinematics.h"
+#include "robotics/kinematics/GripperKinematics.h"
 
 #include "scene/Scene.h"
 #include "scene/SceneManager.h"
 
 #include "viewer/robotics/RobotTransformAdapter.h"
+#include "viewer/robotics/GripperTransformAdapter.h"
 
 #include <algorithm>
 #include <chrono>
@@ -98,6 +103,9 @@ bool ViewerApp::Init()
     InitScene(robotRoot, floorEntity);
 
     if (!InitRobot(robotRoot))
+        return false;
+
+    if (!InitGripper(robotRoot))
         return false;
 
     InitPhysics(robotRoot, floorEntity);
@@ -214,6 +222,47 @@ bool ViewerApp::InitRobot(const Entity& robotRoot)
 }
 
 
+bool ViewerApp::InitGripper(const Entity& robotRoot)
+{
+    const auto& specification = grasplink::robotics::models::robotiq::kTwoF85;
+    m_GripperController = std::make_unique<grasplink::robotics::backends::simulation::SimGripperController>(specification);
+    auto result = m_GripperController->Connect();
+    if (result)
+        result = m_GripperController->Activate();
+    if (!result)
+    {
+        std::cerr << result.message << '\n';
+        return false;
+    }
+    m_GripperKinematics = std::make_unique<grasplink::robotics::kinematics::GripperKinematics>(specification);
+    m_GripperTransformAdapter = std::make_unique<grasplink::viewer::robotics::GripperTransformAdapter>(
+        robotRoot.FindChildByNameRecursive("Gripper"), specification);
+
+    // 명시한 데모와 숨김 실행은 실제 개폐를 진행한다. 일반 실행은 열린 기준 자세에서 조작한다.
+    if (m_Options.physicsDemo || m_Options.smokeTest)
+    {
+        const auto result = m_GripperController->Command({255, 255, 128});
+        if (!result)
+        {
+            std::cerr << result.message << '\n';
+            return false;
+        }
+    }
+    return true;
+}
+
+
+void ViewerApp::ApplyControllerPoses()
+{
+    const auto& robotPose = m_RobotKinematics->Update(m_RobotController->GetState());
+    m_RobotTransformAdapter->Apply(robotPose);
+    m_RobotPhysicsAdapter->Apply(robotPose);
+    // 팔의 부모 자세와 그리퍼의 Local 회전을 같은 tick에 반영해 화면·충돌 프록시가 같은 계층을 따른다.
+    const auto& gripperPose = m_GripperKinematics->Update(m_GripperController->GetState());
+    m_GripperTransformAdapter->Apply(gripperPose);
+}
+
+
 void ViewerApp::InitPhysics(const Entity& robotRoot, Entity& floorEntity)
 {
     m_PhysicsWorld = std::make_unique<PhysicsWorld>();
@@ -224,8 +273,8 @@ void ViewerApp::InitPhysics(const Entity& robotRoot, Entity& floorEntity)
     // 렌더 Mesh는 원본 GLB 형상, Physics는 정점의 방향별 극점으로 축약한 Convex Hull 설정을 사용한다.
     // outer knuckle과 finger처럼 한 rigid part에 묶인 메시만 compound로 합쳐 접촉 형상을 만든다.
     // Gripper 본체와 6개 관절 프록시, 총 7개 Kinematic Body 설정을 만든다. 각 proxy는 authored joint Entity의 자식이다.
-    // 현재 관절 자세의 출처는 ECS/GLB 관절 계층이다. FK가 arm 계층을 갱신하고 World 행렬이 자식 proxy에 전파한다.
-    // Gripper controller/backend와 grasp 동작은 연결되어 있지 않다. 별도 collider pose adapter도 없다.
+    // GripperState에서 계산한 Local 회전을 원본 관절에 적용하면 World 갱신이 자식 proxy의 자세도 만든다.
+    // 프록시를 별도로 구동하는 adapter는 필요하지 않다. 접촉 시 정지·파지는 후속 물리 작업이다.
     // GUI 보라색 선은 ECS 설정 shape를 그린 X-ray 근사이며 렌더 Mesh/Jolt가 실제 생성한 hull의 시각화가 아니다.
     grasplink::simulation::ConfigureTwoF85Colliders(
         *m_SceneManager->GetActiveScene(), robotRoot, m_RobotModel);
@@ -233,9 +282,7 @@ void ViewerApp::InitPhysics(const Entity& robotRoot, Entity& floorEntity)
         viewer_debug::CreatePhysicsBoxes(
             *m_SceneManager->GetActiveScene(), m_RobotShader);
     // Body 생성 전에 초기 FK와 World 행렬을 준비해 첫 Kinematic 목표와 렌더 Entity를 맞춘다.
-    const auto& robotPose = m_RobotKinematics->Update(m_RobotController->GetState());
-    m_RobotTransformAdapter->Apply(robotPose);
-    m_RobotPhysicsAdapter->Apply(robotPose);
+    ApplyControllerPoses();
     TransformSystemModule::UpdateWorldTransforms(m_World);
     m_PhysicsSystemModule = std::make_unique<grasplink::simulation::PhysicsSystemModule>(m_World, *m_PhysicsWorld);
 }
@@ -271,9 +318,8 @@ void ViewerApp::MainLoop()
         m_ControlLoop.Advance(frameDeltaSeconds, [this](double fixedDeltaSeconds)
         {
             m_RobotController->Update(fixedDeltaSeconds);
-            const auto& robotPose = m_RobotKinematics->Update(m_RobotController->GetState());
-            m_RobotTransformAdapter->Apply(robotPose);
-            m_RobotPhysicsAdapter->Apply(robotPose);
+            m_GripperController->Update(fixedDeltaSeconds);
+            ApplyControllerPoses();
             TransformSystemModule::UpdateWorldTransforms(m_World);
             m_PhysicsSystemModule->Step(fixedDeltaSeconds);
             TransformSystemModule::UpdateWorldTransforms(m_World);
@@ -299,7 +345,7 @@ void ViewerApp::MainLoop()
         m_SceneManager->OnUpdate(renderDeltaSeconds);
         TransformSystemModule::UpdateWorldTransforms(m_World);
         m_World.progress(renderDeltaSeconds);
-        m_GuiModule->Draw();
+        m_GuiModule->Draw(m_GripperController.get());
 
         m_Renderer->EndFrame();
         m_Window->SwapBuffers();
@@ -313,13 +359,18 @@ void ViewerApp::Shutdown()
 {
     // Entity handle을 빌리는 Adapter를 Scene보다 먼저 정리한다. 그렇지 않으면 소멸 과정에서 stale handle이 된다.
     m_RobotTransformAdapter.reset();
+    m_GripperTransformAdapter.reset();
     m_RobotPhysicsAdapter.reset();
     m_RobotKinematics.reset();
+    m_GripperKinematics.reset();
 
     if (m_RobotController)
         m_RobotController->Disconnect();
 
     m_RobotController.reset();
+    if (m_GripperController)
+        m_GripperController->Disconnect();
+    m_GripperController.reset();
 
     // Scene 정리의 ECS observer가 Jolt Body를 제거할 수 있도록 PhysicsSystemModule과 PhysicsWorld를 아직 살려 둔다.
     m_SceneManager.reset();

@@ -23,7 +23,8 @@ namespace grasplink::simulation
  *
  * TwoF85 설정 helper가 만드는 본체와 여섯 관절의 Kinematic proxy도 이 모듈이 동기화한다.
  * 프록시는 원본 ECS 관절의 자식이므로 현재 관절 계층에서 계산된 World 자세를 사용한다.
- * 팔 FK에 따른 장착부 이동도 부모 계층으로 전파된다. 별도 그리퍼 FK·제어 백엔드·파지는 구현하지 않는다.
+ * 팔 FK에 따른 장착부 이동도 부모 계층으로 전파된다. 그리퍼 상태·관절 계산은 Robotics와 앱의 책임이며,
+ * 이 모듈은 그 결과의 물리 동기화를 맡는다. 접촉 시 개폐 정지·파지는 구현하지 않는다.
  */
 class PhysicsSystemModule final
 {
