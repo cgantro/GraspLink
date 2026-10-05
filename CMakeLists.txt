@@ -294,5 +294,17 @@ if(GRASPLINK_BUILD_GRAPHICS)
       $<TARGET_FILE_DIR:grasplink_simulator>/plane.glb
   )
 
+  if(BUILD_TESTING)
+    add_executable(grasplink_graphics_tests tests/GraphicsResourceTests.cpp)
+    target_link_libraries(grasplink_graphics_tests PRIVATE grasplink_graphics)
+    add_test(NAME GraphicsResources COMMAND grasplink_graphics_tests)
+    set_tests_properties(GraphicsResources PROPERTIES TIMEOUT 60)
+
+    add_executable(grasplink_gltf_tests tests/GltfLoaderTests.cpp)
+    target_link_libraries(grasplink_gltf_tests PRIVATE grasplink_viewer)
+    target_compile_definitions(grasplink_gltf_tests PRIVATE GRASPLINK_TEST_ASSET_DIR="${CMAKE_SOURCE_DIR}/assets")
+    add_test(NAME GltfLoader COMMAND grasplink_gltf_tests)
+
+  endif()
 
 endif()
