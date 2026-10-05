@@ -1,6 +1,7 @@
 ﻿#include "ViewerApp.h"
 
 #include "Camera.h"
+#include "DebugSceneSetup.h"
 #include "Entity.h"
 #include "OrbitCameraController.h"
 #include "RenderContext.h"
@@ -14,18 +15,19 @@
 #include "assets/GltfLoader.h"
 #include "assets/PrefabFactory.h"
 
-#include "components/PhysicsComponents.h"
-
 #include "PhysicsWorld.h"
-#include "systems/PhysicsSystemModule.h"
+#include "gui/GuiModule.h"
+#include "simulation/SimulationSceneBuilder.h"
+#include "simulation/robotics/RobotPhysicsAdapter.h"
+#include "simulation/systems/PhysicsSystemModule.h"
 
 #include "robotics/backends/simulation/SimRobotController.h"
 #include "robotics/core/IRobotController.h"
 #include "robotics/models/hanwha/Hcr12a.h"
+#include "robotics/kinematics/RobotKinematics.h"
 
 #include "scene/Scene.h"
 #include "scene/SceneManager.h"
-#include "scene/EntityFactory.h"
 
 #include "viewer/robotics/RobotTransformAdapter.h"
 
@@ -54,7 +56,6 @@ const char* kWindowTitle = "GraspLink Viewer";
 const glm::vec3 kCameraPosition{2.0F, 1.35F, 1.15F};
 const glm::vec3 kCameraTarget{0.05F, 0.50F, 0.40F};
 
-// 자주 쓰는 타입 별칭
 using SimRobotController = grasplink::robotics::backends::simulation::SimRobotController;
 using RobotTransformAdapter = grasplink::viewer::robotics::RobotTransformAdapter;
 using PhysicsWorld = grasplink::physics::PhysicsWorld;
@@ -62,8 +63,8 @@ using PhysicsWorld = grasplink::physics::PhysicsWorld;
 } // namespace
 
 
-ViewerApp::ViewerApp()
-    : m_ControlLoop(kControlFixedDeltaSeconds, kMaxFrameDeltaSeconds)
+ViewerApp::ViewerApp(ViewerOptions options)
+    : m_Options(options), m_ControlLoop(kControlFixedDeltaSeconds, kMaxFrameDeltaSeconds)
 {
 }
 
@@ -76,7 +77,6 @@ ViewerApp::~ViewerApp()
 
 int ViewerApp::Run()
 {
-    // 초기화 실패 시 실행 중단
     if (!Init())
         return -1;
 
@@ -108,7 +108,7 @@ bool ViewerApp::InitViewer()
 {
     // Window 생성. OpenGL Context도 Window가 소유
     m_Window = std::make_unique<Window>(
-        Window::Properties{kWindowWidth, kWindowHeight, kWindowTitle, true});
+        Window::Properties{kWindowWidth, kWindowHeight, kWindowTitle, !m_Options.smokeTest, !m_Options.smokeTest});
 
     int framebufferWidth = 0;
     int framebufferHeight = 0;
@@ -118,28 +118,26 @@ bool ViewerApp::InitViewer()
     m_Renderer = std::make_unique<Renderer>();
     m_Renderer->Init(framebufferWidth, framebufferHeight);
 
-    // 화면 비율: 가로 / 세로
     const float aspectRatio = static_cast<float>(kWindowWidth) / static_cast<float>(kWindowHeight);
     m_Camera = std::make_unique<Camera>(kCameraPosition, kCameraTarget, aspectRatio);
+    m_GuiModule = std::make_unique<grasplink::gui::GuiModule>(
+        m_World, *m_Window, *m_Camera);
 
-    // Mouse 입력 → Camera 회전·이동·확대
     m_CameraController = std::make_unique<OrbitCameraController>(*m_Camera, *m_Window);
 
     // RenderSystem이 사용할 Renderer·Camera 등록
     m_World.set<RenderContext>({m_Renderer.get(), m_Camera.get()});
 
-    // ECS System: Transform 계산 → 렌더 대상 전달
+    // Transform은 fixed step과 렌더 직전에 명시적으로 계산하고, RenderSystem은 World 진행 때 실행한다.
     m_World.import<TransformSystemModule>();
     m_World.import<RenderSystemModule>();
 
-    // 기본 Scene 생성
     m_SceneManager = std::make_unique<SceneManager>(m_World);
     m_SceneManager->LoadScene<Scene>();
 
-    // Scene 초기 상태 반영
+    // 예약 Scene을 활성화해 root를 만든 뒤 모델 Entity를 생성한다.
     m_SceneManager->OnUpdate(0.0F);
 
-    // GPU Mesh·Texture 관리 객체
     m_AssetManager = std::make_unique<AssetManager>();
 
     return true;
@@ -150,19 +148,18 @@ void ViewerApp::InitScene(Entity& robotRoot, Entity& floorEntity)
 {
     Scene* scene = m_SceneManager->GetActiveScene();
 
-    // Robot·Floor 전용 Shader
     m_RobotShader = Shader::Create("shaders/Robot.glsl");
     auto gridShader = Shader::Create("shaders/Grid.glsl");
 
     // GLB 읽기 → GPU Mesh·Material 업로드
-    ModelResource robotModel = GltfLoader::LoadGLB("HCR12A_2F-85.glb");
-    m_AssetManager->UploadModel(robotModel);
+    m_RobotModel = GltfLoader::LoadGLB("HCR12A_2F-85.glb");
+    m_AssetManager->UploadModel(m_RobotModel);
 
     // GLB Node 계층 → Flecs Entity 계층
     // robotRoot: 이후 J1~J6 검색 기준
     robotRoot = PrefabFactory::CreateModel(
         *scene,
-        robotModel,
+        m_RobotModel,
         *m_AssetManager,
         m_RobotShader);
 
@@ -184,7 +181,6 @@ bool ViewerApp::InitRobot(const Entity& robotRoot)
     // HCR-12A 관절 수·축·제한·최대 속도
     const auto& robotSpec = grasplink::robotics::models::hanwha::kHcr12a;
 
-    // 실제 Hardware 대신 Simulation Controller 사용
     auto simController = std::make_unique<SimRobotController>(robotSpec);
 
     const auto connectResult = simController->Connect();
@@ -195,29 +191,22 @@ bool ViewerApp::InitRobot(const Entity& robotRoot)
         return false;
     }
 
-    // 이후 제어는 구현체 대신 IRobotController 인터페이스 사용
     m_RobotController = std::move(simController);
 
-    // 데이터 흐름: RobotState 관절각 → Adapter → GLB Joint Local 회전
+    // 같은 FK 결과를 시각 Entity와 Kinematic collider Entity에 각각 전달한다.
+    m_RobotKinematics = std::make_unique<grasplink::robotics::kinematics::RobotKinematics>(robotSpec);
     m_RobotTransformAdapter = std::make_unique<RobotTransformAdapter>(robotRoot, robotSpec);
 
-    // Debug 전용: J1 30도 이동 확인
-#ifndef NDEBUG
-    grasplink::robotics::JointMoveCommand debugMove;
-
-    debugMove.targetPositionRadians.assign(robotSpec.jointCount, 0.0);
-    debugMove.targetPositionRadians[0] = glm::radians(30.0);
-    debugMove.velocityScale = 1.0;
-    debugMove.accelerationScale = 1.0;
-
-    const auto moveResult = m_RobotController->MoveJoint(debugMove);
-
-    if (!moveResult)
+    // 데모는 빌드 종류와 무관하게 명시적 실행 옵션으로만 시작한다.
+    if (m_Options.physicsDemo)
     {
-        std::cerr << moveResult.message << '\n';
-        return false;
+        const auto moveResult = viewer_debug::StartRobotMotion(*m_RobotController, robotSpec);
+        if (!moveResult)
+        {
+            std::cerr << moveResult.message << '\n';
+            return false;
+        }
     }
-#endif
 
     return true;
 }
@@ -226,13 +215,19 @@ bool ViewerApp::InitRobot(const Entity& robotRoot)
 void ViewerApp::InitPhysics(const Entity& robotRoot, Entity& floorEntity)
 {
     m_PhysicsWorld = std::make_unique<PhysicsWorld>();
-    EntityFactory::ConfigureFloor(floorEntity);
-    EntityFactory::ConfigureRobotPhysics(robotRoot, grasplink::robotics::models::hanwha::kHcr12a);
-#ifndef NDEBUG
-    // Debug 전용: Dynamic Cube 시각화
-    EntityFactory::CreateDebugBox(*m_SceneManager->GetActiveScene(), m_RobotShader);
-#endif
-    m_PhysicsSystemModule = std::make_unique<PhysicsSystemModule>(m_World, *m_PhysicsWorld);
+    grasplink::simulation::SimulationSceneBuilder::ConfigureFloor(floorEntity);
+    m_RobotPhysicsAdapter = std::make_unique<grasplink::simulation::RobotPhysicsAdapter>(
+        *m_SceneManager->GetActiveScene(), robotRoot, grasplink::robotics::models::hanwha::kHcr12a,
+        m_RobotModel);
+    if (m_Options.physicsDemo)
+        viewer_debug::CreatePhysicsBoxes(
+            *m_SceneManager->GetActiveScene(), m_RobotShader);
+    // Body 생성 전에 초기 FK와 World 행렬을 준비한다. 첫 Jolt pose가 화면 Entity와 일치해야 한다.
+    const auto& robotPose = m_RobotKinematics->Update(m_RobotController->GetState());
+    m_RobotTransformAdapter->Apply(robotPose);
+    m_RobotPhysicsAdapter->Apply(robotPose);
+    TransformSystemModule::UpdateWorldTransforms(m_World);
+    m_PhysicsSystemModule = std::make_unique<grasplink::simulation::PhysicsSystemModule>(m_World, *m_PhysicsWorld);
 }
 
 
@@ -241,12 +236,13 @@ void ViewerApp::MainLoop()
     using Clock = std::chrono::steady_clock;
 
     auto lastFrameTime = Clock::now();
+    std::size_t renderedFrames = 0;
 
     while (!m_Window->ShouldClose())
     {
-        // 이전 화면 갱신 이후 경과 시간 (초)
         const auto currentFrameTime = Clock::now();
-        const double frameDeltaSeconds = std::chrono::duration<double>(currentFrameTime - lastFrameTime).count();
+        const double frameDeltaSeconds = m_Options.smokeTest ? 1.0 / 60.0
+            : std::chrono::duration<double>(currentFrameTime - lastFrameTime).count();
 
         lastFrameTime = currentFrameTime;
 
@@ -256,15 +252,20 @@ void ViewerApp::MainLoop()
 
         // Window 이벤트·Camera 입력
         m_Window->PollEvents();
-        m_CameraController->OnUpdate();
+        if (!m_GuiModule->WantsMouse())
+            m_CameraController->OnUpdate();
 
-        // 고정 Simulation 순서: Controller → Entity 자세 → Physics
-        // 창 최소화 여부와 무관하게 실행
+        // 고정 순서: Controller 상태 → FK → 시각/물리 Entity → World 행렬 → Jolt step.
+        // step 뒤 Dynamic 결과가 Local로 돌아오므로 World 행렬을 다시 계산한다. 최소화 중에도 실행한다.
         m_ControlLoop.Advance(frameDeltaSeconds, [this](double fixedDeltaSeconds)
         {
             m_RobotController->Update(fixedDeltaSeconds);
-            m_RobotTransformAdapter->Apply(m_RobotController->GetState());
+            const auto& robotPose = m_RobotKinematics->Update(m_RobotController->GetState());
+            m_RobotTransformAdapter->Apply(robotPose);
+            m_RobotPhysicsAdapter->Apply(robotPose);
+            TransformSystemModule::UpdateWorldTransforms(m_World);
             m_PhysicsSystemModule->Step(fixedDeltaSeconds);
+            TransformSystemModule::UpdateWorldTransforms(m_World);
         });
 
         // 최소화 상태 (Framebuffer 가로·세로가 0): Render 건너뜀
@@ -276,47 +277,54 @@ void ViewerApp::MainLoop()
         if (framebufferWidth <= 0 || framebufferHeight <= 0)
             continue;
 
-        // 변경된 Framebuffer 크기 반영
         m_Renderer->Resize(framebufferWidth, framebufferHeight);
 
         const float aspectRatio = static_cast<float>(framebufferWidth) / static_cast<float>(framebufferHeight);
         m_Camera->SetAspectRatio(aspectRatio);
 
-        // Flecs 진행: Transform 갱신 후 Render System 실행
+        // 렌더 직전 Scene logic과 World 행렬을 반영한다. GUI는 갱신 주기에 맞춰 이 상태를 읽는다.
         m_Renderer->BeginFrame();
 
         m_SceneManager->OnUpdate(renderDeltaSeconds);
+        TransformSystemModule::UpdateWorldTransforms(m_World);
         m_World.progress(renderDeltaSeconds);
+        m_GuiModule->Draw();
 
         m_Renderer->EndFrame();
         m_Window->SwapBuffers();
+        if (m_Options.smokeTest && ++renderedFrames >= 8)
+            break;
     }
 }
 
 
 void ViewerApp::Shutdown()
 {
-    // 참조 객체부터 제거
+    // Entity handle을 빌리는 Adapter를 Scene보다 먼저 정리한다.
     m_RobotTransformAdapter.reset();
+    m_RobotPhysicsAdapter.reset();
+    m_RobotKinematics.reset();
 
-    // Robot 연결 종료
     if (m_RobotController)
         m_RobotController->Disconnect();
 
     m_RobotController.reset();
 
-    // Scene Entity 정리 → Physics Body observer 처리
+    // Scene 삭제 observer가 Jolt Body를 제거할 때 PhysicsSystem과 PhysicsWorld가 살아 있어야 한다.
     m_SceneManager.reset();
     m_PhysicsSystemModule.reset();
+    m_GuiModule.reset();
 
-    // Entity 제거가 끝난 뒤 PhysicsWorld 파괴
+    // GUI query와 물리 observer를 먼저 해제한 뒤 World와 PhysicsWorld를 정리한다.
     m_World.reset();
     m_PhysicsWorld.reset();
 
+    // ModelResource도 GPU Mesh를 공유한다. 마지막 참조는 OpenGL Context보다 먼저 해제한다.
+    m_RobotModel = {};
     m_AssetManager.reset();
     m_RobotShader.reset();
 
-    // Viewer Resource 역순 정리
+    // GUI와 모든 GPU 리소스 정리 뒤 마지막으로 OpenGL Context를 파괴한다.
     m_CameraController.reset();
     m_Camera.reset();
     m_Renderer.reset();

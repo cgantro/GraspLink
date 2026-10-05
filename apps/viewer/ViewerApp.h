@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "robotics/runtime/FixedControlLoop.h"
+#include "assets/GraphicsTypes.h"
 
 #include <flecs.h>
 #include <memory>
@@ -12,7 +13,6 @@ class OrbitCameraController;
 class SceneManager;
 class AssetManager;
 class Shader;
-class PhysicsSystemModule;
 class Entity;
 
 namespace grasplink::physics
@@ -23,6 +23,7 @@ class PhysicsWorld;
 namespace grasplink::robotics
 {
 class IRobotController;
+namespace kinematics { class RobotKinematics; }
 }
 
 namespace grasplink::viewer::robotics
@@ -30,22 +31,35 @@ namespace grasplink::viewer::robotics
 class RobotTransformAdapter;
 }
 
-/**
- * @brief Viewer Runtime 객체의 생성·연결·종료 순서 관리
- *
- * 흐름: Window → Camera / GLB → Entity / Controller → Transform / Physics → Entity / Flecs → Renderer
- * 역할: 세부 기능 구현 없이 객체 구성과 실행 순서만 담당
- */
+namespace grasplink::gui
+{
+class GuiModule;
+}
+
+namespace grasplink::simulation
+{
+class PhysicsSystemModule;
+class RobotPhysicsAdapter;
+}
+
+struct ViewerOptions
+{
+    bool physicsDemo = false;
+    bool smokeTest = false;
+};
+
+// Runtime 객체를 조합하고 실행 순서와 수명을 관리한다. FK·물리·렌더 계산은 각 모듈에 맡긴다.
+// Shutdown에서 빌린 참조를 먼저 정리하고, Entity/GPU 리소스를 World/OpenGL Context보다 먼저 해제한다.
 class ViewerApp
 {
 public:
-    ViewerApp();
+    explicit ViewerApp(ViewerOptions options = {});
     ~ViewerApp();
 
     int Run();
 
 private:
-    // 전체 초기화 순서
+    ViewerOptions m_Options;
     bool Init();
 
     // Window·Renderer·Camera·ECS·Scene 준비
@@ -63,7 +77,7 @@ private:
     // 입력·Simulation·ECS·Render 반복
     void MainLoop();
 
-    // 참조 관계에 맞춰 Runtime 객체 정리
+    // 부분 초기화 실패 때도 호출된다. World observer와 OpenGL Context가 필요한 정리를 먼저 끝낸다.
     void Shutdown();
 
     // GLFW Window·OpenGL Context 소유
@@ -84,6 +98,9 @@ private:
     // GPU Mesh·Material·Texture 관리
     std::unique_ptr<AssetManager> m_AssetManager;
 
+    // Collider 추출용 CPU 데이터와 업로드된 GPU Mesh를 함께 공유한다. Context보다 먼저 해제한다.
+    ModelResource m_RobotModel;
+
     // Robot·Debug Box 공용 Shader
     std::shared_ptr<Shader> m_RobotShader;
 
@@ -93,8 +110,10 @@ private:
     // Robot 제어 Backend
     std::unique_ptr<grasplink::robotics::IRobotController> m_RobotController;
 
-    // RobotState 관절각 → GLB Joint 회전
+    // Adapter는 Scene Entity handle을 빌린다. Scene 정리 전에 파괴한다.
+    std::unique_ptr<grasplink::robotics::kinematics::RobotKinematics> m_RobotKinematics;
     std::unique_ptr<grasplink::viewer::robotics::RobotTransformAdapter> m_RobotTransformAdapter;
+    std::unique_ptr<grasplink::simulation::RobotPhysicsAdapter> m_RobotPhysicsAdapter;
 
     // Robot·Physics 고정 시간 업데이트
     grasplink::robotics::runtime::FixedControlLoop m_ControlLoop;
@@ -103,5 +122,8 @@ private:
     std::unique_ptr<grasplink::physics::PhysicsWorld> m_PhysicsWorld;
 
     // Flecs 물리 설정과 Jolt 연결·고정 Step 실행
-    std::unique_ptr<PhysicsSystemModule> m_PhysicsSystemModule;
+    std::unique_ptr<grasplink::simulation::PhysicsSystemModule> m_PhysicsSystemModule;
+
+    // GUI lifecycle과 디버그 panel
+    std::unique_ptr<grasplink::gui::GuiModule> m_GuiModule;
 };

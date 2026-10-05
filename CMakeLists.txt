@@ -11,6 +11,8 @@ if(MSVC)
 endif()
 
 include(cmake/Dependencies.cmake)
+grasplink_add_common_dependencies()
+include(CTest)
 
 
 # ============================================================
@@ -83,6 +85,7 @@ target_link_libraries(grasplink_physics PUBLIC
   glm::glm
 )
 
+
 # ============================================================
 # Graphics / Viewer
 # ============================================================
@@ -102,6 +105,9 @@ if(GRASPLINK_BUILD_GRAPHICS)
   # OpenGL 관련 공통 graphics library 생성.
   grasplink_add_graphics_library()
 
+  # UI backend는 GUI 모듈 의존성으로 별도 구성.
+  grasplink_add_gui_dependencies()
+
 
   # ----------------------------------------------------------
   # Viewer
@@ -112,10 +118,8 @@ if(GRASPLINK_BUILD_GRAPHICS)
 
     modules/viewer/src/systems/RenderSystemModule.cpp
     modules/viewer/src/systems/TransformSystemModule.cpp
-    modules/viewer/src/systems/PhysicsSystemModule.cpp
     modules/viewer/src/scene/Scene.cpp
     modules/viewer/src/scene/SceneManager.cpp
-    modules/viewer/src/scene/EntityFactory.cpp
 
     modules/viewer/src/assets/GltfLoader.cpp
     modules/viewer/src/assets/AssetManager.cpp
@@ -128,19 +132,14 @@ if(GRASPLINK_BUILD_GRAPHICS)
     modules/viewer/include/Entity.h
 
     modules/viewer/include/components/Components.h
-    modules/viewer/include/components/GripperComponents.h
     modules/viewer/include/components/RenderComponents.h
-    modules/viewer/include/components/RobotComponents.h
     modules/viewer/include/components/TransformComponents.h
-    modules/viewer/include/components/PhysicsComponents.h
 
     modules/viewer/include/systems/RenderSystemModule.h
     modules/viewer/include/systems/TransformSystemModule.h
-    modules/viewer/include/systems/PhysicsSystemModule.h
 
     modules/viewer/include/scene/Scene.h
     modules/viewer/include/scene/SceneManager.h
-    modules/viewer/include/scene/EntityFactory.h
 
     modules/viewer/include/assets/GraphicsTypes.h
     modules/viewer/include/assets/ResourceID.h
@@ -165,21 +164,8 @@ if(GRASPLINK_BUILD_GRAPHICS)
   )
 
 
-  # Viewer는 Robotics와 Physics의 결과를 화면에 보여주는 계층이다.
-  #
-  # 의존성 방향:
-  #
-  # Robotics ----\
-  #               \
-  # Physics -------> Viewer
-  #               /
-  # Graphics -----/
-  #
-  # 반대로 Robotics/Physics가 Viewer에 의존하면 안 된다.
-  #
   target_link_libraries(grasplink_viewer PUBLIC
     grasplink_robotics
-    grasplink_physics
     grasplink_graphics
     flecs::flecs_static
 
@@ -191,6 +177,49 @@ if(GRASPLINK_BUILD_GRAPHICS)
     GLM_ENABLE_EXPERIMENTAL
   )
 
+  add_library(grasplink_simulation STATIC
+    modules/simulation/src/SimulationSceneBuilder.cpp
+    modules/simulation/src/robotics/RobotPhysicsAdapter.cpp
+    modules/simulation/src/systems/PhysicsSystemModule.cpp
+    modules/simulation/include/simulation/SimulationSceneBuilder.h
+    modules/simulation/include/simulation/components/PhysicsComponents.h
+    modules/simulation/include/simulation/components/RobotCollisionProxy.h
+    modules/simulation/include/simulation/robotics/RobotPhysicsAdapter.h
+    modules/simulation/include/simulation/systems/PhysicsSystemModule.h
+  )
+
+  target_include_directories(grasplink_simulation PUBLIC
+    modules/simulation/include
+  )
+
+  target_link_libraries(grasplink_simulation PUBLIC
+    grasplink_viewer
+    grasplink_physics
+    grasplink_robotics
+  )
+
+  target_compile_definitions(grasplink_simulation PRIVATE
+    GLM_ENABLE_EXPERIMENTAL
+  )
+
+  add_library(grasplink_gui STATIC
+    modules/gui/src/GuiModule.cpp
+    modules/gui/include/gui/GuiModule.h
+  )
+
+  target_include_directories(grasplink_gui PUBLIC
+    modules/gui/include
+  )
+
+  target_link_libraries(grasplink_gui PUBLIC
+    grasplink_simulation
+    grasplink_imgui_backend
+  )
+
+  target_compile_definitions(grasplink_gui PRIVATE
+    GLM_ENABLE_EXPERIMENTAL
+  )
+
 
   # ----------------------------------------------------------
   # Simulator Application
@@ -199,10 +228,12 @@ if(GRASPLINK_BUILD_GRAPHICS)
   set(GRASPLINK_APP_SOURCES
     apps/viewer/main.cpp
     apps/viewer/ViewerApp.cpp
+    apps/viewer/DebugSceneSetup.cpp
   )
 
   set(GRASPLINK_APP_HEADERS
     apps/viewer/ViewerApp.h
+    apps/viewer/DebugSceneSetup.h
   )
 
   add_executable(grasplink_simulator
@@ -215,7 +246,11 @@ if(GRASPLINK_BUILD_GRAPHICS)
   )
 
   target_link_libraries(grasplink_simulator PRIVATE
+    grasplink_gui
+    grasplink_simulation
     grasplink_viewer
+    grasplink_robotics
+    grasplink_physics
   )
 
 
@@ -245,5 +280,6 @@ if(GRASPLINK_BUILD_GRAPHICS)
       ${CMAKE_SOURCE_DIR}/assets/plane.glb
       $<TARGET_FILE_DIR:grasplink_simulator>/plane.glb
   )
+
 
 endif()

@@ -1,24 +1,45 @@
-﻿#include "systems/TransformSystemModule.h"
+#include "systems/TransformSystemModule.h"
 
 #include "components/TransformComponents.h"
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
 
+#include <unordered_map>
+#include <vector>
+
 namespace
 {
-// Physics가 Render 행렬 갱신보다 먼저 실행될 수 있음 → 현재 Local 값으로 계산
-glm::mat4 BuildWorldMatrix(flecs::entity entity)
+using WorldTransformCache = std::unordered_map<flecs::entity_t, glm::mat4>;
+
+glm::mat4 UpdateEntityWorldTransform(flecs::entity entity, WorldTransformCache& cache)
 {
-    if (entity.id() == 0 || !entity.is_alive())
+    if (!entity.is_alive())
         return glm::mat4(1.0F);
 
-    const glm::mat4 local = TransformSystemModule::CalculateLocalMatrix(entity);
-    const flecs::entity parent = entity.parent();
-    if (parent.id() == 0 || !parent.is_alive() || parent == entity)
-        return local;
+    const flecs::entity_t id = entity.id();
+    if (const auto cached = cache.find(id); cached != cache.end())
+        return cached->second;
 
-    return BuildWorldMatrix(parent) * local;
+    const bool hasTransform = entity.has<Position, Local>() &&
+        entity.has<Rotation, Local>() && entity.has<Scale, Local>();
+    // 완전한 Local TRS가 없는 부모는 항등 Local로 조상 변환을 전달한다. 일부 TRS만 있어도 같은 처리다.
+    const glm::mat4 local = hasTransform ? TransformSystemModule::ComposeLocalMatrix(
+        entity.get<Position, Local>(), entity.get<Rotation, Local>(), entity.get<Scale, Local>())
+        : glm::mat4(1.0F);
+    if (hasTransform)
+        entity.set<TransformMatrix, Local>(TransformMatrix{local});
+
+    // 배열/생성 순서와 무관하게 부모부터 계산해 자식의 Local 좌표를 Scene 기준으로 옮긴다.
+    const flecs::entity parent = entity.parent();
+    const glm::mat4 parentWorld = parent.id() != 0 && parent.is_alive() && parent != entity
+        ? UpdateEntityWorldTransform(parent, cache)
+        : glm::mat4(1.0F);
+    const glm::mat4 world = parentWorld * local;
+    // grouping node에도 파생 World 행렬을 저장한다. 물리가 자식의 World pose를 Local로 되돌릴 때 필요하다.
+    entity.set<TransformMatrix, World>(TransformMatrix{world});
+    cache.emplace(id, world);
+    return world;
 }
 }
 
@@ -27,79 +48,33 @@ glm::mat4 TransformSystemModule::ComposeLocalMatrix(
     const glm::vec3& rotationRadians,
     const glm::vec3& scale)
 {
-    // 적용 순서: Entity 크기 → 회전 → 부모 기준 위치
-    const glm::mat4 translation = glm::translate(glm::mat4(1.0F), position);
-    const glm::mat4 rotationMatrix = glm::mat4_cast(glm::quat(rotationRadians));
-    const glm::mat4 scaleMatrix = glm::scale(glm::mat4(1.0F), scale);
-    return translation * rotationMatrix * scaleMatrix;
-}
-
-glm::mat4 TransformSystemModule::CalculateLocalMatrix(flecs::entity entity)
-{
-    if (entity.id() == 0 || !entity.is_alive() || !entity.has<Position, Local>() ||
-        !entity.has<Rotation, Local>() || !entity.has<Scale, Local>())
-    {
-        return glm::mat4(1.0F);
-    }
-
-    return ComposeLocalMatrix(
-        entity.get<Position, Local>(),
-        entity.get<Rotation, Local>(),
-        entity.get<Scale, Local>());
-}
-
-glm::mat4 TransformSystemModule::CalculateWorldMatrix(flecs::entity entity)
-{
-    // Fixed Update용: Render 캐시 대신 최신 Entity 자세 계산
-    return BuildWorldMatrix(entity);
+    return glm::translate(glm::mat4(1.0F), position) *
+        glm::mat4_cast(glm::quat(rotationRadians)) *
+        glm::scale(glm::mat4(1.0F), scale);
 }
 
 TransformSystemModule::TransformSystemModule(flecs::world& world)
 {
     world.module<TransformSystemModule>();
-    RegisterObserver(world);
-    RegisterSystem(world);
 }
 
-void TransformSystemModule::RegisterObserver(flecs::world& world)
+void TransformSystemModule::UpdateWorldTransforms(flecs::world& world)
 {
-    // 매 프레임 전체 계산. 변경 감시자 미사용
-    (void)world;
-}
-
-void TransformSystemModule::RegisterSystem(flecs::world& world)
-{
-    world.system<const Position, const Rotation, const Scale, TransformMatrix>(
-        "UpdateLocalTransform")
-        .kind(flecs::OnUpdate)
-        .term_at(0).second<Local>()
-        .term_at(1).second<Local>()
-        .term_at(2).second<Local>()
-        .term_at(3).second<Local>()
-        .each([](const Position& position,
-                 const Rotation& rotation,
-                 const Scale& scale,
-                 TransformMatrix& local)
+    // 먼저 handle을 모은 뒤 갱신한다. grouping 부모에 Component를 추가하며 query 순회 구조가 바뀔 수 있다.
+    std::vector<flecs::entity> transformedEntities;
+    world.each([&](flecs::entity entity)
+    {
+        if (entity.has<Position, Local>() && entity.has<Rotation, Local>() &&
+            entity.has<Scale, Local>() && entity.has<TransformMatrix, Local>() &&
+            entity.has<TransformMatrix, World>())
         {
-            static_cast<glm::mat4&>(local) =
-                TransformSystemModule::ComposeLocalMatrix(position, rotation, scale);
-        });
+            transformedEntities.push_back(entity);
+        }
+    });
 
-    world.system<const TransformMatrix, const TransformMatrix*, TransformMatrix>(
-        "UpdateWorldTransform")
-        .kind(flecs::OnUpdate)
-        .term_at(0).second<Local>()
-        .term_at(1).second<World>()
-        .term_at(1).parent().cascade()
-        .term_at(2).second<World>()
-        .each([](const TransformMatrix& local,
-                 const TransformMatrix* parentWorld,
-                 TransformMatrix& worldMatrix)
-        {
-            // 부모 먼저 계산 → 자식이 최신 부모 행렬 사용
-            static_cast<glm::mat4&>(worldMatrix) = parentWorld
-                ? static_cast<const glm::mat4&>(*parentWorld) *
-                    static_cast<const glm::mat4&>(local)
-                : static_cast<const glm::mat4&>(local);
-        });
+    WorldTransformCache cache;
+    cache.reserve(transformedEntities.size());
+    // 한 번의 갱신 안에서만 공유 부모를 재사용한다. 다음 호출은 변경된 Local TRS를 다시 읽는다.
+    for (flecs::entity entity : transformedEntities)
+        UpdateEntityWorldTransform(entity, cache);
 }

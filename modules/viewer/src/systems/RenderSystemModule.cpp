@@ -10,13 +10,8 @@
 
 namespace
 {
-/**
- * @brief 한 frame 동안 Renderer에 전달할 최소 draw data 묶음.
- *
- * @details
- * Flecs iterator가 가리키는 Component 메모리를 pass 사이에 직접 보관하지 않고 값으로 복사한다.
- * 이렇게 모아 두면 같은 visible item 목록을 Shadow Pass와 Main Pass에서 재사용할 수 있다.
- */
+// Component 값과 GPU 공유 참조를 복사해 두 pass가 같은 frame의 목록/행렬을 사용하게 한다.
+// Flecs Component 주소를 보관하지 않으므로 iterator 이동에 영향을 받지 않는다.
 struct RenderItem
 {
     MeshFilter meshFilter;
@@ -27,23 +22,13 @@ struct RenderItem
 
 RenderSystemModule::RenderSystemModule(flecs::world& world)
 {
-    // Flecs module로 등록하면 import 시 한 번만 system 구성을 설치할 수 있다.
     world.module<RenderSystemModule>();
     RegisterSystem(world);
 }
 
 void RenderSystemModule::RegisterSystem(flecs::world& world)
 {
-    /*
-        query 조건:
-        - MeshFilter: 어떤 GPU Mesh/index range를 그릴지
-        - MeshRenderer: 어떤 Shader/Material로 그릴지
-        - (TransformMatrix, World): 최종 World Model Matrix
-
-        flecs::PreStore는 일반 OnUpdate logic과 Transform 계산 이후에 렌더링을 수행하기 위한 phase다.
-    */
-    flecs::world* worldPointer = &world;
-
+    // PreStore에서 OnUpdate 뒤에 그린다. Transform 계산은 자동 phase가 아니므로 ViewerApp이 progress 전에 끝낸다.
     world
         .system<const MeshFilter, const MeshRenderer, const TransformMatrix>(
             "RenderSystem")
@@ -51,20 +36,17 @@ void RenderSystemModule::RegisterSystem(flecs::world& world)
         .term_at(2)
         .second<World>()
         .run(
-            [worldPointer](flecs::iter& it)
+            [](flecs::iter& it)
             {
+                // 등록 함수의 임시 World wrapper를 보관하지 않고 현재 실행 World에서 빌린 RenderContext를 읽는다.
                 const RenderContext* context =
-                    worldPointer->try_get<RenderContext>();
+                    it.world().try_get<RenderContext>();
 
                 if (!context || !context->renderer || !context->camera)
                     return;
 
                 std::vector<RenderItem> items;
 
-                /*
-                    먼저 visible Entity의 draw data를 모은다.
-                    Shadow/Main pass가 각각 ECS query를 다시 돌지 않게 하고 두 pass가 같은 frame snapshot을 사용한다.
-                */
                 while (it.next())
                 {
                     auto meshFilters = it.field<const MeshFilter>(0);
@@ -82,7 +64,7 @@ void RenderSystemModule::RegisterSystem(flecs::world& world)
                     }
                 }
 
-                // 1) Light 관점에서 depth만 그려 ShadowMap을 만든다.
+                // Light 기준 깊이를 먼저 그려 Main pass에서 사용할 그림자 정보를 만든다.
                 context->renderer->BeginShadowPass();
                 for (const RenderItem& item : items)
                 {
@@ -92,7 +74,7 @@ void RenderSystemModule::RegisterSystem(flecs::world& world)
                 }
                 context->renderer->EndShadowPass();
 
-                // 2) 현재 Camera 관점에서 Material/Texture/Lighting을 포함한 Main Pass를 그린다.
+                // 같은 Model 행렬을 Camera 기준으로 그린다. Material/Texture/조명은 Main pass에서 적용한다.
                 const glm::mat4 view = context->camera->GetViewMatrix();
                 const glm::mat4 projection = context->camera->GetProjectionMatrix();
                 const glm::vec3 cameraPosition = context->camera->GetPosition();
@@ -108,6 +90,5 @@ void RenderSystemModule::RegisterSystem(flecs::world& world)
                         cameraPosition);
                 }
 
-                // TODO(FUTURE): Entity 수가 커지면 frustum culling과 draw sorting을 items 생성 단계에 추가한다.
             });
 }
