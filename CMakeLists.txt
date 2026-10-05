@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.20)
+﻿cmake_minimum_required(VERSION 3.20)
 
 project(GraspLink VERSION 0.1.0 LANGUAGES C CXX)
 
@@ -321,6 +321,7 @@ if(GRASPLINK_BUILD_GRAPHICS)
     add_executable(grasplink_collision_tests tests/RobotCollisionGeometryTests.cpp)
     target_link_libraries(grasplink_collision_tests PRIVATE grasplink_simulation)
     add_test(NAME RobotCollisionGeometry COMMAND grasplink_collision_tests)
+    set_tests_properties(RobotCollisionGeometry PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 
     add_executable(grasplink_gripper_collision_tests tests/GripperCollisionIntegrationTests.cpp)
     target_link_libraries(grasplink_gripper_collision_tests PRIVATE grasplink_simulation)

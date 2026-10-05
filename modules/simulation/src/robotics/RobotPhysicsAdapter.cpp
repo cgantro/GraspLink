@@ -93,8 +93,8 @@ PositionKey MakePositionKey(const glm::vec3& position)
 
 PositionKey MakeCollisionCellKey(const glm::vec3& position)
 {
-    // 단위: 한 셀은 8 cm. 긴 링크의 분할 수를 줄이되 부품 사이 빈 공간은 합치지 않는다.
-    constexpr float CellSizeMeters = 0.08F;
+    // 단위: 한 셀은 16 cm. 긴 링크의 분할 수를 줄이되 부품 사이 빈 공간은 합치지 않는다.
+    constexpr float CellSizeMeters = 0.16F;
     return {
         static_cast<std::int64_t>(std::floor(position.x / CellSizeMeters)),
         static_cast<std::int64_t>(std::floor(position.y / CellSizeMeters)),
@@ -212,7 +212,7 @@ std::vector<grasplink::physics::CollisionShapeDescription> BuildLinkShapes(
 
             std::unordered_map<std::size_t,
                 std::unordered_map<PositionKey, std::vector<glm::vec3>, PositionKeyHash>> collisionCells;
-            // 삼각형 중심을 8 cm 셀로 묶는다. 삼각형을 자르지는 않으며 셀별 hull로 근사한다.
+            // 삼각형 중심을 16 cm 셀로 묶는다. 삼각형을 자르지는 않으며 셀별 hull로 근사한다.
             for (std::size_t index = subMesh.indexStart; index + 2 < end; index += 3)
             {
                 const std::uint32_t first = mesh.indices[index];

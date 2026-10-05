@@ -1,4 +1,6 @@
 #include "robotics/kinematics/RobotKinematics.h"
+#include "robotics/models/hanwha/Hcr12a.h"
+#include "assets/GltfLoader.h"
 #include "scene/SceneManager.h"
 #include "simulation/components/PhysicsComponents.h"
 #include "simulation/robotics/RobotPhysicsAdapter.h"
@@ -6,6 +8,7 @@
 #include "TestSupport.h"
 
 #include <iostream>
+#include <filesystem>
 
 namespace
 {
@@ -85,6 +88,21 @@ int main()
         scenes.LoadScene<Scene>();
         scenes.OnUpdate(0.0F);
         ExpectThrows<std::runtime_error>([&] { adapter.Apply(fk.Update(state)); }, "removed Scene invalidates physics proxy bindings");
+        const auto actualModel = GltfLoader::LoadGLB(std::filesystem::path("assets") / "HCR12A_2F-85.glb");
+        Entity actualRoot = scenes.GetActiveScene()->CreateEntity("ActualRobot");
+        grasplink::simulation::RobotPhysicsAdapter actualAdapter(
+            *scenes.GetActiveScene(), actualRoot, models::hanwha::kHcr12a, actualModel);
+        std::size_t actualHullCount = 0;
+        for (const auto& proxy : actualRoot.GetChildren())
+        {
+            const auto& shapes = proxy.GetHandle().get<Colliders>().shapes;
+            Require(!shapes.empty(), "actual robot link retains collision coverage");
+            actualHullCount += shapes.size();
+            std::cout << proxy.GetHandle().name() << ": " << shapes.size() << " hulls\n";
+        }
+        std::cout << "Actual robot hulls: " << actualHullCount << '\n';
+        Require(actualRoot.GetChildren().size() == 6, "actual arm keeps six independent rigid links");
+        Require(actualHullCount <= 150, "actual arm collider complexity stays within runtime budget");
         std::cout << "Rigid-link geometry ownership and proxy pose checks passed\n";
         return 0;
     }
