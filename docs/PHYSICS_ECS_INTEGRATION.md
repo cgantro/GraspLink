@@ -5,7 +5,7 @@
 | 영역 | 책임 |
 | --- | --- |
 | `modules/physics` | Jolt 초기화, Body 생성·삭제, 고정 스텝, pose 조회·변경 |
-| `modules/robotics` | RobotState와 모델 명세를 사용한 순기구학 계산 |
+| `modules/robotics` | Robot/Gripper Controller 상태, 팔 FK와 그리퍼 master/mimic Local 회전 계산 |
 | `modules/viewer` | Flecs Scene, 화면 Transform, GLB·OpenGL 표현 |
 | `modules/simulation` | 물리 설정 컴포넌트, Entity와 Body 연결, 로봇 충돌 프록시, 시뮬레이션 Scene 구성 |
 | `ViewerApp` | 모듈을 만들고 실행 순서를 연결하는 Composition Root |
@@ -27,17 +27,20 @@ entity.set<RigidBody>(RigidBody{BodyMotionType::Dynamic})
 
 Physics가 있는 Entity와 모든 조상 Entity는 unit scale이어야 한다. 단, Static Environment collider는 Entity 자신의 시각 scale을 허용한다. Floor Mesh의 authored scale은 Render 표현에만 쓰고, collider 크기와 offset은 meter 단위로 직접 지정한다. Jolt rigid body pose에는 scale이 포함되지 않는다.
 
-고정 스텝 흐름은 다음과 같다.
+4 ms 고정 스텝 흐름은 다음과 같다.
 
 ```text
-RobotController Update
+RobotController / GripperController Update
 → RobotKinematics: RobotState → joint rotation / link pose
 → RobotTransformAdapter: joint rotation → GLB Joint Entity
 → RobotPhysicsAdapter: link pose → Kinematic collision Entity
+→ GripperKinematics: 연속 closureFraction → master/mimic Local 회전
+→ GripperTransformAdapter: bind 회전과 결합 → GLB 관절 Local 회전
 → TransformSystemModule: Local → World matrix
 → PhysicsSystemModule: Kinematic Entity → Jolt
 → PhysicsWorld Step
 → PhysicsSystemModule: Dynamic Jolt pose → Entity Local Transform
+→ TransformSystemModule: World matrix 재갱신
 ```
 
 화면 갱신 전에도 `TransformSystemModule::UpdateWorldTransforms()`가 실행된다. 따라서 RenderSystem은 최신 Local Transform으로 계산한 World 행렬을 읽으며, Physics는 render FPS와 독립된 fixed step에서만 진행한다.
@@ -48,7 +51,7 @@ RobotController Update
 
 HCR-12A collider는 GLB 재질 메시의 삼각형 연결로 나눈 부품별로 생성한다. 같은 위치의 seam 정점도 연결해 부품을 판별한다. 4 cm 미만 부품은 제외하고, 나머지는 삼각형 중심을 관절 좌표계 기준 16 cm 셀로 묶는다. 삼각형은 셀 경계에서 자르지 않는다. 1 cm 미만 크기 셀과 부피가 없는 hull 입력도 제외한다. 각 셀의 Convex Hull은 오목한 부분이나 셀 경계 사이를 메울 수 있다. 다음 가동 관절 아래와 `Gripper` geometry는 이 adapter의 hull 생성 대상이 아니다.
 
-`ConfigureTwoF85Colliders`는 고정 `GripperMesh`, outer knuckle+finger compound, inner knuckle, fingertip을 각각 한 mesh 기반 Convex Hull로 만들어 총 일곱 Kinematic proxy로 둔다. 정점은 owning authored Gripper/joint 원점 기준이며, 해당 proxy는 원본 joint Entity의 child라 fixed-step World transform에서 자동으로 따라간다. 현재 authored ECS joint가 pose source of truth다. 시작 형상은 약 85 mm open gap을 보존한다. 이 단계는 controller나 grasp 동역학을 공급하지 않는다.
+`ConfigureTwoF85Colliders`는 고정 `GripperMesh`, outer knuckle+finger compound, inner knuckle, fingertip을 각각 한 mesh 기반 Convex Hull로 만들어 총 일곱 Kinematic proxy로 둔다. 정점은 owning authored Gripper/joint 원점 기준이며, 해당 proxy는 원본 joint Entity의 child라 fixed-step World transform에서 자동으로 따라간다. 개폐 자세의 기준은 `SimGripperController`의 유효한 연속 `GripperState.closureFraction`이다. `GripperKinematics`가 master/mimic Local 회전을 계산하고 `GripperTransformAdapter`가 bind 회전과 결합해 원본 관절에 적용한다. 시작 형상은 약 85 mm open gap을 보존한다. 별도 proxy 구동기는 필요하지 않으며 힘·접촉 시 정지·grasp 동역학은 공급하지 않는다. 매핑과 속도의 시뮬레이션 가정은 [그리퍼 런타임 설계](GRIPPER_RUNTIME_DESIGN.md)를 참고한다.
 
 `Robot`과 `Gripper`는 Environment 및 DynamicObject와 충돌한다. Robot 링크끼리, Gripper part끼리, Robot–Gripper 사이 충돌은 제외해 현재 프록시의 자기 충돌을 줄인다. 부착 상태별 필터는 없다.
 
@@ -73,6 +76,5 @@ Collider는 하나의 Body 안에 Box/Cylinder/Sphere/Convex Hull을 여러 개 
 ## 다음 구현 단계
 
 1. 충돌 wireframe과 접촉 결과를 보며 asset 기반 hull을 검증한다.
-2. Gripper controller와 고정 tick pose 공급을 연결한다. 현재는 authored ECS joint가 proxy transform의 source of truth다.
-3. 접촉 결과를 읽고 grasp 상태를 판정한다.
-4. 필요성이 확인되면 joint constraint와 관절 동역학을 추가한다.
+2. 접촉 결과를 읽고 그리퍼 정지·grasp 상태를 판정한다. 현재 자유공간 개폐는 접촉과 무관하게 목표까지 진행한다.
+3. 필요성이 확인되면 joint constraint와 관절 동역학을 추가한다.
