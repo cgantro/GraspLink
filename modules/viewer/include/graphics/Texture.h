@@ -4,50 +4,45 @@
 #include <memory>
 
 /**
- * @brief OpenGL Texture Object의 lifetime과 texture-unit binding을 관리한다.
- *
+ * @brief 8-bit CPU 이미지를 OpenGL 2D texture로 올려 shader에서 읽게 한다.
  * @details
- * Create2D는 CPU image pixel을 GPU texture로 업로드한다. Base color 같은 색상 texture는
- * sRGB 내부 포맷으로 저장하면 sampling 시 GPU가 자동으로 linear space로 변환한다.
- * 반면 normal/roughness 같은 데이터 texture는 sRGB 변환을 사용하면 안 된다.
- *
- * @todo [FUTURE] Texture usage/semantic을 도입해 baseColor는 sRGB, normal/metallic 등은 linear로 자동 선택한다.
- * @todo [FUTURE] glTF sampler의 wrap/filter 설정을 반영한다.
- */
-/*
- * [추가 그래픽스 용어 설명]
- * - Texture: 2D 이미지나 수치 데이터를 GPU에서 sampling할 수 있게 저장한 리소스.
- * - Sampling: UV 좌표를 이용해 texture의 특정 위치 값을 읽는 과정.
- * - Texture Unit: Shader가 여러 texture를 동시에 읽을 때 각 texture를 연결하는 slot.
- * - sRGB: 사람이 보는 밝기 특성에 맞춘 비선형 색 공간. 색상 texture에 사용한다.
- * - Linear Space: 조명 계산을 수행하기 적합한 선형 색 공간.
- * - Channel: pixel 하나가 가진 성분 수. 예: RGB=3, RGBA=4.
- * - Wrap/Filter: UV가 범위를 벗어나거나 pixel보다 확대/축소될 때 texture를 읽는 규칙.
- *
- * width/height는 pixel 단위, channels는 pixel당 성분 개수다.
- * pixels는 CPU 메모리의 8-bit raw image buffer 시작 주소다.
+ * Create2D는 전달받은 픽셀을 업로드한 뒤 CPU 포인터를 보관하지 않는다. Material이 base color
+ * texture를 공유하고 Renderer는 이를 unit 0에 묶는다. ShadowMap은 별도 unit 7을 사용한다.
+ * 이 클래스는 GL texture ID만 소유하며 마지막 shared_ptr가 해제될 때 glDeleteTextures를 호출한다.
+ * 생성과 파괴 모두 유효한 GL context가 현재 thread에 있어야 한다. 생성 인자 검증 실패는
+ * std::runtime_error를 던지며, context 부재나 OpenGL 오류를 예외로 변환하지는 않는다.
  */
 class Texture final
 {
 public:
     Texture();
 
-    /** @brief 소유한 OpenGL texture object를 삭제한다. */
     ~Texture();
 
     Texture(const Texture&) = delete;
     Texture& operator=(const Texture&) = delete;
 
-    /** @brief texture를 지정 texture unit에 바인딩한다. */
+    /**
+     * @brief 이 texture를 지정한 texture unit에 바인딩한다.
+     * @param slot OpenGL texture unit 번호. 연결할 sampler uniform 값과 같아야 한다.
+     */
     void Bind(std::uint32_t slot = 0) const;
 
     /**
-     * @brief 8-bit CPU pixel 데이터로 2D texture를 생성한다.
-     * @param width image width.
-     * @param height image height.
-     * @param channels 1, 3 또는 4 channel.
-     * @param pixels CPU pixel buffer 시작 주소.
-     * @param srgb RGB/RGBA를 sRGB 내부 포맷으로 저장할지 여부.
+     * @brief 연속된 8-bit 픽셀 배열로 2D texture를 생성한다.
+     * @param width 이미지 너비 [pixel], 양수.
+     * @param height 이미지 높이 [pixel], 양수.
+     * @param channels 성분 수. 1(RED), 3(RGB), 4(RGBA)만 지원한다.
+     * @param pixels 최소 width*height*channels byte를 가진 연속 배열. 호출 중 업로드하며 포인터는 보관하지 않는다.
+     * @param srgb RGB 색 texture이면 true. RGB 성분을 shader에서 선형 공간으로 읽도록 sRGB 내부 형식을 쓴다.
+     *             alpha는 변환되지 않으며, 1-channel 형식은 항상 R8이다.
+     * @return GPU texture를 소유하는 공유 포인터.
+     * @throws std::runtime_error 크기/포인터가 유효하지 않거나 channels가 1, 3, 4가 아닐 때.
+     * @details minification은 선형 mip 선택과 선형 보간, magnification은 선형 보간을 사용한다.
+     *          S/T는 반복하고 mipmap을 생성한다. 입력 행 순서는 그대로 올리며 수직 반전하지 않는다.
+     *          glTF 이미지는 TinyGLTF가 디코딩한 배열을 그대로 전달하므로 별도의 STB flip 설정은 없다.
+     *          Metal-roughness 등의 수치 texture에는 srgb=false가 필요하지만 현재 Material/Renderer는
+     *          base color texture만 사용한다. Sampler별 glTF 필터·wrap 설정은 적용하지 않는다.
      */
     static std::shared_ptr<Texture> Create2D(
         int width,
@@ -57,9 +52,9 @@ public:
         bool srgb = true);
 
 private:
-    // OpenGL이 발급한 texture object ID. 0은 아직 생성되지 않은 초기 상태.
+    // 소유: GPU texture ID. 0은 미생성 상태.
     std::uint32_t m_RendererID = 0;
 
-    // OpenGL texture target enum. 현재 2D texture이면 GL_TEXTURE_2D 계열 값이 들어간다.
+    // 종류: 현재는 GL_TEXTURE_2D만 생성.
     std::uint32_t m_Target = 0;
 };

@@ -6,62 +6,53 @@
 class Texture;
 
 /**
- * @brief Renderer가 사용하는 런타임 Material 상태를 보관한다.
- *
+ * @brief 표면의 기본색과 단순화된 금속성·거칠기 값을 보관한다.
  * @details
- * Material은 GLB 파일을 직접 해석하지 않는다. GltfLoader가 MaterialData를 만들고,
- * AssetManager가 이를 GPU-side Material로 변환한다. 현재는 metallic-roughness factor와
- * base color texture만 실제 렌더링 경로에 연결되어 있다.
- *
- * @todo [FUTURE] normal, metallicRoughness, occlusion, emissive texture와 alphaMode를 추가한다.
- */
-/*
- * [추가 그래픽스 용어 설명]
- * - Material: Mesh 표면이 빛과 어떻게 상호작용할지 정하는 값 묶음.
- * - PBR(Physically Based Rendering): 금속성/거칠기 같은 물리적 특성을 이용해 빛 반응을 계산하는 렌더링 방식.
- * - Base Color / Albedo: 조명 효과를 제외한 표면의 기본 색.
- * - Metallic: 표면이 금속처럼 반사되는 정도. 일반적으로 0=비금속, 1=금속.
- * - Roughness: 표면 거칠기. 0에 가까울수록 반사가 날카롭고, 1에 가까울수록 넓게 퍼진다.
- * - Texture: 표면의 위치마다 다른 색/값을 제공하는 2D 이미지 데이터.
- * - Factor: Texture 결과에 곱해 최종 값을 조정하는 무차원 계수.
- *
- * baseColorFactor는 RGBA 순서이며 각 성분은 보통 0..1 범위를 사용한다.
- * metallicFactor/roughnessFactor도 무차원 값이다.
+ * AssetManager가 asset 데이터로 Material을 만들고 Renderer가 값을 shader uniform으로 전달한다.
+ * 기본색은 RGBA factor와 선택적 base color texture를 함께 둘 수 있다. Renderer는 둘을 곱해
+ * 표면색을 만들며, metallic·roughness texture는 현재 연결하지 않고 계수만 전달한다.
+ * Robot.glsl의 조명은 이 계수를 쓰는 단순화된 metallic/roughness 근사이며 완전한 glTF PBR은 아니다.
+ * Texture는 shared_ptr로 공유하므로 마지막 참조가 사라질 때 GPU 자원이 해제된다. 그 시점까지
+ * OpenGL context가 유효해야 한다.
  */
 class Material final
 {
 public:
-    /** @brief PBR 기본 factor로 Material을 생성한다. */
+    /**
+     * @brief 기본 표면 계수를 설정한다.
+     * @param baseColorFactor RGBA 배율. RGB는 선형 색 값, alpha는 불투명도 배율이다.
+     * @param metallicFactor 금속성 계수 [0..1], 단위 없음.
+     * @param roughnessFactor 거칠기 계수 [0..1], 단위 없음.
+     */
     Material(const glm::vec4& baseColorFactor, float metallicFactor, float roughnessFactor);
 
-    /** @brief Base color RGBA factor를 반환한다. */
     const glm::vec4& BaseColorFactor() const;
 
-    /** @brief Metallic factor를 반환한다. */
     float MetallicFactor() const;
 
-    /** @brief Roughness factor를 반환한다. */
     float RoughnessFactor() const;
 
-    /** @brief Base color Texture의 shared ownership을 연결한다. */
+    /**
+     * @brief 기본색 texture를 공유한다.
+     * @param texture 연결할 GPU texture. nullptr이면 기존 texture를 제거한다.
+     * @details Texture의 마지막 shared_ptr가 해제될 때 GPU 자원이 삭제되므로, 그때까지 GL context가 필요하다.
+     */
     void SetBaseColorTexture(const std::shared_ptr<Texture>& texture);
 
-    /** @brief 연결된 Base color Texture를 반환한다. */
     std::shared_ptr<Texture> GetBaseColorTexture() const;
 
-    /** @brief Base color Texture 존재 여부를 반환한다. */
     bool HasBaseColorTexture() const;
 
 private:
-    // RGBA 기본색 factor. (1,1,1,1)은 texture/기본색을 그대로 사용하는 흰색 배율이다.
+    // (1,1,1,1)은 곱셈 항등값이므로 texture 색과 alpha를 그대로 통과시킨다.
     glm::vec4 m_BaseColorFactor{1.0F};
 
-    // 금속성 계수. 무차원.
+    // 0은 비금속, 1은 금속. Renderer와 Robot.glsl이 조명 근사에 사용한다.
     float m_MetallicFactor = 1.0F;
 
-    // 거칠기 계수. 무차원.
+    // 0에 가까울수록 반사가 날카롭고 1에 가까울수록 넓게 퍼진다. shader는 최소값을 별도로 제한한다.
     float m_RoughnessFactor = 1.0F;
 
-    // 여러 Material/Asset이 같은 GPU Texture를 공유할 수 있어 shared_ptr를 사용한다.
+    // AssetManager가 공유한 GPU texture의 소유 참조. 마지막 소유자가 파괴될 때 Texture destructor가 GL ID를 삭제한다.
     std::shared_ptr<Texture> m_BaseColorTexture;
 };

@@ -8,17 +8,14 @@ Texture::Texture() = default;
 
 Texture::~Texture()
 {
-    // OpenGL object ID는 Context가 살아 있는 동안 한 번만 삭제해야 한다.
+    // GL object 삭제도 context를 요구한다. 소유자가 context 종료 뒤 살아남지 않도록 정리 순서를 맞춘다.
     if (m_RendererID != 0)
         glDeleteTextures(1, &m_RendererID);
 }
 
 void Texture::Bind(std::uint32_t slot) const
 {
-    /*
-        Shader의 sampler2D는 texture object 자체를 직접 가리키지 않고 texture unit 번호를 사용한다.
-        예: sampler uniform=0이면 GL_TEXTURE0에 현재 바인딩된 texture를 sampling한다.
-    */
+    // 활성 unit 변경과 target 바인딩을 함께 수행한다. sampler uniform 값은 호출자가 별도로 설정한다.
     glActiveTexture(GL_TEXTURE0 + slot);
     glBindTexture(m_Target, m_RendererID);
 }
@@ -30,9 +27,11 @@ std::shared_ptr<Texture> Texture::Create2D(
     const unsigned char* pixels,
     bool srgb)
 {
+    // 유효하지 않은 입력을 GL 상태 변경 전에 거부해 부분 생성된 ID가 남지 않게 한다.
     if (width <= 0 || height <= 0 || pixels == nullptr)
         throw std::runtime_error("Invalid texture data");
 
+    // format은 CPU 배열의 채널 배치, internalFormat은 GPU 저장 형식과 색 변환 방식을 정한다.
     GLenum format = GL_RGB;
     GLenum internalFormat = GL_RGB8;
 
@@ -56,23 +55,19 @@ std::shared_ptr<Texture> Texture::Create2D(
         throw std::runtime_error("Unsupported texture channel count");
     }
 
-    /*
-        sRGB internal format을 사용하면 GPU가 sampling할 때 sRGB encoded color를 linear space로 변환한다.
-        조명 계산은 linear space에서 해야 하므로 baseColor texture에 적합하다.
-        normal/roughness 같은 데이터 texture에는 sRGB 변환을 적용하면 안 된다.
-    */
     auto texture = std::make_shared<Texture>();
     texture->m_Target = GL_TEXTURE_2D;
 
     glGenTextures(1, &texture->m_RendererID);
     glBindTexture(GL_TEXTURE_2D, texture->m_RendererID);
 
+    // 작은 화면 크기로 축소될 때 미리 만든 mip 단계와 선형 보간을 사용한다.
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
 
-    // RGB row byte 수가 4의 배수가 아닐 수 있으므로 OpenGL 기본 alignment(4)를 1로 낮춘다.
+    // 입력: 행 사이 padding 없는 CPU pixel 배열을 읽도록 기본 4-byte 정렬을 1로 변경.
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 
     glTexImage2D(
@@ -86,11 +81,11 @@ std::shared_ptr<Texture> Texture::Create2D(
         GL_UNSIGNED_BYTE,
         pixels);
 
-    // 멀리 있는 texture가 aliasing되는 것을 줄이기 위해 축소 해상도 chain을 만든다.
+    // 이유: 축소 이미지를 미리 만들어 멀리 있는 표면의 texture 깜빡임을 줄임.
     glGenerateMipmap(GL_TEXTURE_2D);
 
     glBindTexture(GL_TEXTURE_2D, 0);
 
-    // TODO(FUTURE): glTF sampler의 wrap/filter 설정을 입력으로 받아 하드코딩을 제거한다.
+    // 제한: glTF sampler 설정 대신 고정 반복·필터 규칙 사용.
     return texture;
 }
