@@ -592,6 +592,17 @@ void PhysicsWorld::MoveKinematic(
 }
 
 
+void PhysicsWorld::StopKinematic(PhysicsBodyHandle handle)
+{
+    if (!IsBodyValid(handle))
+        throw std::invalid_argument("Invalid PhysicsBodyHandle.");
+    auto& bodyInterface = impl_->physicsSystem.GetBodyInterface();
+    const JPH::BodyID bodyID = ToBodyID(handle);
+    if (bodyInterface.GetMotionType(bodyID) != JPH::EMotionType::Kinematic)
+        throw std::logic_error("StopKinematic requires a kinematic body.");
+    bodyInterface.SetLinearAndAngularVelocity(bodyID, JPH::Vec3::sZero(), JPH::Vec3::sZero());
+}
+
 void PhysicsWorld::DestroyBody(PhysicsBodyHandle handle)
 {
     if (!IsBodyValid(handle))

@@ -74,9 +74,19 @@ int main()
         const auto moving = world.CreateBody(platform);
         auto target = platform.transform;
         target.position.y = 0.25F;
+        target.rotation = glm::angleAxis(0.4F, glm::vec3{0.0F, 1.0F, 0.0F}) * target.rotation;
         world.MoveKinematic(moving, target, 0.004);
         world.Step(0.004);
         RequireNear(world.GetBodyTransform(moving).position.y, 0.25, 1e-4, "kinematic body origin");
+        // 목표 전송을 중단해도 COM이 치우친 회전 Body가 계속 움직이지 않아야 한다.
+        world.StopKinematic(moving);
+        const Transform stopped = world.GetBodyTransform(moving);
+        for (int tick = 0; tick < 250; ++tick) world.Step(0.004);
+        const Transform afterStop = world.GetBodyTransform(moving);
+        RequireNear(glm::length(afterStop.position - stopped.position), 0.0, 1e-5, "stopped kinematic has no linear drift");
+        RequireNear(std::abs(glm::dot(afterStop.rotation, stopped.rotation)), 1.0, 1e-5,
+            "stopped kinematic has no angular drift");
+        ExpectThrows<std::logic_error>([&] { world.StopKinematic(handle); }, "Static body cannot stop as Kinematic");
         world.DestroyBody(moving);
 
         // 핸들은 World별 token과 Body ID를 함께 식별한다. 파괴 뒤 ID가 재사용돼도 이전 handle은 무효다.
@@ -84,6 +94,7 @@ int main()
         const auto other = otherWorld.CreateBody(OffsetPlatform());
         Require(otherWorld.IsBodyValid(other), "own World handle");
         Require(!otherWorld.IsBodyValid(handle), "cross-World handle must fail");
+        ExpectThrows<std::invalid_argument>([&] { otherWorld.StopKinematic(handle); }, "cross-World stop must fail");
         ExpectThrows<std::invalid_argument>([&] { otherWorld.GetBodyTransform(handle); }, "cross-World getter must fail");
         world.DestroyBody(handle);
         Require(!world.IsBodyValid(handle), "destroyed handle must fail");

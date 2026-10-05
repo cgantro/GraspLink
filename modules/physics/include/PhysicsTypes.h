@@ -64,6 +64,18 @@ enum class BodyMotionType : std::uint8_t
     Dynamic
 };
 
+/** @brief Static·Kinematic의 자세는 Scene이 정하고 Physics는 전달된 자세를 사용한다. */
+constexpr bool IsSceneDriven(BodyMotionType type) noexcept
+{
+    return type == BodyMotionType::Static || type == BodyMotionType::Kinematic;
+}
+
+/** @brief Dynamic의 자세는 Physics가 정하고 Scene은 계산 결과를 표시한다. */
+constexpr bool IsPhysicsDriven(BodyMotionType type) noexcept
+{
+    return type == BodyMotionType::Dynamic;
+}
+
 /**
  * @brief 충돌 필터가 사용하는 상대 분류.
  * @details

@@ -95,6 +95,15 @@ public:
         const Transform& targetTransform,
         double fixedDeltaSeconds);
 
+    /**
+     * @brief 목표에 도달한 Kinematic Body의 선속도·각속도를 0으로 만든다.
+     * @details MoveKinematic은 목표에서 이동 속도를 만들며 Step 이후에도 그 속도가 남는다.
+     * 목표 전달을 생략하기 전에 한 번 호출해 정지시킨다. 위치·회전은 바꾸지 않는다.
+     * @throws std::invalid_argument 핸들이 유효하지 않을 때.
+     * @throws std::logic_error Body가 Kinematic이 아닐 때.
+     */
+    void StopKinematic(PhysicsBodyHandle handle);
+
     /** @brief Body를 Jolt 계산 목록에서 빼고 해제한다. 무효·타 World 핸들은 무시한다. */
     void DestroyBody(
         PhysicsBodyHandle handle);
