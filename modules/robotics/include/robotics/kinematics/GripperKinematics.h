@@ -60,6 +60,8 @@ public:
 private:
     const models::GripperSpecification& specification_;
     GripperKinematicState state_;
+    // 두 버퍼를 교환해 실패 시 이전 결과를 보존하고 4 ms tick마다 재할당하지 않는다.
+    GripperKinematicState pending_;
 };
 
 } // namespace grasplink::robotics::kinematics

@@ -25,12 +25,12 @@ models::QuaternionWxyz AxisRotation(const models::Axis3& axis, double angle)
 {
     const double length = AxisLength(axis);
     const double halfAngle = angle * 0.5;
-    const double sine = std::sin(halfAngle) / length;
+    const double sine = std::sin(halfAngle);
     return {
         std::cos(halfAngle),
-        axis.x * sine,
-        axis.y * sine,
-        axis.z * sine};
+        (axis.x / length) * sine,
+        (axis.y / length) * sine,
+        (axis.z / length) * sine};
 }
 }
 
@@ -71,6 +71,7 @@ GripperKinematics::GripperKinematics(const models::GripperSpecification& specifi
 
     state_.jointAnglesRadians.resize(specification_.jointCount);
     state_.jointLocalRotations.resize(specification_.jointCount);
+    pending_ = state_;
 }
 
 const GripperKinematicState& GripperKinematics::Update(const GripperState& state)
@@ -80,10 +81,8 @@ const GripperKinematicState& GripperKinematics::Update(const GripperState& state
         state.closureFraction < 0.0 || state.closureFraction > 1.0)
         throw std::invalid_argument("GripperKinematics: invalid closure state");
 
-    GripperKinematicState next;
+    GripperKinematicState& next = pending_;
     next.masterAngleRadians = specification_.nominalMasterClosedRadians * state.closureFraction;
-    next.jointAnglesRadians.resize(specification_.jointCount);
-    next.jointLocalRotations.resize(specification_.jointCount);
 
     for (std::size_t i = 0; i < specification_.jointCount; ++i)
     {
@@ -97,7 +96,7 @@ const GripperKinematicState& GripperKinematics::Update(const GripperState& state
     }
 
     // 모든 관절 결과를 먼저 계산해 검증한다. 중간 관절 오류가 직전 정상 상태 일부를 덮지 않게 한다.
-    state_ = std::move(next);
+    std::swap(state_, pending_);
     return state_;
 }
 
