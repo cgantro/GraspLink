@@ -43,7 +43,10 @@ void RequireSnapshotEqual(const GripperState& left, const GripperState& right, c
 
 void CheckLifecycleAndCommands()
 {
-    SimGripperController controller(kTwoF85);
+    // 2F-85의 raw 범위는 0..255 전체다. 거부 경로 검증용 사양만 force 최솟값을 좁힌다.
+    auto specification = kTwoF85;
+    specification.forceRequestMin = 1;
+    SimGripperController controller(specification);
     Require(controller.Command(Request(255)).code == ErrorCode::NotConnected, "command requires connection");
     Require(controller.Activate().code == ErrorCode::NotConnected, "activation requires connection");
 
@@ -56,11 +59,12 @@ void CheckLifecycleAndCommands()
     Require(!state.currentValid && state.currentRaw == 0, "simulation does not invent current feedback");
 
     Require(static_cast<bool>(controller.Connect()), "connect is idempotent");
+    Require(controller.Command(Request(255)).code == ErrorCode::Busy, "command requires activation");
     Require(static_cast<bool>(controller.Activate()), "activate");
-    Require(controller.GetState().activated && controller.GetState().mode == GripperMode::Idle,
+    Require(controller.GetState().activated && controller.GetState().activationStatus == 3 &&
+        controller.GetState().mode == GripperMode::Idle,
         "activate enters idle");
     Require(static_cast<bool>(controller.Activate()), "activation is idempotent");
-    Require(controller.Command(Request(255)).code == ErrorCode::Busy, "command requires activation");
 
     Require(static_cast<bool>(controller.Command(Request(255, 0, 255))), "full close request accepted");
     state = controller.GetState();
@@ -122,7 +126,7 @@ void CheckLifecycleAndCommands()
         state.objectStatus == GripperObjectStatus::AtRequestedPosition,
         "large dt clamps exactly to target without reporting contact");
 
-    // Retargeting replaces the destination from the current continuous position.
+    // 목표 교체: 직전 요청 위치가 아니라 현재 연속 위치에서 새 목표로 이동한다.
     Require(static_cast<bool>(maximumSpeed.Command(Request(255, 255))), "repeat close request accepted");
     Require(static_cast<bool>(maximumSpeed.Command(Request(0, 255))), "open retarget accepted");
     maximumSpeed.Update(0.1);
@@ -153,7 +157,7 @@ void CheckStopResetAndReconnect()
 
     Require(static_cast<bool>(controller.Reset()), "reset");
     const auto reset = controller.GetState();
-    Require(reset.mode == GripperMode::Inactive && !reset.activated && !reset.goToActive,
+    Require(reset.mode == GripperMode::Inactive && !reset.activated && reset.activationStatus == 0 && !reset.goToActive,
         "reset stops and deactivates");
     RequireNear(reset.closureFraction, beforeStop.closureFraction, 0.0, "reset preserves position");
     Require(reset.requestedPositionEcho == 255 && reset.objectStatus == GripperObjectStatus::Moving,
@@ -182,7 +186,7 @@ void CheckStopResetAndReconnect()
 
 void CheckSpecificationAndSettingsValidation()
 {
-    const auto invalidSpecification = [](const GripperSpecification& specification)
+    const auto invalidSpecification = [](const models::GripperSpecification& specification)
     {
         ExpectThrows<std::invalid_argument>([&] { SimGripperController invalid(specification); },
             "invalid gripper specification rejected");

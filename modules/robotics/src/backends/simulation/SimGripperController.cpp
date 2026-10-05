@@ -56,7 +56,6 @@ Result SimGripperController::Connect()
     state_.closureFraction = 0.0;
     state_.closureFractionValid = true;
     state_.valid = true;
-    closureFraction_ = 0.0;
     targetClosureFraction_ = 0.0;
     masterVelocityRadiansPerSecond_ = 0.0;
     connected_ = true;
@@ -70,7 +69,6 @@ void SimGripperController::Disconnect() noexcept
     state_.mode = GripperMode::Disconnected;
     state_.valid = false;
     state_.closureFractionValid = false;
-    closureFraction_ = 0.0;
     targetClosureFraction_ = 0.0;
     masterVelocityRadiansPerSecond_ = 0.0;
 }
@@ -89,6 +87,7 @@ Result SimGripperController::Activate()
         return Result::Success();
 
     state_.activated = true;
+    state_.activationStatus = 3;
     state_.goToActive = false;
     state_.mode = GripperMode::Idle;
     state_.objectStatus = IsAtTarget()
@@ -105,6 +104,7 @@ Result SimGripperController::Reset()
     const bool reachedRequestedPosition = IsAtTarget();
     masterVelocityRadiansPerSecond_ = 0.0;
     state_.activated = false;
+    state_.activationStatus = 0;
     state_.goToActive = false;
     state_.mode = GripperMode::Inactive;
     state_.objectStatus = reachedRequestedPosition
@@ -184,19 +184,17 @@ void SimGripperController::Update(double dtSeconds)
     // 연속 위치는 master 각속도를 nominal closed 각도로 나눠 진행한다. raw 정수는 관절 계산에 재입력하지 않는다.
     const double maximumClosureStep = masterVelocityRadiansPerSecond_ * dtSeconds /
         specification_->nominalMasterClosedRadians;
-    const double remaining = targetClosureFraction_ - closureFraction_;
+    const double remaining = targetClosureFraction_ - state_.closureFraction;
     if (std::abs(remaining) <= maximumClosureStep)
-        closureFraction_ = targetClosureFraction_;
+        state_.closureFraction = targetClosureFraction_;
     else
-        closureFraction_ += std::copysign(maximumClosureStep, remaining);
+        state_.closureFraction += std::copysign(maximumClosureStep, remaining);
 
-    state_.closureFraction = closureFraction_;
     UpdateRawPosition();
 
     if (IsAtTarget())
     {
         state_.closureFraction = targetClosureFraction_;
-        closureFraction_ = targetClosureFraction_;
         UpdateRawPosition();
         state_.goToActive = false;
         state_.mode = GripperMode::Idle;
@@ -207,12 +205,12 @@ void SimGripperController::Update(double dtSeconds)
 
 bool SimGripperController::IsAtTarget() const noexcept
 {
-    return closureFraction_ == targetClosureFraction_;
+    return state_.closureFraction == targetClosureFraction_;
 }
 
 void SimGripperController::UpdateRawPosition() noexcept
 {
-    const double raw = specification_->positionRequestMin + closureFraction_ *
+    const double raw = specification_->positionRequestMin + state_.closureFraction *
         static_cast<double>(specification_->positionRequestMax - specification_->positionRequestMin);
     const long rounded = std::lround(raw);
     const long bounded = std::clamp(rounded,

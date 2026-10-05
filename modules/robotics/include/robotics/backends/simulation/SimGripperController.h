@@ -7,13 +7,12 @@ namespace grasplink::robotics::backends::simulation
 {
 
 /**
- * @brief 자유공간 개폐 위치를 고정 시간 간격으로 진행하는 Simulation Controller.
+ * @brief raw speed를 master 각속도로 대응시키는 프로젝트 시뮬레이션 설정.
  * @details
  * GripperCommand raw 위치는 specification의 양 끝 범위를 열린 0과 닫힌 1로 선형 대응한다.
  * 내부 계산은 연속 closureFraction을 사용하고, GripperState.actualPosition만 raw 정수로 반올림한다.
  * raw speed는 SimGripperMotionSettings의 master 각속도 [rad/s] 범위에 대응하며 제조사 속도 사양이 아니다.
  * 위치·속도·힘 요청 범위 검사는 수행하지만 힘, 전류, 접촉, 물체 검출이나 파지 적응은 계산하지 않는다.
- * GripperSpecification은 빌려 쓰므로 배열과 문자열을 포함한 사양 저장소가 이 객체보다 오래 살아야 한다.
  */
 struct SimGripperMotionSettings
 {
@@ -28,6 +27,7 @@ struct SimGripperMotionSettings
  * @brief 자유공간 linkage 위치를 시간에 따라 갱신하는 Gripper backend.
  * @details GetState는 값 복사본을 돌려준다. GUI나 기구학 계층이 연속 위치를 사용할 때는
  * valid와 closureFractionValid를 모두 확인해야 한다. 목표 도달은 자유공간 목표에 도달했다는 뜻이며 접촉이나 grasp를 뜻하지 않는다.
+ * GripperSpecification은 빌려 쓰므로 배열과 문자열을 포함한 사양 저장소가 이 객체보다 오래 살아야 한다.
  */
 class SimGripperController final : public IGripperController
 {
@@ -103,7 +103,6 @@ private:
     bool connected_ = false;
 
     // raw 8-bit position으로 되돌리지 않고 계산하는 무차원 연속 위치와 목표.
-    double closureFraction_ = 0.0;
     double targetClosureFraction_ = 0.0;
 
     // 현재 명령 speed가 정하는 자유공간 master 각속도 [rad/s].
