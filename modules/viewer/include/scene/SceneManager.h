@@ -9,41 +9,30 @@
 #include <utility>
 
 /**
- * @brief 현재 Scene과 다음 frame에 전환할 Scene을 소유/관리한다.
- *
- * @details
- * LoadScene()은 즉시 현재 Scene을 삭제하지 않고 m_NextScene에 예약한다.
- * 실제 교체는 OnUpdate()의 frame boundary에서 수행한다. Scene update나 ECS iteration 도중
- * hierarchy를 제거하면 iterator/lifetime 문제가 생길 수 있기 때문이다.
- *
- * 전환 순서:
- * Active::OnExit -> CleanupRoot -> Next를 Active로 이동 -> InitRoot -> OnEnter
- *
- * @todo [FUTURE] Scene transition event나 async asset loading이 필요해지면 상태 머신으로 확장한다.
- */
-/*
- * [추가 용어 설명]
- * - Active Scene: 현재 update/render 대상이 되는 Scene.
- * - Next Scene: 다음 안전한 전환 시점에 Active가 될 예정인 Scene.
- * - Frame Boundary: 한 frame의 처리 중간이 아니라 다음 update를 시작하기 전처럼 상태를 바꾸기 안전한 경계.
- * - ECS Iteration: System이 조건에 맞는 Entity들을 순회하는 중인 상태.
- * - Iterator/Lifetime 문제: 순회 중 Entity hierarchy를 삭제하면 현재 순회가 가리키는 대상이 사라질 수 있는 문제.
- * - unique_ptr: Scene 하나의 명확한 소유권을 SceneManager가 가진다는 의미.
+ * @brief 활성 Scene과 다음 전환 대상 Scene을 소유한다.
+ * @details SceneManager는 Flecs World를 빌리고 Scene 객체만 소유한다. LoadScene()은 Scene 객체를
+ * 즉시 만들지만 root와 OnEnter()는 다음 OnUpdate()까지 미룬다. 전환 때 기존 OnExit()와 root
+ * 계층 삭제를 끝내고 새 root를 만든 뒤 OnEnter()를 호출한다. 이전 Entity handle은 root 삭제와
+ * 함께 무효가 되므로 전환을 넘어 보관하지 않는다.
+ * @note OnExit와 삭제 observer가 World 및 물리 자원을 참조할 수 있다. manager와 관련 System은
+ * World와 PhysicsWorld보다 먼저 정리하며 GPU Component의 마지막 참조는 OpenGL Context가 살아 있을 때 해제한다.
  */
 class SceneManager
 {
 public:
-    /** @brief Scene들이 공유할 Flecs World를 연결한다. */
+    /** @brief 외부 소유 Flecs World를 빌린다. @param world Scene 저장소로 쓸 World. */
     explicit SceneManager(flecs::world& world);
 
-    /** @brief 소유 중인 Scene을 정리한다. */
+    /** @brief 활성 Scene의 OnExit와 root 정리를 마친 뒤 보유 Scene을 폐기한다. */
     ~SceneManager();
 
     /**
-     * @brief 다음 frame boundary에서 활성화할 Scene을 예약한다.
-     * @tparam T Scene 파생 타입.
-     * @tparam Args Scene 생성자에 전달할 추가 인자 타입.
-     * @param args T 생성자에서 world 뒤에 전달할 인자.
+     * @brief 다음 OnUpdate()에서 활성화할 Scene을 예약한다.
+     * @tparam T Scene에서 파생된 타입.
+     * @param args T 생성자에 전달할 인자.
+     * @details T 생성자는 즉시 실행된다. 다른 Scene으로 예약을 덮어쓰면 기존 예약 객체는
+     * 활성화되지 않은 채 폐기되며 OnEnter()/OnExit()는 호출되지 않는다. root 생성과 OnEnter()는
+     * 예약 Scene이 다음 OnUpdate()에서 활성화될 때 수행된다.
      */
     template<typename T, typename... Args>
     void LoadScene(Args&&... args)
@@ -55,25 +44,23 @@ public:
             std::forward<Args>(args)...);
     }
 
-    /**
-     * @brief 예약된 Scene 전환을 처리한 뒤 active Scene을 update한다.
-     * @param dt frame delta time(second).
-     */
+    /** @brief 예약 전환을 적용하고 활성 Scene을 갱신한다. @param dt 경과 시간 [s]. */
     void OnUpdate(float dt);
 
     /**
-     * @brief 현재 active Scene의 non-owning pointer를 반환한다.
-     * @return active Scene이 없으면 nullptr.
+     * @brief 활성 Scene을 빌린 포인터로 반환한다.
+     * @return 활성 Scene 또는 활성 Scene이 없을 때 nullptr.
+     * @details 포인터는 manager가 소유한다. 다음 전환이나 manager 소멸 이후 사용하지 않는다.
      */
     Scene* GetActiveScene() const;
 
 private:
-    // ViewerApp이 실제로 소유하는 Flecs World에 대한 non-owning reference.
+    // 외부 World를 빌린다. Scene의 OnExit와 root 정리가 World 파괴보다 먼저 끝나야 한다.
     flecs::world& m_World;
 
-    // 현재 활성 Scene의 단독 소유권.
+    // Scene 객체는 manager가 소유하고 root와 Entity는 빌린 World가 관리한다.
     std::unique_ptr<Scene> m_ActiveScene;
 
-    // 다음 frame boundary에서 활성화할 예약 Scene의 단독 소유권.
+    // 생성자는 실행됐지만 다음 OnUpdate 활성화 전이므로 root와 OnEnter는 아직 없다.
     std::unique_ptr<Scene> m_NextScene;
 };
