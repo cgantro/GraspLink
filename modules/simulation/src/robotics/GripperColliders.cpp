@@ -233,7 +233,7 @@ void ConfigureTwoF85Colliders(Scene& scene, const Entity& robotRoot, const Model
         Entity proxy = scene.CreateEntity(item.name);
         proxy.SetParent(item.parent);
         proxy.SetLocalPosition(glm::vec3(0.0F));
-        proxy.SetLocalRotation(glm::vec3(0.0F));
+        proxy.SetLocalRotation(glm::quat{1.0F, 0.0F, 0.0F, 0.0F});
         proxy.SetLocalScale(glm::vec3(1.0F));
         proxy.set<RigidBody>(RigidBody{physics::BodyMotionType::Kinematic, physics::CollisionLayer::Gripper})
             .set<Colliders>(Colliders{std::move(item.shapes)});

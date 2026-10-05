@@ -2,6 +2,7 @@
 
 #include <flecs.h>
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 /**
  * @brief Entity의 Local TRS를 Local/World 행렬로 계산하는 변환 모듈이다.
@@ -18,13 +19,14 @@ public:
     /**
      * @brief 부모 기준 TRS를 Local 행렬로 합성한다.
      * @param position 부모 좌표계 위치 [m].
-     * @param rotationRadians GLM Euler X/Y/Z 회전 [rad].
+     * @param rotation 부모 기준 quaternion. 유한하고 영벡터가 아니어야 하며 합성 전에 정규화한다.
      * @param scale 축별 크기 배율. 단위 없음.
      * @return 열 벡터 기준 `T * R * S` 행렬. 점에는 scale, rotation, translation 순서로 적용된다.
+     * @throws std::invalid_argument 회전이 영 quaternion 또는 비유한 값일 때.
      */
     static glm::mat4 ComposeLocalMatrix(
         const glm::vec3& position,
-        const glm::vec3& rotationRadians,
+        const glm::quat& rotation,
         const glm::vec3& scale);
 
     /**

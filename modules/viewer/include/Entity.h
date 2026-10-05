@@ -2,6 +2,7 @@
 
 #include <flecs.h>
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include <string>
 #include <vector>
@@ -34,11 +35,11 @@ public:
     glm::vec3 GetLocalPosition() const;
 
     /**
-     * @brief 부모 기준 Local Euler 회전을 반환한다.
-     * @details 축 순서는 X, Y, Z이며 각 성분의 단위는 [rad]. Rotation, Local pair가
-     * 없거나 handle이 무효하면 (0, 0, 0).
+     * @brief 부모 기준 Local quaternion 회전을 반환한다.
+     * @details GLM 생성자 순서는 (w,x,y,z), 성분은 무차원. Rotation, Local pair가
+     * 없거나 handle이 무효하면 항등 (1,0,0,0).
      */
-    glm::vec3 GetLocalRotation() const;
+    glm::quat GetLocalRotation() const;
 
     /**
      * @brief 부모 기준 Local 축별 크기 배율을 반환한다.
@@ -55,15 +56,13 @@ public:
     void SetLocalPosition(const glm::vec3& position);
 
     /**
-     * @brief 부모 기준 Euler 회전을 설정한다.
-     * @param rotation X/Y/Z Euler 각 [rad].
-     * @details 값을 저장할 뿐 quaternion이나 World 행렬을 여기서 계산하지 않는다.
-     * TransformSystemModule이 GLM Euler 입력으로 만드는 회전 행렬은 Rz * Ry * Rx다.
-     * 이는 곱의 표기 순서이며, 열 벡터에 적용되는 순서는 오른쪽부터라 X 회전 후 Y, 마지막으로 Z다.
-     * 따라서 'Z, Y, X를 곱한다'는 말은 행렬 곱 순서이며, 벡터에 가해지는 회전 순서를 뜻하지 않는다.
-     * World 결과는 다음 transform 갱신 전까지 이전 캐시다.
+     * @brief 부모 기준 quaternion을 정규화해 Local 회전을 설정한다.
+     * @param rotation 유한한 영벡터 아닌 quaternion. GLM 생성자 순서는 (w,x,y,z).
+     * @throws std::invalid_argument 유효한 Entity에 영 quaternion 또는 비유한 성분을 전달할 때.
+     * @details 검증 실패 시 이전 Local 회전을 유지한다. 무효 handle에는 아무 작업도 하지 않는다.
+     * World 행렬은 다음 transform 갱신 전까지 이전 캐시다. 부모 자세와의 합성은 TransformSystem이 맡는다.
      */
-    void SetLocalRotation(const glm::vec3& rotation);
+    void SetLocalRotation(const glm::quat& rotation);
 
     /**
      * @brief 부모 기준 축별 크기 배율을 설정한다.

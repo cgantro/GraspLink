@@ -27,13 +27,13 @@ glm::vec3 Entity::GetLocalPosition() const
 }
 
 
-glm::vec3 Entity::GetLocalRotation() const
+glm::quat Entity::GetLocalRotation() const
 {
     if (!IsValid())
-        return glm::vec3(0.0f);
+        return glm::quat(1.0F, 0.0F, 0.0F, 0.0F);
 
     if (!m_EntityHandle.has<Rotation, Local>())
-        return glm::vec3(0.0f);
+        return glm::quat(1.0F, 0.0F, 0.0F, 0.0F);
 
     return m_EntityHandle.get<Rotation, Local>();
 }
@@ -63,7 +63,7 @@ void Entity::SetLocalPosition(const glm::vec3& position)
 }
 
 
-void Entity::SetLocalRotation(const glm::vec3& rotation)
+void Entity::SetLocalRotation(const glm::quat& rotation)
 {
     if (!IsValid())
         return;

@@ -142,7 +142,7 @@ Entity PrefabFactory::CreateModel(
         Entity entity = scene.CreateEntity(node.name);
 
         entity.SetLocalPosition(node.translation);
-        entity.SetLocalRotation(node.rotation);
+        entity.SetLocalRotation(glm::quat{node.rotation});
         entity.SetLocalScale(node.scale);
 
         entities[i] = entity;

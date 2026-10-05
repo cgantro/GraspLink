@@ -24,7 +24,7 @@ Entity Scene::CreateEntity(const std::string& name)
             Position{0.0F, 0.0F, 0.0F})
 
         .set<Rotation, Local>(
-            Rotation{0.0F, 0.0F, 0.0F})
+            Rotation{})
 
         .set<Scale, Local>(
             Scale{1.0F})

@@ -315,9 +315,9 @@ void RobotPhysicsAdapter::Apply(
             static_cast<float>(pose.positionMeters.x),
             static_cast<float>(pose.positionMeters.y),
             static_cast<float>(pose.positionMeters.z)});
-        // joint frame quaternion의 double 정밀도로 Euler를 구한 뒤 float 성분에 저장한다.
-        link.entity.SetLocalRotation(glm::vec3{glm::eulerAngles(glm::normalize(glm::dquat{
-            pose.rotation.w, pose.rotation.x, pose.rotation.y, pose.rotation.z}))});
+        // base 기준 FK quaternion을 double 정밀도로 정규화한 뒤 Entity의 float quaternion에 저장한다.
+        link.entity.SetLocalRotation(glm::quat{glm::normalize(glm::dquat{
+            pose.rotation.w, pose.rotation.x, pose.rotation.y, pose.rotation.z})});
     }
 }
 }

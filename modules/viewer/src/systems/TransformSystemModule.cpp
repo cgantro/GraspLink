@@ -45,12 +45,12 @@ glm::mat4 UpdateEntityWorldTransform(flecs::entity entity, WorldTransformCache& 
 
 glm::mat4 TransformSystemModule::ComposeLocalMatrix(
     const glm::vec3& position,
-    const glm::vec3& rotationRadians,
+    const glm::quat& rotation,
     const glm::vec3& scale)
 {
-    // 열 벡터에 Scale → 회전 → 위치를 적용한다. GLM은 입력 Euler [rad]를 quaternion으로 해석한다.
+    // 열 벡터에 Scale → 회전 → 위치를 적용한다. 직접 수정된 ECS 회전도 행렬 생성 전에 검증·정규화한다.
     return glm::translate(glm::mat4(1.0F), position) *
-        glm::mat4_cast(glm::quat(rotationRadians)) *
+        glm::mat4_cast(static_cast<const glm::quat&>(Rotation{rotation})) *
         glm::scale(glm::mat4(1.0F), scale);
 }
 

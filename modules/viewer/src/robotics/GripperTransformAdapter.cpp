@@ -24,6 +24,12 @@ bool IsFinite(const glm::vec3& value)
     return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
 }
 
+bool IsFinite(const glm::quat& value)
+{
+    return std::isfinite(value.w) && std::isfinite(value.x) &&
+        std::isfinite(value.y) && std::isfinite(value.z);
+}
+
 bool IsUnitScale(const glm::vec3& value)
 {
     return std::abs(value.x - 1.0F) <= kUnitScaleTolerance &&
@@ -50,10 +56,12 @@ glm::dquat ToDoubleQuaternion(const ::grasplink::robotics::models::QuaternionWxy
 void ValidateLocalTransform(const Entity& entity)
 {
     const glm::vec3 position = entity.GetLocalPosition();
-    const glm::vec3 rotation = entity.GetLocalRotation();
+    const glm::quat rotation = entity.GetLocalRotation();
     const glm::vec3 scale = entity.GetLocalScale();
     if (!IsFinite(position) || !IsFinite(rotation) || !IsFinite(scale))
         throw std::invalid_argument("GripperTransformAdapter: non-finite bind transform");
+    // 직접 ECS 접근으로 영 quaternion이 들어온 계층도 bind 연결 시 거부한다.
+    (void)Rotation{rotation};
     if (!IsUnitScale(scale))
         throw std::invalid_argument("GripperTransformAdapter: gripper hierarchy requires unit scale");
 }
@@ -133,8 +141,7 @@ GripperTransformAdapter::GripperTransformAdapter(
             throw std::runtime_error("GripperTransformAdapter: joint is outside the Gripper root: " + name);
 
         // Node 22 Gripper의 non-identity matrix는 root Local TRS에 남긴다. 관절 bind 회전만 별도로 저장한다.
-        const glm::dvec3 bindEuler(binding.entity.GetLocalRotation());
-        const glm::dquat rawBindRotation{bindEuler};
+        const glm::dquat rawBindRotation{binding.entity.GetLocalRotation()};
         const double rawBindLengthSquared = glm::dot(rawBindRotation, rawBindRotation);
         if (!std::isfinite(rawBindLengthSquared) || rawBindLengthSquared <= 0.0)
             throw std::invalid_argument("GripperTransformAdapter: invalid bind rotation: " + name);
@@ -145,6 +152,7 @@ GripperTransformAdapter::GripperTransformAdapter(
         binding.bindRotation = ToModelQuaternion(bindRotation);
         joints_.push_back(std::move(binding));
     }
+    preparedRotations_.resize(joints_.size());
 }
 
 void GripperTransformAdapter::Apply(
@@ -162,8 +170,6 @@ void GripperTransformAdapter::Apply(
         if (!IsSameHierarchy(binding.entity, binding.ancestry))
             throw std::runtime_error("GripperTransformAdapter: Gripper hierarchy changed or was removed");
 
-    std::vector<glm::vec3> localEulerRotations;
-    localEulerRotations.reserve(joints_.size());
     for (std::size_t i = 0; i < joints_.size(); ++i)
     {
         if (!std::isfinite(state.jointAnglesRadians[i]) || !IsFinite(state.jointLocalRotations[i]))
@@ -178,19 +184,12 @@ void GripperTransformAdapter::Apply(
         // local pose = authored bind * joint-local delta. 곱의 오른쪽에 delta를 둬 bind 기준 축을 따른다.
         const glm::dquat bind = glm::normalize(ToDoubleQuaternion(joints_[i].bindRotation));
         const glm::dquat result = glm::normalize(bind * delta);
-        const glm::dvec3 euler = glm::eulerAngles(result);
-        const glm::vec3 output{
-            static_cast<float>(euler.x),
-            static_cast<float>(euler.y),
-            static_cast<float>(euler.z)};
-        if (!std::isfinite(euler.x) || !std::isfinite(euler.y) || !std::isfinite(euler.z) || !IsFinite(output))
-            throw std::invalid_argument("GripperTransformAdapter: calculated non-finite Euler rotation");
-        localEulerRotations.push_back(output);
+        preparedRotations_[i] = Rotation{glm::quat{result}};
     }
 
-    // GLM Entity의 Euler 저장 형식으로 바꾸는 마지막 단계까지 계산을 끝낸 후 Local 회전만 쓴다.
+    // quaternion 검증·정규화를 모두 마친 후 Local 회전만 쓴다. Euler 변환 경계를 만들지 않는다.
     for (std::size_t i = 0; i < joints_.size(); ++i)
-        joints_[i].entity.SetLocalRotation(localEulerRotations[i]);
+        joints_[i].entity.SetLocalRotation(preparedRotations_[i]);
 }
 
 } // namespace grasplink::viewer::robotics

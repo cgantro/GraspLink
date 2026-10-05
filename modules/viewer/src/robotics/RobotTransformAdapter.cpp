@@ -1,5 +1,6 @@
 #include "viewer/robotics/RobotTransformAdapter.h"
 #include "systems/TransformSystemModule.h"
+#include "components/TransformComponents.h"
 
 #include <glm/gtx/quaternion.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -83,8 +84,10 @@ RobotTransformAdapter::RobotTransformAdapter(
         if (!matchesBind)
             throw std::invalid_argument("RobotTransformAdapter: GLB hierarchy or bind pivot differs from robot specification");
 
-        const glm::vec3 bindEuler = joint.GetLocalRotation();
-        if (glm::dot(bindEuler, bindEuler) >
+        // q와 -q 모두 항등 방향일 수 있다. 벡터 성분으로 항등 여부를 비교한다.
+        const glm::quat bindRotation = Rotation{joint.GetLocalRotation()};
+        const glm::vec3 bindVector{bindRotation.x, bindRotation.y, bindRotation.z};
+        if (glm::dot(bindVector, bindVector) >
             kBindRotationEpsilon * kBindRotationEpsilon)
         {
             throw std::runtime_error(
@@ -106,13 +109,12 @@ void RobotTransformAdapter::Apply(const ::grasplink::robotics::kinematics::Robot
     {
         // 반영: Local 회전만 바꿔 GLB 계층에 저장된 초기 관절 위치를 유지.
         const auto& pose = state.jointLocalRotations[i];
-        // 순서/정밀도: 모델 quaternion [w,x,y,z]를 GLM 생성자 순서에 맞춰 읽고,
-        // Euler 변환이 끝날 때까지 double을 유지해 90도 부근의 float 반올림 오차를 줄인다.
+        // 순서/정밀도: 모델 [w,x,y,z]를 GLM 생성자에 맞춘다. 단위 회전을 유지하며 float 저장 경계만 지난다.
         const glm::dquat rotation{pose.w, pose.x, pose.y, pose.z};
         auto& binding = joints_[i];
         if (!binding.entity)
             throw std::runtime_error("RobotTransformAdapter: robot Scene has been removed");
-        binding.entity.SetLocalRotation(glm::vec3(glm::eulerAngles(glm::normalize(rotation))));
+        binding.entity.SetLocalRotation(glm::quat{glm::normalize(rotation)});
     }
 }
 

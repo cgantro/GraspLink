@@ -1,4 +1,4 @@
-﻿#include "Entity.h"
+#include "Entity.h"
 #include "Shader.h"
 #include "Window.h"
 #include "assets/AssetManager.h"
@@ -46,7 +46,7 @@ void ApplyAndCompare(
     grasplink::viewer::robotics::RobotTransformAdapter& adapter,
     const std::array<double, 6>& jointRadians,
     const glm::vec3& rootPosition,
-    const glm::vec3& rootRotation,
+    const glm::quat& rootRotation,
     const std::string& label)
 {
     // FK 관절 입력 [rad]에서 나온 ToolFrame Base pose에 Scene root Local TRS를 적용하고 GLB Entity World pose와 비교한다.
@@ -115,13 +115,13 @@ int main()
 
         Entity robotRoot = PrefabFactory::CreateModel(*scene, model, assets, shader);
         robotRoot.SetLocalPosition({1.2F, -0.4F, 0.7F});
-        robotRoot.SetLocalRotation({0.3F, 0.7F, -0.4F});
+        robotRoot.SetLocalRotation(glm::quat{glm::vec3{0.3F, 0.7F, -0.4F}});
         const auto& specification = models::hanwha::kHcr12a;
         grasplink::viewer::robotics::RobotTransformAdapter adapter(robotRoot, specification);
         grasplink::robotics::kinematics::RobotKinematics kinematics(specification);
 
         ApplyAndCompare(world, robotRoot, kinematics, adapter,
-            {0, 0, 0, 0, 0, 0}, {}, {}, "zero pose");
+            {0, 0, 0, 0, 0, 0}, {}, {1, 0, 0, 0}, "zero pose");
 
         const double quarterTurn = std::acos(-1.0) * 0.5;
         for (std::size_t joint = 0; joint < specification.jointCount; ++joint)
@@ -129,21 +129,24 @@ int main()
             std::array<double, 6> angles{};
             angles[joint] = quarterTurn;
             ApplyAndCompare(world, robotRoot, kinematics, adapter,
-                angles, {}, {}, "single joint " + std::to_string(joint + 1));
+                angles, {}, {1, 0, 0, 0}, "single joint " + std::to_string(joint + 1));
         }
 
         ApplyAndCompare(world, robotRoot, kinematics, adapter,
-            {0.45, -0.4, 0.3, 0.5, -0.2, 0.7}, {}, {}, "mixed pose");
+            {0.45, -0.4, 0.3, 0.5, -0.2, 0.7}, {}, {1, 0, 0, 0}, "mixed pose");
         ApplyAndCompare(world, robotRoot, kinematics, adapter,
             {0.45, -0.4, 0.3, 0.5, -0.2, 0.7},
-            {1.2F, -0.4F, 0.7F}, {0.3F, 0.7F, -0.4F}, "root translation and rotation");
+            {1.2F, -0.4F, 0.7F}, glm::quat{glm::vec3{0.3F, 0.7F, -0.4F}}, "root translation and rotation");
 
         // 검증: 정상 bind pose에서 시작해 각 실패 원인을 따로 확인.
         ApplyAndCompare(world, robotRoot, kinematics, adapter,
-            {0, 0, 0, 0, 0, 0}, {}, {}, "restore bind pose");
+            {0, 0, 0, 0, 0, 0}, {}, {1, 0, 0, 0}, "restore bind pose");
         grasplink::viewer::robotics::RobotTransformAdapter validBind(robotRoot, specification);
 
         Entity j1 = robotRoot.FindChildByNameRecursive("J1");
+        // -identity도 같은 bind 방향이다. quaternion 부호로 정상 자산을 거부하지 않는다.
+        j1.SetLocalRotation(glm::quat{-1.0F, 0.0F, 0.0F, 0.0F});
+        grasplink::viewer::robotics::RobotTransformAdapter negativeIdentityBind(robotRoot, specification);
         const glm::vec3 originalJ1Position = j1.GetLocalPosition();
         j1.SetLocalPosition(originalJ1Position + glm::vec3{0.01F, 0.0F, 0.0F});
         ExpectThrows<std::invalid_argument>(

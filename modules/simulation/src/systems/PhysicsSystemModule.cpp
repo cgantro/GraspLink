@@ -351,7 +351,7 @@ struct PhysicsSystemModule::Impl
 
         // Position/Rotation만 물리 결과로 교체한다. Entity의 Local Scale pair와 값은 그대로 둔다.
         entity.set<Position, Local>(Position{translation});
-        entity.set<Rotation, Local>(Rotation{glm::eulerAngles(glm::normalize(rotation))});
+        entity.set<Rotation, Local>(Rotation{glm::normalize(rotation)});
     }
 };
 

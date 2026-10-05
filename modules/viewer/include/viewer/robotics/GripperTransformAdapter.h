@@ -13,7 +13,7 @@ namespace grasplink::viewer::robotics
  * @brief Gripper 분기 관절의 Local 회전 변화를 authored GLB 계층에 적용한다.
  * @details specification 순서의 이름으로 root 하위 joint를 찾고 생성 시 bind 회전과 root까지의
  * 부모 경로를 저장한다. Apply는 저장한 bind quaternion에 delta quaternion을 오른쪽으로 곱해 Local
- * Euler 회전만 설정한다. 원본 bind 위치·크기와 Gripper 장착 변환은 그대로 둔다. World 위치를 계산하지
+ * quaternion 회전만 설정한다. 원본 bind 위치·크기와 Gripper 장착 변환은 그대로 둔다. World 위치를 계산하지
  * 않으며 부모/팔/root의 이동·회전은 기존 TransformSystem이 계층으로 전달한다. Entity와 Scene은 빌려 쓰므로
  * Scene 제거 또는 joint 중간 계층 변경 뒤 Apply는 실패한다.
  */
@@ -52,6 +52,8 @@ private:
 
     Entity gripperRoot_;
     std::vector<JointBinding> joints_;
+    // 전체 관절 검증 후 반영하는 준비 버퍼. Fixed Update에서 반복 할당하지 않는다.
+    std::vector<glm::quat> preparedRotations_;
 };
 
 } // namespace grasplink::viewer::robotics

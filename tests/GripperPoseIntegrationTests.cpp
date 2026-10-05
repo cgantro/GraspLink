@@ -2,6 +2,7 @@
 #include "PhysicsWorld.h"
 #include "TestSupport.h"
 #include "assets/GltfLoader.h"
+#include "components/TransformComponents.h"
 #include "robotics/backends/simulation/SimGripperController.h"
 #include "robotics/kinematics/GripperKinematics.h"
 #include "robotics/kinematics/RobotKinematics.h"
@@ -47,6 +48,12 @@ void RequireMatrix(const glm::mat4& actual, const glm::mat4& expected, const std
     for (int column = 0; column < 4; ++column)
         for (int row = 0; row < 4; ++row)
             RequireNear(actual[column][row], expected[column][row], 2.0e-5, label);
+}
+
+void RequireRotation(const glm::quat& actual, const glm::quat& expected, const std::string& label)
+{
+    // q와 -q는 같은 방향이다. 정규화 내적으로 회전만 비교한다.
+    Require(std::abs(glm::dot(glm::normalize(actual), glm::normalize(expected))) > 0.99999F, label);
 }
 
 glm::vec3 InGripper(const Entity& entity, const Entity& gripper)
@@ -108,7 +115,7 @@ struct Fixture
         nodes[static_cast<std::size_t>(index)] = entity;
         entity.SetParent(parent);
         entity.SetLocalPosition(node.translation);
-        entity.SetLocalRotation(node.rotation);
+        entity.SetLocalRotation(glm::quat{node.rotation});
         entity.SetLocalScale(node.scale);
         for (int child : node.childrenIndices) CreateTree(child, entity);
         return entity;
@@ -221,7 +228,7 @@ void CheckNonidentityBindRotation()
     joint.SetParent(root);
     joint.SetLocalPosition({0.03F, 0.05F, 0.09F});
     const glm::vec3 bindEuler{0.25F, -0.4F, 0.6F};
-    joint.SetLocalRotation(bindEuler);
+    joint.SetLocalRotation(glm::quat{bindEuler});
     auto specification = models::robotiq::kTwoF85;
     specification.jointCount = 1;
     grasplink::viewer::robotics::GripperTransformAdapter adapter(root, specification);
@@ -232,9 +239,16 @@ void CheckNonidentityBindRotation()
     adapter.Apply(pose);
     const glm::quat expected = glm::quat(bindEuler) * glm::quat{
         static_cast<float>(std::cos(0.2)), 0.0F, 0.0F, static_cast<float>(-std::sin(0.2))};
-    Require(std::abs(glm::dot(glm::normalize(glm::quat(joint.GetLocalRotation())), glm::normalize(expected))) > 0.99999F,
+    Require(std::abs(glm::dot(glm::normalize(joint.GetLocalRotation()), glm::normalize(expected))) > 0.99999F,
         "nonidentity bind rotation multiplies delta on the right");
     RequireVector(joint.GetLocalPosition(), {0.03F, 0.05F, 0.09F}, "nonidentity bind position untouched");
+    // setter를 우회해 root 회전을 손상시켜도 bind 연결 시 거부한다.
+    Rotation& rootRotation = root.GetHandle().get_mut<Rotation, Local>();
+    rootRotation.w = rootRotation.x = rootRotation.y = rootRotation.z = 0.0F;
+    ExpectThrows<std::invalid_argument>([&]
+    {
+        grasplink::viewer::robotics::GripperTransformAdapter invalid(root, specification);
+    }, "zero root bind quaternion rejected");
 }
 
 void CheckMotionAndHierarchy()
@@ -281,23 +295,23 @@ void CheckMotionAndHierarchy()
     // 팔과 모델 root를 함께 움직여도 그리퍼 bind와 분기 회전은 바뀌지 않고 World에만 부모 자세가 전파된다.
     fixture.armState.jointPositionRadians = {0.4, -0.2, 0.1, 0.25, -0.15, 0.3};
     fixture.robotRoot.SetLocalPosition({0.7F, 0.4F, -0.6F});
-    fixture.robotRoot.SetLocalRotation({0.2F, 0.1F, -0.3F});
+    fixture.robotRoot.SetLocalRotation(glm::quat{glm::vec3{0.2F, 0.1F, -0.3F}});
     fixture.Step(2);
     CheckBranchedPose(fixture, outerBind, tipBind);
     auto pose = fixture.gripperMath.Update(fixture.controller.GetState());
-    std::vector<glm::vec3> before;
+    std::vector<glm::quat> before;
     for (const auto& joint : models::robotiq::kTwoF85Joints)
         before.push_back(fixture.gripper.FindChildByNameRecursive(std::string(joint.name)).GetLocalRotation());
     for (int repeat = 0; repeat < 50; ++repeat) fixture.gripperAdapter->Apply(pose);
     for (std::size_t index = 0; index < before.size(); ++index)
-        RequireVector(fixture.gripper.FindChildByNameRecursive(std::string(models::robotiq::kTwoF85Joints[index].name)).GetLocalRotation(),
+        RequireRotation(fixture.gripper.FindChildByNameRecursive(std::string(models::robotiq::kTwoF85Joints[index].name)).GetLocalRotation(),
             before[index], "repeated apply does not accumulate rotation");
 
     auto bad = pose;
     bad.jointLocalRotations.back().w = std::numeric_limits<double>::quiet_NaN();
     ExpectThrows<std::invalid_argument>([&] { fixture.gripperAdapter->Apply(bad); }, "invalid late quaternion rejected atomically");
     for (std::size_t index = 0; index < before.size(); ++index)
-        RequireVector(fixture.gripper.FindChildByNameRecursive(std::string(models::robotiq::kTwoF85Joints[index].name)).GetLocalRotation(),
+        RequireRotation(fixture.gripper.FindChildByNameRecursive(std::string(models::robotiq::kTwoF85Joints[index].name)).GetLocalRotation(),
             before[index], "invalid apply leaves every joint unchanged");
     Entity finger = fixture.gripper.FindChildByNameRecursive("LeftFinger");
     const Entity parent = finger.GetParent();
@@ -339,7 +353,7 @@ void CheckPhysicalFollowing()
         glm::mat4_cast(glm::angleAxis(glm::half_pi<float>(), glm::vec3{1.0F, 0.0F, 0.0F}));
     const glm::mat4 local = glm::inverse(parentWorld) * desiredWorld;
     fixture.gripper.SetLocalPosition(glm::vec3(local[3]));
-    fixture.gripper.SetLocalRotation(glm::eulerAngles(glm::quat_cast(glm::mat3(local))));
+    fixture.gripper.SetLocalRotation(glm::quat_cast(glm::mat3(local)));
     fixture.Command(128);
     fixture.Step(125);
     Entity tip = fixture.gripper.FindChildByNameRecursive("LeftFingerTipJoint_CollisionProxy");

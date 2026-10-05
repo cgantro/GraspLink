@@ -4,6 +4,9 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
 
+#include <cmath>
+#include <stdexcept>
+
 /**
  * @brief 부모 좌표계에서 Entity 원점의 Local 위치를 [m]로 저장한다.
  * @details GLB 배치와 로봇 pose도 같은 meter 기준을 사용한다. `Position, Local`은 입력 상태이며,
@@ -18,18 +21,32 @@ struct Position : public glm::vec3
 };
 
 /**
- * @brief 부모 좌표계 기준 Euler X/Y/Z 회전을 [rad]로 저장한다.
- * @details TransformSystem은 GLM의 Euler 입력으로 quaternion을 만들고 회전 행렬에 반영한다.
- * FK 결과는 계산 중 quaternion으로 유지되지만 Entity에 적용할 때 이 성분으로 변환된다.
- * Euler 표기는 같은 방향도 여러 값으로 표현할 수 있고 특정 자세에서 값이 불연속일 수 있으므로,
- * 이 변환의 정밀도·연속성 문제는 World 행렬 캐시를 프레임마다 갱신하는 것과 별개의 표현 경계다.
+ * @brief 부모 좌표계 기준 Local 자세를 단위 quaternion으로 저장한다.
+ * @details 성분은 무차원이며 GLM 생성자 순서는 (w,x,y,z), 항등은 (1,0,0,0)이다.
+ * quaternion은 회전축과 회전량을 함께 나타내므로 Euler 각의 특이 자세에서 축이 겹치는 문제를 피한다.
+ * q와 -q는 같은 방향이다. FK·GLB·Physics의 자세를 각도로 왕복 변환하지 않고 행렬 합성까지 전달한다.
+ * 생성 시 정규화하며 영벡터·비유한 값은 거부한다. ECS에서 성분을 직접 수정한 경우에도
+ * TransformSystem이 행렬 합성 전에 다시 검증한다.
  */
-struct Rotation : public glm::vec3
+struct Rotation : public glm::quat
 {
-    using glm::vec3::vec3;
+    Rotation() : glm::quat(1.0F, 0.0F, 0.0F, 0.0F) {}
 
-    Rotation() : glm::vec3(0.0F) {}
-    Rotation(const glm::vec3& value) : glm::vec3(value) {}
+    /** @brief 유한한 영벡터 아닌 quaternion을 정규화한다. 잘못된 입력은 invalid_argument로 거부한다. */
+    Rotation(const glm::quat& value) : glm::quat(Normalized(value)) {}
+
+private:
+    static glm::quat Normalized(const glm::quat& value)
+    {
+        // float 제곱합의 overflow·underflow를 피한다. 작은 유한 quaternion도 방향을 보존한다.
+        const double length = std::hypot(std::hypot(static_cast<double>(value.w), value.x),
+            std::hypot(static_cast<double>(value.y), value.z));
+        if (!std::isfinite(value.w) || !std::isfinite(value.x) || !std::isfinite(value.y) ||
+            !std::isfinite(value.z) || !std::isfinite(length) || length <= 0.0)
+            throw std::invalid_argument("Rotation requires a finite, nonzero quaternion");
+        return glm::quat{static_cast<float>(value.w / length), static_cast<float>(value.x / length),
+            static_cast<float>(value.y / length), static_cast<float>(value.z / length)};
+    }
 };
 
 /**

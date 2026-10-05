@@ -9,7 +9,9 @@
 #include "TestSupport.h"
 
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/quaternion.hpp>
 
+#include <cmath>
 #include <filesystem>
 #include <iostream>
 #include <algorithm>
@@ -59,7 +61,7 @@ struct Fixture
         Entity entity = scene->CreateEntity(node.name);
         entity.SetParent(parent);
         entity.SetLocalPosition(node.translation);
-        entity.SetLocalRotation(node.rotation);
+        entity.SetLocalRotation(glm::quat{node.rotation});
         entity.SetLocalScale(node.scale);
         for (int child : node.childrenIndices) CreateSubtree(child, entity);
         return entity;
@@ -178,7 +180,10 @@ int main()
             Entity proxy = fixture.gripper.FindChildByNameRecursive(name);
             Require(proxy.IsValid(), name + " exists");
             Require(glm::length(proxy.GetLocalPosition()) < 1e-6F, name + " identity local translation");
-            Require(glm::length(proxy.GetLocalRotation()) < 1e-6F, name + " identity local rotation");
+            const glm::quat localRotation = proxy.GetLocalRotation();
+            Require(std::abs(std::abs(localRotation.w) - 1.0F) < 1e-6F &&
+                    glm::length(glm::vec3{localRotation.x, localRotation.y, localRotation.z}) < 1e-6F,
+                name + " identity local rotation");
             Require(glm::length(proxy.GetLocalScale() - glm::vec3(1.0F)) < 1e-6F, name + " identity local scale");
             Require(proxy.Get<RigidBody>().motionType == BodyMotionType::Kinematic, name + " is Kinematic");
             Require(proxy.Get<RigidBody>().collisionLayer == CollisionLayer::Gripper, name + " uses Gripper layer");
@@ -212,7 +217,7 @@ int main()
         // Root translation과 non-identity 회전 뒤에도 World pose가 authored joint hierarchy와 일치해야 한다.
         fixture.robotRoot.SetLocalPosition({0.0F, 0.3F, 0.0F});
         fixture.gripper.SetLocalPosition(glm::vec3(0.0F));
-        fixture.gripper.SetLocalRotation({1.5707963F, 0.0F, 0.0F});
+        fixture.gripper.SetLocalRotation(glm::angleAxis(1.5707963F, glm::vec3{1.0F, 0.0F, 0.0F}));
         TransformSystemModule::UpdateWorldTransforms(fixture.world);
         Require(fixture.CountDescendants(fixture.robotRoot) == beforeInvalid + 7,
             "successful configuration creates exactly seven proxies");
@@ -281,7 +286,8 @@ int main()
         Entity leftJoint = fixture.gripper.FindChildByNameRecursive("LeftFingerTipJoint");
         float oldFingerSurfaceY = 0.0F;
         const glm::vec3 oldFingerSurface = TopSurfacePoint(leftTip, oldFingerSurfaceY);
-        leftJoint.SetLocalRotation(leftJoint.GetLocalRotation() + glm::vec3{0.0F, 0.0F, 0.45F});
+        leftJoint.SetLocalRotation(leftJoint.GetLocalRotation() *
+            glm::angleAxis(0.45F, glm::vec3{0.0F, 0.0F, 1.0F}));
         fixture.Step(2);
         float newFingerSurfaceY = 0.0F;
         const glm::vec3 newFingerSurface = TopSurfacePoint(leftTip, newFingerSurfaceY);
