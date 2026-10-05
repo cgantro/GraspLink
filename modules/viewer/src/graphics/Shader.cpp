@@ -13,7 +13,7 @@
 
 
 
-// #type 구역 이름을 OpenGL stage로 바꾼다.
+// 지원하는 #type 이름만 OpenGL stage로 변환한다. pixel은 fragment와 같은 stage의 별칭이다.
 static GLenum ShaderTypeFromString(const std::string& type){
     if(type == "vertex") return GL_VERTEX_SHADER;
     if(type == "fragment" || type == "pixel") return GL_FRAGMENT_SHADER;
@@ -65,7 +65,7 @@ std::shared_ptr<Shader> Shader::CreateFromSource(const std::string& name, const 
 }
 
 std::string Shader::ReadFile(const std::string& filepath){
-    // #type 구역을 포함한 GLSL 원문을 그대로 읽는다.
+    // 전처리는 호출부가 담당하므로 여기서는 #type 표시를 포함한 원문을 보존한다.
     std::ifstream file(filepath, std::ios::in | std::ios::binary);
 
     if(!file.is_open()) throw std::runtime_error(
@@ -87,11 +87,12 @@ std::unordered_map<unsigned int, std::string> Shader::PreProcess(const std::stri
     GLenum currentType = 0;
     std::stringstream currentSource;
 
+    // 각 표시는 다음 줄부터 stage source를 모으기 위한 경계다. 첫 표시 전 텍스트는 무시한다.
     while(std::getline(stream,line)){
         // Windows 줄바꿈에서 남을 수 있는 '\r'을 제거한다.
         if(!line.empty() && line.back() == '\r') line.pop_back();
 
-        // 새 #type 구역에서 앞 구역을 저장하고 source 수집을 시작한다.
+        // 새 #type 경계에서 앞 stage를 저장한 뒤 해당 stage에 속하는 줄만 모은다.
         if(line.rfind("#type ",0) == 0){
             if(currentType != 0){
                 shaderSources[currentType] = currentSource.str();
@@ -119,7 +120,7 @@ void Shader::Compile(const std::unordered_map<unsigned int, std::string>& shader
     GLuint program = glCreateProgram();
     if(program == 0) throw std::runtime_error("Failed to create Shader Program");
 
-    // 실패 때 이미 만든 stage와 Program을 정리한다.
+    // 실패 경로에서 정리할 stage ID를 기록한다. 생성 중 예외가 나도 Program을 남기지 않는다.
     std::vector<GLuint> shaderIDs;
 
     for(const auto& [type, source] : shaderSources){
@@ -162,7 +163,7 @@ void Shader::Compile(const std::unordered_map<unsigned int, std::string>& shader
         shaderIDs.push_back(shader);
     }
 
-    // 모든 stage를 Program에 연결한 뒤 링크한다.
+    // stage별 컴파일 성공은 조합 성공을 뜻하지 않으므로 전체 조합을 별도로 링크 검사한다.
     glLinkProgram(program);
 
     GLint isLinked = GL_FALSE;
@@ -192,7 +193,7 @@ void Shader::Compile(const std::unordered_map<unsigned int, std::string>& shader
         throw std::runtime_error(std::string("Shader Link Failed:\n")+ infoLog.data());
     }
 
-    // 링크된 Program만 남기고 stage 객체를 해제한다.
+    // 링크가 끝나면 실행 코드는 Program에 보존되므로 임시 stage 객체를 분리해 해제한다.
     for(GLuint id : shaderIDs){
         glDetachShader(program,id);
         glDeleteShader(id);
@@ -208,6 +209,7 @@ int Shader::GetUniformLocation(const std::string& name)const{
     auto it = m_UniformLocationCache.find(name);
     if(it != m_UniformLocationCache.end()) return it->second;
 
+    // uniform 조회는 링크된 Program마다 고정이므로 성공·미존재 결과(-1)를 모두 이름별로 재사용한다.
     int location = glGetUniformLocation(m_RendererID,name.c_str());
     if(location == -1) std::cout << "Warning: Uniform " << name << "'doesn't exist\n";
 
@@ -217,6 +219,7 @@ int Shader::GetUniformLocation(const std::string& name)const{
 }
 
 
+// Set* 함수는 GL 타입에 맞춰 값을 전달한다. 호출 전 Bind가 필요하며 행렬은 전치하지 않는다.
 void Shader::SetInt(const std::string& name, int value){glUniform1i(GetUniformLocation(name),value);}
 void Shader::SetIntArray(const std::string& name, int* values, uint32_t cnt){glUniform1iv(GetUniformLocation(name),static_cast<GLsizei>(cnt),values);}
 void Shader::SetFloat(const std::string& name, float value){glUniform1f(GetUniformLocation(name),value);}
