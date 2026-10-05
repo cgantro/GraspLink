@@ -14,6 +14,7 @@ constexpr double kPositionEpsilon = 1e-8;
 
 Result Failure(ErrorCode code, std::string message)
 {
+    // 입력 검증 실패를 예외가 아닌 공통 controller Result 계약으로 돌려준다.
     return {code, std::move(message)};
 }
 
@@ -21,13 +22,14 @@ bool IsScaleValid(double value)
 {
     return std::isfinite(value) && value > 0.0 && value <= 1.0;
 }
-} // namespace
+} // 익명 네임스페이스
 
 SimRobotController::SimRobotController(const models::RobotSpecification& specification)
     : specification_(&specification)
 {
     if (specification_->joints == nullptr || specification_->jointCount == 0)
         throw std::invalid_argument("SimRobotController: empty robot specification");
+    // 상태는 q=0에서 시작하므로 모든 관절 범위가 0을 포함하고 제한 속도가 양수여야 한다.
     for (std::size_t i = 0; i < specification_->jointCount; ++i)
     {
         const auto& joint = specification_->joints[i];
@@ -41,12 +43,13 @@ SimRobotController::SimRobotController(const models::RobotSpecification& specifi
 
 Result SimRobotController::Connect()
 {
+    // 재연결은 이전 명령과 상태를 이어가지 않고 q=0의 새 논리 세션을 만든다.
     state_ = {};
     state_.jointPositionRadians.assign(specification_->jointCount, 0.0);
     state_.jointVelocityRadiansPerSecond.assign(specification_->jointCount, 0.0);
     state_.mode = RobotMode::Idle;
     state_.valid = true;
-    // TCP pose는 이 Controller가 채우지 않는다. RobotKinematics가 관절 상태에서 별도 FK 결과를 만든다.
+    // TCP pose는 Controller feedback이 아니다. 호출자는 joint state를 RobotKinematics에 보내 FK를 별도로 계산한다.
     state_.tcpPoseValid = false;
 
     targetPositionRadians_ = state_.jointPositionRadians;
@@ -58,6 +61,7 @@ Result SimRobotController::Connect()
 
 void SimRobotController::Disconnect() noexcept
 {
+    // 백엔드의 관절 배열은 재사용하되 연결/feedback 유효성을 내리고 속도만 즉시 0으로 만든다.
     connected_ = false;
     state_.mode = RobotMode::Disconnected;
     state_.valid = false;
@@ -83,6 +87,7 @@ Result SimRobotController::MoveJoint(const JointMoveCommand& command)
     if (!IsScaleValid(command.velocityScale) || !IsScaleValid(command.accelerationScale))
         return Failure(ErrorCode::InvalidCommand, "SimRobotController: scale must be in (0, 1]");
 
+    // 모든 joint를 먼저 확인한다. 하나라도 범위 밖이면 target이나 기존 진행 상태를 일부만 바꾸지 않는다.
     for (std::size_t i = 0; i < specification_->jointCount; ++i)
     {
         const double target = command.targetPositionRadians[i];
@@ -97,7 +102,8 @@ Result SimRobotController::MoveJoint(const JointMoveCommand& command)
         }
     }
 
-    // Moving 중 새 명령도 허용하며 진행 중이던 target을 교체한다.
+    // 명령은 여기서 q를 순간 변경하지 않는다. 다음 Update들이 이 목표를 향해 상태를 진행한다.
+    // Moving 중 새 명령은 queue가 아니라 현재 target 교체로 처리한다.
     targetPositionRadians_ = command.targetPositionRadians;
     velocityScale_ = command.velocityScale;
     accelerationScale_ = command.accelerationScale;
@@ -112,6 +118,7 @@ Result SimRobotController::MoveJoint(const JointMoveCommand& command)
         }
     }
 
+    // 이미 현재 자세를 목표로 받은 경우에도 수락은 성공이며 mode만 Idle로 둔다.
     state_.mode = needsMotion ? RobotMode::Moving : RobotMode::Idle;
     return Result::Success();
 }
@@ -121,6 +128,7 @@ Result SimRobotController::MoveLinear(const LinearMoveCommand&)
     if (!connected_)
         return Failure(ErrorCode::NotConnected, "SimRobotController: not connected");
 
+    // 관절각→TCP FK는 역방향 TCP 목표→관절 IK나 직선 경로 실행을 제공하지 않는다.
     return Failure(
         ErrorCode::Unsupported,
         "SimRobotController: MoveLinear requires an IK solver and trajectory execution");
@@ -131,6 +139,7 @@ Result SimRobotController::Stop()
     if (!connected_)
         return Failure(ErrorCode::NotConnected, "SimRobotController: not connected");
 
+    // 현재 q를 새 목표로 고정해 이후 Update가 남은 동작을 재개하지 않게 한다.
     targetPositionRadians_ = state_.jointPositionRadians;
     std::fill(
         state_.jointVelocityRadiansPerSecond.begin(),
@@ -142,11 +151,13 @@ Result SimRobotController::Stop()
 
 RobotState SimRobotController::GetState() const
 {
+    // vector까지 값으로 복사하므로 호출자는 다음 Update와 무관한 snapshot을 받는다.
     return state_;
 }
 
 void SimRobotController::Update(double dtSeconds)
 {
+    // FixedControlLoop 같은 호출자가 정한 tick마다 q/dq만 갱신한다. FK와 Entity 반영은 별도 계층의 책임이다.
     if (!connected_ || state_.mode != RobotMode::Moving ||
         !std::isfinite(dtSeconds) || dtSeconds <= 0.0)
     {
@@ -168,6 +179,7 @@ void SimRobotController::Update(double dtSeconds)
         }
 
         // 속도 상한 안에서 target을 직접 따라간다. 가속도 제한이나 ramp는 적용하지 않는다.
+        // maxStep은 이번 간격에 허용되는 각도 [rad]. clamp로 큰 dt에서도 목표를 지나치지 않는다.
         const double maxStep = joint.maxVelocityRadiansPerSecond * velocityScale_ * dtSeconds;
         if (maxStep <= 0.0)
         {
@@ -190,7 +202,7 @@ void SimRobotController::Update(double dtSeconds)
         }
     }
 
-    // accelerationScale_는 계약 보존용이다. Simulation은 가속도 제한을 계산하지 않는다.
+    // accelerationScale_는 공통 명령값 보존용이다. 이 backend는 속도 상한만 적용해 ramp를 만들지 않는다.
     (void)accelerationScale_;
 
     if (allReached)
@@ -205,7 +217,8 @@ void SimRobotController::Update(double dtSeconds)
 
 const models::RobotSpecification& SimRobotController::GetSpecification() const noexcept
 {
+    // 생성자에서 빌린 사양을 그대로 참조한다. 사양 저장소는 Controller보다 오래 살아야 한다.
     return *specification_;
 }
 
-} // namespace grasplink::robotics::backends::simulation
+} // grasplink::robotics::backends::simulation 네임스페이스
