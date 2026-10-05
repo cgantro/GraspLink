@@ -9,7 +9,7 @@ MiniBCG는 3D rigid-body simulation에 Jolt를 사용한다. Flecs는 Entity와 
 | --- | --- |
 | `modules/physics` | Jolt 초기화, rigid body 생성·삭제, simulation step, pose 조회·변경 |
 | Viewer의 `PhysicsSystemModule` | Physics 설정 Component 해석, Entity와 Body 연결, 좌표 변환, Entity 제거 시 Body 정리 |
-| `EntityFactory` | 필요한 Entity와 Render/Physics 설정 Component 구성 |
+| `EntityFactory` | Floor·Debug·Robot Link Entity 구성과 설정 Component 부착 |
 | `ViewerApp` | Window, Scene, Robot, Physics 객체의 생성 순서와 fixed-step 호출 연결 |
 
 `PhysicsWorld`와 `PhysicsSystemModule`은 코드 중복을 나눈 두 구현이 아니다. `PhysicsWorld`는 Flecs를
@@ -41,8 +41,10 @@ entity.set<RigidBody>(RigidBody{BodyMotionType::Dynamic})
 않는다. Dynamic object와 Robot Link는 unit scale을 쓴다. Floor visual은 GLB의 scale을 유지하고,
 collider는 별도로 지정한 World meter 크기를 사용한다.
 
-integration 생성 시 기존 설정 Entity를 한 번 처리하고, 이후 두 설정 Component가 모두 존재하거나
-갱신되면 observer가 `PhysicsWorld::CreateBox()`를 호출한다. 설정이 바뀌면
+ViewerApp은 Floor·Robot·Debug Entity의 물리 설정을 먼저 붙이고 integration을 생성한다. 생성자는 기존
+설정을 한 번 검색해 Body를 만든다. 이후 `RigidBody`와 `BoxCollider`의 OnSet 이벤트는 Entity별 pending 목록에
+모아 다음 fixed step 시작 때 한 번 처리한다. 두 설정 Component가 모두 있을 때 `PhysicsWorld::CreateBox()`를
+호출한다. 설정이 바뀌면
 기존 binding을 제거해 Body를 정리한 뒤 새 설정으로 다시 만든다. 둘 중 하나가 제거되면 같은 Entity의
 private `PhysicsBodyBinding`도 제거되고, binding 제거 observer가 실제 Jolt Body를 삭제한다. Entity가
 destroy될 때 Flecs의 Component 제거 event도 같은 정리 경로를 사용한다.
@@ -75,10 +77,10 @@ FixedControlLoop
 → Render frame: TransformSystem / RenderSystem
 ```
 
-Physics가 쓰는 계층 행렬은 `TransformSystemModule::CalculateWorldMatrix()`에서 현재 Local Component를
-읽어 계산한다. 이전 Render Frame의 cached World matrix를 사용하지 않으므로, 그 fixed tick에서 Controller가
-바꾼 로봇 관절도 Physics 목표 pose에 반영된다. 동일한 `ComposeLocalMatrix()`가 Renderer용 TransformSystem과
-Physics 양쪽에서 쓰이므로 Local `T * R * S` 규칙이 따로 복제되지 않는다.
+Physics는 현재 Local Component로 계층 행렬을 계산하고 한 fixed step 안에서 부모 행렬을 캐시한다. 이전
+Render Frame의 World matrix를 사용하지 않으므로 Controller가 바꾼 로봇 관절 자세가 Physics 목표 pose에
+반영된다. 동일한 `CalculateLocalMatrix()`가 TransformSystem과 Physics 양쪽에서 쓰이므로 Local `T * R * S`
+규칙이 따로 복제되지 않는다.
 
 Dynamic Body를 scale 또는 shear가 있는 부모 아래 두는 것은 아직 지원 범위가 아니다. Jolt rigid body pose에
 scale이 없고 현재 동기화가 위치·회전만 Local Component에 되돌린다.
@@ -92,12 +94,14 @@ scale이 없고 현재 동기화가 위치·회전만 Local Component에 되돌�
 논리적 Floor Entity가 소유하지만 shape 자체는 서로 다른 표현이다. GLB Mesh를 Jolt triangle mesh로 변환하지
 않는다. 현재 visible plane의 local 반 폭은 scale 적용 후 약 3 m이고 Collider 반 폭은 5 m다. Collider는
 mesh보다 넓게 두며 높이 0.2 m, local y offset -0.1 m로 놓아 윗면을 바닥면 y=0에 맞춘다.
+Collider 크기와 offset 상수는 `EntityFactory.cpp`에 모아둔다.
 
 ### Debug Box
 
 `Mesh::CreateCube()`는 각 축 -0.5에서 +0.5까지의 unit cube를 만든다. Debug build의 Entity는 크기 배율 1과
 half-extents `{0.5, 0.5, 0.5}`를 쓰므로 Render Cube와 Physics Box의 nominal 크기가 일치한다. 같은 Entity가
-MeshFilter, MeshRenderer, Material/Shader, Transform, Dynamic Body와 collider 설정을 가진다.
+MeshFilter, MeshRenderer, Material/Shader, Transform, Dynamic Body와 collider 설정을 가진다. Robot과 같은
+Shader 인스턴스를 공유한다.
 
 ### Robot Link
 

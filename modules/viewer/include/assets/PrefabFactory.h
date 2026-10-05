@@ -25,15 +25,13 @@ public:
      * @param model GltfLoader가 만든 CPU 모델 데이터
      * @param assets GPU Mesh·Material 보관 객체
      * @param shader 생성 Entity가 사용할 Shader
-     * @param renderSinglePrimitiveOnNode 단일 Primitive를 Node Entity에 직접 연결할지 여부
      * @return 모델 root Entity
      */
     static Entity CreateModel(
         Scene& scene,
         const ModelResource& model,
         const AssetManager& assets,
-        const std::shared_ptr<Shader>& shader,
-        bool renderSinglePrimitiveOnNode = false);
+        const std::shared_ptr<Shader>& shader);
 
 private:
     PrefabFactory() = delete;

@@ -98,17 +98,10 @@ public:
      * @param component 저장할 Component 값
      */
     template<typename T>
-    Entity& Set(const T& component)
+    Entity& set(const T& component)
     {
         m_EntityHandle.set<T>(component);
         return *this;
-    }
-
-    /** @brief Flecs식 `set` 표기. 연속 호출 가능 */
-    template<typename T>
-    Entity& set(const T& component)
-    {
-        return Set<T>(component);
     }
 
     /**

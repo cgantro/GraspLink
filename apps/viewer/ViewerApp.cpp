@@ -151,7 +151,7 @@ void ViewerApp::InitScene(Entity& robotRoot, Entity& floorEntity)
     Scene* scene = m_SceneManager->GetActiveScene();
 
     // Robot·Floor 전용 Shader
-    auto robotShader = Shader::Create("shaders/Robot.glsl");
+    m_RobotShader = Shader::Create("shaders/Robot.glsl");
     auto gridShader = Shader::Create("shaders/Grid.glsl");
 
     // GLB 읽기 → GPU Mesh·Material 업로드
@@ -164,7 +164,7 @@ void ViewerApp::InitScene(Entity& robotRoot, Entity& floorEntity)
         *scene,
         robotModel,
         *m_AssetManager,
-        robotShader);
+        m_RobotShader);
 
     // Floor Mesh 생성. Static Collider는 InitPhysics에서 같은 Entity에 연결
     ModelResource planeModel = GltfLoader::LoadGLB("plane.glb");
@@ -174,8 +174,7 @@ void ViewerApp::InitScene(Entity& robotRoot, Entity& floorEntity)
         *scene,
         planeModel,
         *m_AssetManager,
-        gridShader,
-        true);
+        gridShader);
 
 }
 
@@ -227,14 +226,13 @@ bool ViewerApp::InitRobot(const Entity& robotRoot)
 void ViewerApp::InitPhysics(const Entity& robotRoot, Entity& floorEntity)
 {
     m_PhysicsWorld = std::make_unique<PhysicsWorld>();
-    m_PhysicsSystemModule = std::make_unique<PhysicsSystemModule>(m_World, *m_PhysicsWorld);
-
     EntityFactory::ConfigureFloor(floorEntity);
     EntityFactory::ConfigureRobotPhysics(robotRoot, grasplink::robotics::models::hanwha::kHcr12a);
 #ifndef NDEBUG
     // Debug 전용: Dynamic Cube 시각화
-    EntityFactory::CreateDebugBox(*m_SceneManager->GetActiveScene());
+    EntityFactory::CreateDebugBox(*m_SceneManager->GetActiveScene(), m_RobotShader);
 #endif
+    m_PhysicsSystemModule = std::make_unique<PhysicsSystemModule>(m_World, *m_PhysicsWorld);
 }
 
 
@@ -316,6 +314,7 @@ void ViewerApp::Shutdown()
     m_PhysicsWorld.reset();
 
     m_AssetManager.reset();
+    m_RobotShader.reset();
 
     // Viewer Resource 역순 정리
     m_CameraController.reset();

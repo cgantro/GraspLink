@@ -9,8 +9,10 @@
 #include <glm/gtx/matrix_decompose.hpp>
 #include <glm/gtx/quaternion.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <unordered_map>
 #include <vector>
 
 namespace
@@ -19,57 +21,70 @@ using grasplink::physics::BoxBodyDescription;
 using grasplink::physics::BodyMotionType;
 using grasplink::physics::PhysicsBodyHandle;
 using grasplink::physics::Transform;
+// Fixed Step World 행렬 cache
+using WorldTransformCache = std::unordered_map<flecs::entity_t, glm::mat4>;
 
-// Body 재생성 때 Component 추가 → Flecs 내부 구성 변경 가능
-// 순회 중 목록 변경 방지를 위해 처리 값 복사
 struct BodySnapshot
 {
     flecs::entity entity;
     RigidBody rigidBody;
     BoxCollider collider;
+    bool ready = false;
 };
 
-// PhysicsWorld 위치·회전: Scene 기준
 glm::mat4 BuildTransformMatrix(const Transform& transform)
 {
     return glm::translate(glm::mat4(1.0F), transform.position) *
         glm::mat4_cast(glm::normalize(transform.rotation));
 }
 
-// Box 중심 offset: Entity Local 기준
 glm::mat4 BuildColliderLocalMatrix(const BoxCollider& collider)
 {
     return glm::translate(glm::mat4(1.0F), collider.localPositionMeters) *
         glm::mat4_cast(glm::normalize(collider.localRotation));
 }
 
-// Box 크기·회전 유효성 검사. 잘못된 값은 Jolt Shape 생성 실패
 bool IsValidCollider(const BoxCollider& collider)
 {
-    const glm::vec3& halfExtents = collider.halfExtentsMeters;
     const glm::vec3& localPosition = collider.localPositionMeters;
     const glm::quat& localRotation = collider.localRotation;
     const float rotationLengthSquared = localRotation.w * localRotation.w +
         localRotation.x * localRotation.x + localRotation.y * localRotation.y +
         localRotation.z * localRotation.z;
 
-    return std::isfinite(halfExtents.x) && std::isfinite(halfExtents.y) &&
-        std::isfinite(halfExtents.z) && halfExtents.x > 0.0F &&
-        halfExtents.y > 0.0F && halfExtents.z > 0.0F &&
-        std::isfinite(localPosition.x) && std::isfinite(localPosition.y) &&
+    return std::isfinite(localPosition.x) && std::isfinite(localPosition.y) &&
         std::isfinite(localPosition.z) && std::isfinite(localRotation.w) &&
         std::isfinite(localRotation.x) && std::isfinite(localRotation.y) &&
         std::isfinite(localRotation.z) && rotationLengthSquared > 1.0e-8F;
 }
 
-// Entity·부모 변환 + Collider offset → Jolt에 보낼 Scene 기준 위치·회전
+// 로봇이 공유하는 부모 행렬
+glm::mat4 CalculateWorldMatrix(flecs::entity entity, WorldTransformCache& cache)
+{
+    if (entity.id() == 0 || !entity.is_alive())
+        return glm::mat4(1.0F);
+
+    const flecs::entity_t id = entity.id();
+    const auto cached = cache.find(id);
+    if (cached != cache.end())
+        return cached->second;
+
+    const glm::mat4 local = TransformSystemModule::CalculateLocalMatrix(entity);
+    const flecs::entity parent = entity.parent();
+    const glm::mat4 world = parent.id() == 0 || !parent.is_alive() || parent == entity
+        ? local
+        : CalculateWorldMatrix(parent, cache) * local;
+    cache.emplace(id, world);
+    return world;
+}
+
 bool TryGetPhysicsTransform(
     flecs::entity entity,
     const glm::mat4& colliderLocalTransform,
+    WorldTransformCache& cache,
     Transform& result)
 {
-    const glm::mat4 worldMatrix =
-        TransformSystemModule::CalculateWorldMatrix(entity) * colliderLocalTransform;
+    const glm::mat4 worldMatrix = CalculateWorldMatrix(entity, cache) * colliderLocalTransform;
     glm::vec3 scale{1.0F};
     glm::quat rotation{1.0F, 0.0F, 0.0F, 0.0F};
     glm::vec3 translation{0.0F};
@@ -87,7 +102,6 @@ bool TryGetPhysicsTransform(
 
 namespace grasplink::viewer::detail
 {
-// 내부 연결 Component. Entity 생성 코드에는 노출하지 않음
 struct PhysicsBodyBinding
 {
     grasplink::physics::PhysicsBodyHandle handle;
@@ -96,12 +110,11 @@ struct PhysicsBodyBinding
 
 struct PhysicsSystemModule::Impl
 {
-    // 참조만 보관. PhysicsSystemModule 파괴 후 World·PhysicsWorld 파괴
-    flecs::world& world;
     grasplink::physics::PhysicsWorld& physicsWorld;
     flecs::query<const RigidBody, const BoxCollider> bodyQuery;
     flecs::query<const grasplink::viewer::detail::PhysicsBodyBinding> bindingQuery;
     std::vector<BodySnapshot> bodies;
+    std::vector<flecs::entity> pendingConfiguration;
     std::vector<flecs::entity> boundEntities;
     flecs::observer rigidBodySetObserver;
     flecs::observer rigidBodyRemoveObserver;
@@ -110,64 +123,43 @@ struct PhysicsSystemModule::Impl
     flecs::observer bodyBindingRemoveObserver;
 
     Impl(flecs::world& worldValue, grasplink::physics::PhysicsWorld& physicsWorldValue)
-        : world(worldValue),
-          physicsWorld(physicsWorldValue),
-          bodyQuery(world.query<const RigidBody, const BoxCollider>()),
-          bindingQuery(world.query<const grasplink::viewer::detail::PhysicsBodyBinding>())
+        : physicsWorld(physicsWorldValue),
+          bodyQuery(worldValue.query<const RigidBody, const BoxCollider>()),
+          bindingQuery(worldValue.query<const grasplink::viewer::detail::PhysicsBodyBinding>())
     {
-        world.module<PhysicsSystemModule>();
+        worldValue.module<PhysicsSystemModule>();
 
-        // 설정 추가·변경 → Jolt Body 재생성
-        // 설정 제거 → Body 삭제
-        rigidBodySetObserver = world.observer<RigidBody>()
+        rigidBodySetObserver = worldValue.observer<RigidBody>()
             .event(flecs::OnSet)
-            .each([this](flecs::entity entity, const RigidBody&)
-            {
-                ConfigureBody(entity);
-            });
-
-        rigidBodyRemoveObserver = world.observer<RigidBody>()
+            .each([this](flecs::entity entity, const RigidBody&) { QueueConfiguration(entity); });
+        rigidBodyRemoveObserver = worldValue.observer<RigidBody>()
             .event(flecs::OnRemove)
-            .each([this](flecs::entity entity, const RigidBody&)
-            {
-                DestroyBody(entity);
-            });
-
-        colliderSetObserver = world.observer<BoxCollider>()
+            .each([this](flecs::entity entity, const RigidBody&) { DestroyBody(entity); });
+        colliderSetObserver = worldValue.observer<BoxCollider>()
             .event(flecs::OnSet)
-            .each([this](flecs::entity entity, const BoxCollider&)
-            {
-                ConfigureBody(entity);
-            });
-
-        colliderRemoveObserver = world.observer<BoxCollider>()
+            .each([this](flecs::entity entity, const BoxCollider&) { QueueConfiguration(entity); });
+        colliderRemoveObserver = worldValue.observer<BoxCollider>()
             .event(flecs::OnRemove)
-            .each([this](flecs::entity entity, const BoxCollider&)
-            {
-                DestroyBody(entity);
-            });
-
-        bodyBindingRemoveObserver = world.observer<grasplink::viewer::detail::PhysicsBodyBinding>()
+            .each([this](flecs::entity entity, const BoxCollider&) { DestroyBody(entity); });
+        bodyBindingRemoveObserver = worldValue.observer<grasplink::viewer::detail::PhysicsBodyBinding>()
             .event(flecs::OnRemove)
             .each([this](flecs::entity, const grasplink::viewer::detail::PhysicsBodyBinding& binding)
             {
-                // 연결 Component 제거 → Jolt Body 삭제. Entity 삭제 때도 동일 경로
                 physicsWorld.DestroyBody(binding.handle);
             });
 
-        // 모듈 생성 전 물리 설정이 붙은 Entity도 Body 생성 대상
+        WorldTransformCache transformCache;
         bodyQuery.each([this](flecs::entity entity, const RigidBody& rigidBody, const BoxCollider& collider)
         {
             bodies.push_back({entity, rigidBody, collider});
         });
         for (const BodySnapshot& body : bodies)
-            ConfigureBody(body.entity);
+            ConfigureBody(body.entity, transformCache);
         bodies.clear();
     }
 
     ~Impl()
     {
-        // PhysicsWorld 생존 중 Entity 연결 제거 → Body 삭제
         boundEntities.clear();
         bindingQuery.each([this](flecs::entity entity, const grasplink::viewer::detail::PhysicsBodyBinding&)
         {
@@ -184,13 +176,21 @@ struct PhysicsSystemModule::Impl
         bodyBindingRemoveObserver.destruct();
     }
 
-    // RigidBody + BoxCollider + 유효한 값 → Body 생성. 잘못된 값은 로그 후 건너뜀
-    void ConfigureBody(flecs::entity entity)
+    // 설정 변경 event 중복 방지
+    void QueueConfiguration(flecs::entity entity)
+    {
+        const bool alreadyQueued = std::any_of(
+            pendingConfiguration.begin(), pendingConfiguration.end(),
+            [entity](flecs::entity queued) { return queued == entity; });
+        if (!alreadyQueued)
+            pendingConfiguration.push_back(entity);
+    }
+
+    void ConfigureBody(flecs::entity entity, WorldTransformCache& transformCache)
     {
         if (!entity.is_alive())
             return;
 
-        // 이전 설정의 Body 삭제 후 새 설정 확인
         DestroyBody(entity);
         if (!entity.has<RigidBody>() || !entity.has<BoxCollider>())
             return;
@@ -205,7 +205,7 @@ struct PhysicsSystemModule::Impl
         }
 
         Transform bodyTransform;
-        if (!TryGetPhysicsTransform(entity, BuildColliderLocalMatrix(collider), bodyTransform))
+        if (!TryGetPhysicsTransform(entity, BuildColliderLocalMatrix(collider), transformCache, bodyTransform))
         {
             std::cerr << "PhysicsSystemModule: could not calculate Entity World Transform for "
                       << entity.id() << '\n';
@@ -213,7 +213,6 @@ struct PhysicsSystemModule::Impl
         }
 
         BoxBodyDescription description;
-        // 크기 단위: 미터. Entity Scale과 별도로 지정
         description.halfExtentsMeters = collider.halfExtentsMeters;
         description.transform = bodyTransform;
         description.motionType = rigidBody.motionType;
@@ -230,60 +229,76 @@ struct PhysicsSystemModule::Impl
         }
     }
 
-    // 연결 정보 제거 → 감시자가 Jolt Body도 삭제
     void DestroyBody(flecs::entity entity)
     {
-        if (entity.id() == 0 || !entity.is_alive() ||
-            !entity.has<grasplink::viewer::detail::PhysicsBodyBinding>())
+        if (entity.id() != 0 && entity.is_alive() &&
+            entity.has<grasplink::viewer::detail::PhysicsBodyBinding>())
         {
-            return;
+            entity.remove<grasplink::viewer::detail::PhysicsBodyBinding>();
         }
-
-        entity.remove<grasplink::viewer::detail::PhysicsBodyBinding>();
     }
 
-    // 고정 Step: 로봇 자세 전달 → Jolt 계산 → Dynamic Entity 갱신
+    bool EnsureBody(const BodySnapshot& body, WorldTransformCache& transformCache)
+    {
+        if (body.entity.has<grasplink::viewer::detail::PhysicsBodyBinding>())
+        {
+            const auto& binding = body.entity.get<grasplink::viewer::detail::PhysicsBodyBinding>();
+            if (physicsWorld.IsBodyValid(binding.handle))
+                return true;
+            DestroyBody(body.entity);
+        }
+
+        ConfigureBody(body.entity, transformCache);
+        if (!body.entity.has<grasplink::viewer::detail::PhysicsBodyBinding>())
+            return false;
+        return physicsWorld.IsBodyValid(
+            body.entity.get<grasplink::viewer::detail::PhysicsBodyBinding>().handle);
+    }
+
     void Step(double fixedDeltaSeconds)
     {
         if (!std::isfinite(fixedDeltaSeconds) || fixedDeltaSeconds <= 0.0)
             return;
 
-        // Body 복구 중 Entity 구성이 바뀔 수 있어 처리 목록 먼저 복사
+        // 변경된 Entity 설정을 한 번만 반영
+        WorldTransformCache transformCache;
+        std::vector<flecs::entity> changedEntities;
+        changedEntities.swap(pendingConfiguration);
+        for (flecs::entity entity : changedEntities)
+            ConfigureBody(entity, transformCache);
+
         bodies.clear();
         bodyQuery.each([this](flecs::entity entity, const RigidBody& rigidBody, const BoxCollider& collider)
         {
             bodies.push_back({entity, rigidBody, collider});
         });
+        for (BodySnapshot& body : bodies)
+        {
+            if (body.rigidBody.motionType != BodyMotionType::Static)
+                body.ready = EnsureBody(body, transformCache);
+        }
 
-        // Controller 관절 위치: 부모 기준 → 부모 변환을 반영해 Jolt에 전달
+        // Controller 자세 → Jolt Kinematic Body
         for (const BodySnapshot& body : bodies)
         {
-            if (!EnsureBody(body))
+            if (!body.ready || body.rigidBody.motionType != BodyMotionType::Kinematic)
                 continue;
 
-            const auto& binding =
-                body.entity.get<grasplink::viewer::detail::PhysicsBodyBinding>();
-            if (body.rigidBody.motionType != BodyMotionType::Kinematic)
-                continue;
-
+            const auto& binding = body.entity.get<grasplink::viewer::detail::PhysicsBodyBinding>();
             Transform targetTransform;
-            if (!TryGetPhysicsTransform(body.entity, BuildColliderLocalMatrix(body.collider), targetTransform))
-                continue;
-
-            physicsWorld.MoveKinematic(binding.handle, targetTransform, fixedDeltaSeconds);
+            if (TryGetPhysicsTransform(body.entity, BuildColliderLocalMatrix(body.collider), transformCache, targetTransform))
+                physicsWorld.MoveKinematic(binding.handle, targetTransform, fixedDeltaSeconds);
         }
 
         physicsWorld.Step(fixedDeltaSeconds);
 
-        // Jolt 결과: Scene 기준 → 부모 변환을 되돌려 Entity Local 위치·회전에 저장
+        // Jolt Dynamic pose → Entity Local Transform
         for (const BodySnapshot& body : bodies)
         {
-            if (body.rigidBody.motionType != BodyMotionType::Dynamic || !EnsureBody(body))
+            if (!body.ready || body.rigidBody.motionType != BodyMotionType::Dynamic)
                 continue;
 
-            const auto& binding =
-                body.entity.get<grasplink::viewer::detail::PhysicsBodyBinding>();
-
+            const auto& binding = body.entity.get<grasplink::viewer::detail::PhysicsBodyBinding>();
             ApplyWorldTransform(
                 body.entity,
                 physicsWorld.GetBodyTransform(binding.handle),
@@ -291,25 +306,6 @@ struct PhysicsSystemModule::Impl
         }
     }
 
-    // Jolt Body 유효성 확인. 사라졌으면 현재 Component 설정으로 재생성
-    bool EnsureBody(const BodySnapshot& body)
-    {
-        if (!body.entity.has<grasplink::viewer::detail::PhysicsBodyBinding>())
-            return false;
-
-        const auto& binding =
-            body.entity.get<grasplink::viewer::detail::PhysicsBodyBinding>();
-        if (physicsWorld.IsBodyValid(binding.handle))
-            return true;
-
-        DestroyBody(body.entity);
-        ConfigureBody(body.entity);
-        return body.entity.has<grasplink::viewer::detail::PhysicsBodyBinding>();
-    }
-
-    // Jolt Box 중심: Scene 기준 위치·회전
-    // Collider offset과 부모 변환을 되돌려 Entity Local 값으로 변환
-    // Entity Scale은 Physics 계산에서 제외
     static void ApplyWorldTransform(
         flecs::entity entity,
         const Transform& bodyTransform,
@@ -318,10 +314,8 @@ struct PhysicsSystemModule::Impl
         if (!entity.is_alive())
             return;
 
-        const glm::mat4 parentWorld =
-            TransformSystemModule::CalculateWorldMatrix(entity.parent());
-        const glm::mat4 entityWorld =
-            BuildTransformMatrix(bodyTransform) * glm::inverse(colliderLocalTransform);
+        const glm::mat4 parentWorld = TransformSystemModule::CalculateWorldMatrix(entity.parent());
+        const glm::mat4 entityWorld = BuildTransformMatrix(bodyTransform) * glm::inverse(colliderLocalTransform);
         const glm::mat4 local = glm::inverse(parentWorld) * entityWorld;
 
         glm::vec3 scale{1.0F};
@@ -329,7 +323,6 @@ struct PhysicsSystemModule::Impl
         glm::vec3 translation{0.0F};
         glm::vec3 skew{0.0F};
         glm::vec4 perspective{0.0F};
-
         if (!glm::decompose(local, scale, rotation, translation, skew, perspective))
             return;
 

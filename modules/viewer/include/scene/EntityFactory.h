@@ -1,11 +1,11 @@
 #pragma once
 
 #include "Entity.h"
-#include "components/PhysicsComponents.h"
 
-#include <string>
+#include <memory>
 
 class Scene;
+class Shader;
 
 namespace grasplink::robotics::models
 {
@@ -36,18 +36,9 @@ public:
      * @param scene Cube를 담을 Scene
      * @return World Y=2m에서 시작하는 Render·Physics Entity
      */
-    static Entity CreateDebugBox(Scene& scene);
+    static Entity CreateDebugBox(Scene& scene, const std::shared_ptr<Shader>& shader);
 
-    /**
-     * @brief 로봇 관절 Entity에 충돌용 Box 연결
-     * @param robotRoot J1~J6을 찾을 로봇 root
-     * @param specification 관절 이름과 순서가 담긴 로봇 사양
-     *
-     * Collider: 인접 관절 사이를 덮는 단순 Box. GLB Mesh 변환 없음
-     * 로봇 자세: Controller가 결정. Physics는 충돌만 계산
-     * 미지원: 관절 힘·토크 계산
-     * @throws std::runtime_error 로봇 root 또는 사양의 관절 Entity를 찾지 못한 경우
-     */
+    // Robot link collision boxes
     static void ConfigureRobotPhysics(
         const Entity& robotRoot,
         const grasplink::robotics::models::RobotSpecification& specification);

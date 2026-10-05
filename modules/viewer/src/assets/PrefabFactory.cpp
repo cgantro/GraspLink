@@ -60,8 +60,7 @@ void CreateRenderEntities(
     const std::shared_ptr<Shader>& shader,
     const NodeData& node,
     std::size_t nodeIndex,
-    Entity& nodeEntity,
-    bool renderSinglePrimitiveOnNode)
+    Entity& nodeEntity)
 {
     // Mesh 없는 Node도 유지: 로봇 Joint pivot 보존
     if (node.meshIndex < 0) return;
@@ -73,7 +72,7 @@ void CreateRenderEntities(
     if (!meshData.gpuMesh)
         throw std::runtime_error("Mesh has not been uploaded: " + meshData.name);
 
-    if (renderSinglePrimitiveOnNode && meshData.subMeshes.size() == 1)
+    if (meshData.subMeshes.size() == 1)
     {
         const SubMeshInfo& subMesh = meshData.subMeshes.front();
         nodeEntity
@@ -103,11 +102,11 @@ void CreateRenderEntities(
             ResolveMaterial(model, assets, subMesh.defaultMaterialIndex);
 
         renderEntity
-            .Set<MeshFilter>(MeshFilter{
+            .set<MeshFilter>(MeshFilter{
                 meshData.gpuMesh,
                 subMesh.indexStart,
                 subMesh.indexCount})
-            .Set<MeshRenderer>(MeshRenderer{
+            .set<MeshRenderer>(MeshRenderer{
                 shader,
                 material,
                 true});
@@ -119,8 +118,7 @@ Entity PrefabFactory::CreateModel(
     Scene& scene,
     const ModelResource& model,
     const AssetManager& assets,
-    const std::shared_ptr<Shader>& shader,
-    bool renderSinglePrimitiveOnNode)
+    const std::shared_ptr<Shader>& shader)
 {
     if (!shader)
         throw std::runtime_error("PrefabFactory requires a shader");
@@ -175,8 +173,7 @@ Entity PrefabFactory::CreateModel(
             shader,
             model.nodes[i],
             i,
-            entities[i],
-            renderSinglePrimitiveOnNode);
+            entities[i]);
     }
 
     return entities[static_cast<std::size_t>(model.rootNodeIndex)];

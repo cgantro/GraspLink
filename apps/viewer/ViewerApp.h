@@ -11,6 +11,7 @@ class Camera;
 class OrbitCameraController;
 class SceneManager;
 class AssetManager;
+class Shader;
 class PhysicsSystemModule;
 class Entity;
 
@@ -82,6 +83,9 @@ private:
 
     // GPU Mesh·Material·Texture 관리
     std::unique_ptr<AssetManager> m_AssetManager;
+
+    // Robot·Debug Box 공용 Shader
+    std::shared_ptr<Shader> m_RobotShader;
 
     // Flecs Entity·Component·System 소유
     flecs::world m_World;
