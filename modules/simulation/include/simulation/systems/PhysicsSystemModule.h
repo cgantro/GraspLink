@@ -19,7 +19,8 @@ namespace grasplink::simulation
  * 위치·회전·크기 pair가 있는 grouping Entity는 Body 대상이 아니며 부모 좌표만 자식 World 자세에
  * 반영한다. 물리 Entity는 Dynamic 조상을 둘 수 없고, 물리 계층은 단위 scale을 사용한다.
  * Static Environment는 자기 Local scale만 렌더링 용도로 허용하며 collider 치수에는 적용하지 않는다.
- * Dynamic 결과는 Local Position/Rotation에 기록되고 기존 Scale은 유지된다.
+ * Dynamic은 SceneRoot 또는 항등 grouping 조상만 허용해 World≈Local로 다룬다.
+ * Physics가 정한 결과를 Local Position/Rotation에 직접 기록하고 기존 Scale은 유지한다.
  *
  * TwoF85 설정 helper가 만드는 본체와 여섯 관절의 Kinematic proxy도 이 모듈이 동기화한다.
  * 프록시는 원본 ECS 관절의 자식이므로 현재 관절 계층에서 계산된 World 자세를 사용한다.
@@ -48,10 +49,12 @@ public:
      * @brief 한 고정 시간 간격의 ECS와 Jolt 자세를 동기화한다.
      * @param fixedDeltaSeconds 시뮬레이션 간격 [s]. 유한한 양수만 처리한다.
      * @details 호출 전 Controller/FK가 Local pose를 갱신하고 TransformSystem이 World 행렬을
-     * 계산해야 한다. 처리 순서는 예약 설정 재구성, Kinematic World 목표 전달, Jolt 1회 계산,
-     * Dynamic Body 원점 World 자세의 부모 역변환, Local Position/Rotation 반영이다. 호출자는
+     * 계산해야 한다. PrePhysicsSync가 예약 Body 재구성과 Scene-driven 자세 전달을 처리하고,
+     * Jolt 1회 계산 뒤 PostPhysicsSync가 Physics-driven Dynamic 자세를 Local에 직접 반영한다. 호출자는
      * 이후 TransformSystem을 다시 실행해 다음 렌더링/고정 간격에 쓸 World 행렬을 갱신한다.
-     * Dynamic 조상은 지원하지 않는다. collider에 scale이 전파되지 않으므로 Static Environment
+     * Static·Kinematic은 Scene, Dynamic은 Physics가 자세를 정한다. 같은 Scene 목표는 다시 전달하지
+     * 않지만 Kinematic이 실제 목표에 도달할 때까지 이동을 계속하며 도달 후 잔류 속도를 한 번 제거한다.
+     * Dynamic의 비항등 조상은 지원하지 않는다. collider에 scale이 전파되지 않으므로 Static Environment
      * 자신의 시각 scale 외에는 Entity와 모든 scale을 가진 조상에 단위 scale이 필요하다.
      */
     void Step(double fixedDeltaSeconds);
