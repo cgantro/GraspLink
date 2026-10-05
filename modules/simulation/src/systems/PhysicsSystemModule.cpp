@@ -35,14 +35,14 @@ glm::mat4 BuildTransformMatrix(const Transform& transform)
 
 bool AllowsVisualScale(const RigidBody& rigidBody)
 {
-    // Static Environment 자신의 scale만 시각용으로 허용한다. Collider는 지정한 m 치수 유지.
+    // 바닥 렌더 Mesh 배율은 허용하되 Jolt 형상은 선언된 m 치수를 유지한다.
     return rigidBody.motionType == BodyMotionType::Static &&
         rigidBody.collisionLayer == grasplink::physics::CollisionLayer::Environment;
 }
 
 bool HasUnitScale(flecs::entity entity, bool allowEntityScale)
 {
-    // 부모 scale도 collider에 전파되지 않으므로 물리 계층에서는 단위 scale을 요구한다.
+    // 현재 Entity와 조상들의 Local Scale pair를 검사한다. Scale이 없는 grouping Entity는 단위로 취급한다.
     bool isEntity = true;
     while (entity.id() != 0 && entity.is_alive())
     {
@@ -64,7 +64,7 @@ bool HasUnitScale(flecs::entity entity, bool allowEntityScale)
 
 bool HasSupportedPhysicsParents(flecs::entity entity)
 {
-    // Dynamic 조상의 갱신 순서와 자식의 독립 물리 운동은 아직 정의하지 않는다.
+    // Dynamic 부모의 Jolt 이동과 자식 Body 독립 이동을 한 World pose에 합치는 규칙이 없다.
     for (flecs::entity parent = entity.parent(); parent.id() != 0 && parent.is_alive(); parent = parent.parent())
         if (parent.has<RigidBody>() && parent.get<RigidBody>().motionType == BodyMotionType::Dynamic)
             return false;
@@ -78,7 +78,7 @@ bool TryGetPhysicsTransform(
     if (!entity.has<TransformMatrix, World>())
         return false;
 
-    // 입력은 Scene World 변환. 출력 위치는 Entity와 같은 Body 원점이며 COM이 아니다.
+    // 갱신된 Scene World 행렬에서 위치·회전만 추출한다. Body 원점은 Entity 원점이며 COM이 아니다.
     const glm::mat4 worldMatrix = entity.get<TransformMatrix, World>();
     glm::vec3 scale{1.0F};
     glm::quat rotation{1.0F, 0.0F, 0.0F, 0.0F};
@@ -101,7 +101,7 @@ namespace detail
 {
 struct PhysicsBodyBinding
 {
-    // Body 소유자는 PhysicsWorld. 이 연결을 제거하면 observer가 Body도 제거한다.
+    // ECS에는 비소유 핸들만 둔다. Binding 제거 observer가 PhysicsWorld 소유 Body를 해제한다.
     grasplink::physics::PhysicsBodyHandle handle;
 };
 }
@@ -112,11 +112,11 @@ struct PhysicsSystemModule::Impl
     flecs::query<const RigidBody, const Colliders> bodyQuery;
     flecs::query<const grasplink::simulation::detail::PhysicsBodyBinding> bindingQuery;
     std::vector<BodySnapshot> bodies;
-    // OnSet에서는 설정만 예약한다. 다음 Step에서 최신 World 자세로 Body를 다시 만든다.
+    // OnSet 안에서는 query를 건드리지 않는다. 다음 Step에서 설정의 최종 상태와 최신 World pose를 읽는다.
     std::vector<flecs::entity> pendingConfiguration;
     std::unordered_set<flecs::entity_t> pendingIds;
     std::vector<flecs::entity> boundEntities;
-    // Callback이 this를 참조하므로 Impl이 사라지기 전에 모두 해제해야 한다.
+    // 모든 callback은 this와 physicsWorld를 사용한다. Impl이 없어지기 전에 observer를 철거한다.
     flecs::observer rigidBodySetObserver;
     flecs::observer rigidBodyRemoveObserver;
     flecs::observer colliderSetObserver;
@@ -149,6 +149,7 @@ struct PhysicsSystemModule::Impl
                 physicsWorld.DestroyBody(binding.handle);
             });
 
+        // 생성 전에 붙어 있던 설정도 빠뜨리지 않고 연결한다. query 순회와 Binding 추가를 분리한다.
         bodyQuery.each([this](flecs::entity entity, const RigidBody&, const Colliders&)
         {
             bodies.push_back({entity});
@@ -160,7 +161,8 @@ struct PhysicsSystemModule::Impl
 
     ~Impl()
     {
-        // BodyBinding 제거 callback이 유효한 동안 Body를 먼저 정리한다.
+        // entity.remove가 동기적으로 OnRemove를 호출하므로 Binding observer가 살아 있을 때 Body를 해제한다.
+        // Query를 순회하면서 Binding을 지우면 membership이 바뀌므로 제거 대상 Entity를 먼저 복사한다.
         boundEntities.clear();
         bindingQuery.each([this](flecs::entity entity, const detail::PhysicsBodyBinding&)
         {
@@ -177,7 +179,7 @@ struct PhysicsSystemModule::Impl
         bodyBindingRemoveObserver.destruct();
     }
 
-    // 같은 Entity의 RigidBody/Colliders가 연달아 바뀌어도 한 번만 재구성한다.
+    // 같은 fixed 간격 전 두 설정이 연속 변경되어도 ID 집합으로 예약을 합쳐 최종값만 한 번 적용한다.
     void QueueConfiguration(flecs::entity entity)
     {
         if (pendingIds.insert(entity.id()).second)
@@ -189,9 +191,11 @@ struct PhysicsSystemModule::Impl
         if (!entity.is_alive())
             return false;
 
+        // 기존 binding부터 끊어 stale Jolt pose가 새 설정에 남지 않게 한다.
         DestroyBody(entity);
         if (!entity.has<RigidBody>() || !entity.has<Colliders>())
             return false;
+        // 설정 pair만으로는 pose가 정의되지 않는다. Entity 자체의 세 Local TRS pair가 모두 필요하다.
         if (!entity.has<Position, Local>() || !entity.has<Rotation, Local>() || !entity.has<Scale, Local>())
             return false;
 
@@ -214,6 +218,7 @@ struct PhysicsSystemModule::Impl
         }
 
         BodyDescription description;
+        // ECS component는 선언 데이터다. Scene World pose와 충돌 필터를 합쳐 Jolt 소유 Body를 만든다.
         description.shapes = colliders.shapes;
         description.transform = bodyTransform;
         description.motionType = rigidBody.motionType;
@@ -238,6 +243,7 @@ struct PhysicsSystemModule::Impl
         if (entity.id() != 0 && entity.is_alive() &&
             entity.has<grasplink::simulation::detail::PhysicsBodyBinding>())
         {
+            // OnRemove observer가 handle을 PhysicsWorld에 넘긴다. 여기서 직접 중복 해제하지 않는다.
             entity.remove<grasplink::simulation::detail::PhysicsBodyBinding>();
         }
     }
@@ -269,7 +275,7 @@ struct PhysicsSystemModule::Impl
                 DestroyBody(entity);
         }
 
-        // Query를 순회하는 동안 component를 바꾸지 않도록 Entity 목록을 먼저 모은다.
+        // Query는 RigidBody+Colliders 조합만 반환한다. Binding 추가/삭제로 query 순회가 무효화되지 않게 snapshot한다.
         bodies.clear();
         bodyQuery.each([this](flecs::entity entity, const RigidBody&, const Colliders&)
         {
@@ -294,7 +300,7 @@ struct PhysicsSystemModule::Impl
         }
         pendingIds.clear();
 
-        // Controller가 갱신한 Entity World 자세를 이번 간격의 Kinematic 목표로 보낸다.
+        // Kinematic은 외부 제어 대상: 이번 간격에 움직일 Scene pose를 Jolt 목표로 넘긴다.
         for (const BodySnapshot& body : bodies)
         {
             if (!body.ready || body.entity.get<RigidBody>().motionType != BodyMotionType::Kinematic)
@@ -308,7 +314,7 @@ struct PhysicsSystemModule::Impl
 
         physicsWorld.Step(fixedDeltaSeconds);
 
-        // Jolt가 움직인 Dynamic Body의 원점 자세를 Entity Local 값으로 되돌린다.
+        // Dynamic은 Jolt 결과가 권위값이다. Body 원점 자세를 Entity Local 위치·회전으로 되돌린다.
         for (const BodySnapshot& body : bodies)
         {
             if (!body.ready || body.entity.get<RigidBody>().motionType != BodyMotionType::Dynamic)
@@ -329,7 +335,7 @@ struct PhysicsSystemModule::Impl
             return;
 
         const flecs::entity parent = entity.parent();
-        // 좌표: Jolt의 물체 원점 World pose에서 부모 변환을 되돌려 Local로 저장한다.
+        // Jolt 위치는 Scene World 기준 Body 원점이다. 부모 World 역행렬로 Local pose를 복원한다.
         const glm::mat4 parentWorld = parent.id() != 0 && parent.is_alive() && parent.has<TransformMatrix, World>()
             ? parent.get<TransformMatrix, World>()
             : glm::mat4(1.0F);
@@ -343,6 +349,7 @@ struct PhysicsSystemModule::Impl
         if (!glm::decompose(local, scale, rotation, translation, skew, perspective))
             return;
 
+        // Position/Rotation만 물리 결과로 교체한다. Entity의 Local Scale pair와 값은 그대로 둔다.
         entity.set<Position, Local>(Position{translation});
         entity.set<Rotation, Local>(Rotation{glm::eulerAngles(glm::normalize(rotation))});
     }
