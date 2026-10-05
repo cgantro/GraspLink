@@ -425,7 +425,7 @@ struct GuiModule::Impl
         {
             ImGui::TextUnformatted("Last result: no command sent");
         }
-        ImGui::TextWrapped("Free-space motion display only; contact response and grasping are not simulated.");
+        ImGui::TextWrapped("Free-space linkage motion; contact-driven stopping and adaptive grasping are unavailable.");
         ImGui::End();
     }
 
