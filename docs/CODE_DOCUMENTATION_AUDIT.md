@@ -6,6 +6,8 @@
 
 위 결과 문서의 테스트 수와 구현 상태는 해당 작업 시점의 기록이다. 이후 연결된 2F-85 자유공간 Controller·기구학·GLB 자세 및 기존 proxy 갱신의 현재 계약·검증 범위는 [GRIPPER_RUNTIME_DESIGN.md](GRIPPER_RUNTIME_DESIGN.md)를 참고한다. 힘·접촉 시 정지·파지는 아직 구현하지 않았다.
 
+현재 회전 저장은 `Rotation`·`Entity`·`NodeData`의 단위 quaternion이며 GLB·FK·Physics의 Euler 왕복 변환을 제거했다. glTF/GLM 성분 순서, 정규화·잘못된 입력 거부와 float 정밀도 경계는 [ARCHITECTURE.md](ARCHITECTURE.md)의 Transform 흐름에 정리한다. 역사 문서의 Euler 설명과 검증 숫자는 당시 기록으로 보존한다.
+
 물리와 Flecs 설정·수명·좌표 흐름은 [PHYSICS_ECS_INTEGRATION.md](PHYSICS_ECS_INTEGRATION.md), controller 계약은 [CONTROLLER_INTERFACE.md](CONTROLLER_INTERFACE.md), 구현 우선순위는 [CONTROL_SIMULATION_GOALS.md](CONTROL_SIMULATION_GOALS.md)에 정리한다.
 
 로봇·그리퍼 수치와 구현 상태는 [HCR12A_2F85_simulation_specs.md](HCR12A_2F85_simulation_specs.md), 각 수치의 출처 구분은 [MODEL_DATA_PROVENANCE.md](MODEL_DATA_PROVENANCE.md)를 기준으로 한다.

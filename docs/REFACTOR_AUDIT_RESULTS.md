@@ -2,6 +2,8 @@
 
 이 보고서는 최초 승인된 감사 작업의 완료 시점을 기록한다. 이후 그리퍼 충돌과 한글 Doxygen 주석 보강은 [후속 작업 보고서](GRIPPER_COLLISION_AND_COMMENT_RESULTS.md)에 기록한다.
 
+이후 Local 회전 저장을 quaternion으로 전환해 GLB·FK·Physics의 Euler 왕복을 제거했다. 현재 회전 계약은 [Architecture](ARCHITECTURE.md)를 참고한다. 아래 double Euler 보강과 검증 숫자는 당시 결과로 보존한다.
+
 기준: 2026-10-05 작업 시작 시의 실제 소스와 기존 미커밋 변경을 보존한 snapshot.
 기존 simulation/gui/FK 구조를 유지하면서, 아래 경계 오류와 오래된 설명을 수정했다.
 제조사 수치·CAD·GLB 자산은 변경하지 않았다.

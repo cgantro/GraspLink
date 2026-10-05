@@ -54,6 +54,8 @@ Application / IK / Planner
 
 그리퍼는 `IGripperController → GripperState → GripperKinematics → GripperTransformAdapter → GLB 관절 → 기존 충돌 proxy` 경로를 사용한다. 4 ms마다 두 Controller 갱신, 관절 자세 적용, World 변환 갱신, Jolt step, World 변환 재갱신 순서로 진행한다. raw 위치의 선형 fraction 매핑과 기본 master 속도 0.1..1.0 rad/s는 시뮬레이션 가정이며 제조사 보정식·속도 사양이 아니다. 계약과 검증 범위는 [그리퍼 런타임 설계](docs/GRIPPER_RUNTIME_DESIGN.md)에 정리했다.
 
+GLB 노드와 Entity의 Local 회전은 단위 quaternion으로 저장한다. glTF의 `[x,y,z,w]`를 GLM 생성자 `(w,x,y,z)`로 옮기고, FK·Physics 자세도 quaternion으로 전달해 Euler 왕복 변환을 없앴다. 영 quaternion·NaN 등 비유한 입력은 거부하며 `q`와 `-q`는 같은 회전이다. Entity pose와 행렬은 여전히 float이고, 관절각·각속도는 rad·rad/s 스칼라를 사용한다. Orbit 카메라의 마우스 입력용 yaw/pitch 각도도 유지한다.
+
 ## 빌드
 
 Windows에서는 Visual Studio의 **Developer PowerShell / x64 Native Tools Command Prompt**에서 실행한다. CMake, Ninja와 MSVC가 PATH에 있어야 한다. 의존성은 CMake FetchContent가 준비한다.

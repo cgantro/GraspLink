@@ -2,6 +2,8 @@
 
 이 문서는 자유공간 그리퍼 Controller 연결 전 충돌·주석 작업과 당시 테스트 결과의 기록이다. 이후 구현된 `SimGripperController`·`GripperKinematics`·`GripperTransformAdapter`와 4 ms pose/proxy 갱신 계약은 [현재 그리퍼 런타임 설계](GRIPPER_RUNTIME_DESIGN.md)를 참고한다. 아래 테스트 수와 당시 구현 상태는 과거 결과로 보존한다.
 
+현재 Local 회전은 quaternion으로 저장하며 GLB·FK·Physics의 Euler 왕복을 제거했다. 회전 형식과 입력 계약은 [Architecture](ARCHITECTURE.md)를 참고한다. 아래 Euler 주석 검토는 당시 작업 기록이다.
+
 ## 충돌 범위
 
 `ConfigureTwoF85Colliders`는 현재 `HCR12A_2F-85.glb`의 메시를 기준으로 본체와 6개 관절에 Kinematic 충돌 프록시 7개를 만든다.
