@@ -17,11 +17,11 @@ Mesh::Mesh(const Vertex* vertices, std::uint32_t vertexCount,
     if (vertices == nullptr || vertexCount == 0U) { throw std::invalid_argument("Mesh has no vertices"); }
     if (indices == nullptr || indexCount == 0U) { throw std::invalid_argument("Mesh has no indices"); }
 
-    // 순서: 정점 입력 설정이 다른 Mesh에 기록되지 않도록 이 VAO를 먼저 연결.
+    // VAO를 먼저 연결해야 뒤에서 지정하는 attribute 형식과 EBO 연결이 이 Mesh의 상태로 기록된다.
     vertexArray_ = std::make_unique<VertexArray>();
     vertexArray_->Bind();
 
-    // 단위: 정점 원소 개수를 GPU 복사에 필요한 byte 수로 변환.
+    // buffer 업로드 API는 byte 크기를 받으므로 Vertex 원소 개수에 구조체 크기를 곱한다.
     const std::size_t byteCount = sizeof(Vertex) * static_cast<std::size_t>(vertexCount);
     if (byteCount > std::numeric_limits<std::uint32_t>::max())
     {
@@ -30,11 +30,12 @@ Mesh::Mesh(const Vertex* vertices, std::uint32_t vertexCount,
     vertexBuffer_ = std::make_unique<VertexBuffer>(vertices, static_cast<std::uint32_t>(byteCount));
     vertexBuffer_->Bind();
 
-    // 순서: index buffer 연결은 VAO에 기록되므로 같은 VAO가 연결된 상태에서 복사.
+    // EBO 연결은 현재 VAO 상태에 포함된다. VAO가 연결된 동안 생성·업로드해 draw 때 다시 쓸 수 있게 한다.
     indexBuffer_ = std::make_unique<IndexBuffer>(indices, indexCount);
 
-    // 배치: Shader location 0=위치, 1=법선, 2=UV. 간격·시작 offset은 byte 단위.
-    // 이유: sizeof와 offsetof로 구조체 padding까지 반영해 GPU가 올바른 속성을 읽게 함.
+    // Shader의 location 0/1/2에 각각 위치(vec3), 법선(vec3), UV(vec2)를 연결한다.
+    // stride는 정점 사이 간격, offsetof는 한 Vertex 안에서 속성이 시작하는 byte 위치다.
+    // sizeof/offsetof를 사용해 구조체 padding도 반영한다. tangent는 Vertex에 저장되지만 여기서 설정하지 않는다.
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), reinterpret_cast<void*>(offsetof(Vertex, position)));
     glEnableVertexAttribArray(1);
@@ -42,13 +43,14 @@ Mesh::Mesh(const Vertex* vertices, std::uint32_t vertexCount,
     glEnableVertexAttribArray(2);
     glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), reinterpret_cast<void*>(offsetof(Vertex, texCoord)));
 
-    // 연결: VBO 바인딩을 풀어도 VAO의 정점 설정은 유지. EBO는 연결한 채 VAO를 해제.
+    // VBO의 전역 바인딩은 풀어도 VAO의 attribute 설정은 남는다. EBO 연결은 VAO 상태이므로 유지한다.
     vertexBuffer_->UnBind();
     vertexArray_->UnBind();
 }
 
 Mesh::~Mesh() = default;
 
+// draw 호출 시 EBO에 저장된 uint32 index가 VAO의 VBO 정점들을 참조한다.
 void Mesh::Bind() const { vertexArray_->Bind(); }
 void Mesh::UnBind() const { vertexArray_->UnBind(); }
 std::uint32_t Mesh::GetIndexCount() const { return indexBuffer_->GetCount(); }
@@ -58,6 +60,7 @@ std::unique_ptr<Mesh> Mesh::CreateCube(float sideLengthMeters)
     if (!std::isfinite(sideLengthMeters) || sideLengthMeters <= 0.0F)
         throw std::invalid_argument("Cube side length must be finite and > 0");
 
+    // 면마다 네 정점을 둬 인접한 면이 서로 다른 평면 법선과 UV 사각형을 가질 수 있게 한다.
     Vertex vertices[] = {
         {{-0.5F, -0.5F,  0.5F}, {0.0F, 0.0F, 1.0F}, {0.0F, 0.0F}},
         {{ 0.5F, -0.5F,  0.5F}, {0.0F, 0.0F, 1.0F}, {1.0F, 0.0F}},
@@ -84,10 +87,12 @@ std::unique_ptr<Mesh> Mesh::CreateCube(float sideLengthMeters)
         {{ 0.5F, -0.5F,  0.5F}, {0.0F,-1.0F, 0.0F}, {1.0F, 1.0F}},
         {{-0.5F, -0.5F,  0.5F}, {0.0F,-1.0F, 0.0F}, {0.0F, 1.0F}}
     };
+    // 각 면을 두 삼각형으로 나눈다. index는 byte 위치가 아니라 vertices 배열의 원소 번호다.
     const std::uint32_t indices[] = {
         0,1,2, 2,3,0, 4,5,6, 6,7,4, 8,9,10, 10,11,8,
         12,13,14, 14,15,12, 16,17,18, 18,19,16, 20,21,22, 22,23,20
     };
+    // 좌표를 정육면체 중심에서 각 축 방향으로 sideLengthMeters / 2까지 늘린다.
     for (Vertex& vertex : vertices)
         vertex.position *= sideLengthMeters;
 
