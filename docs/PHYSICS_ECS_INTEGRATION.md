@@ -2,130 +2,77 @@
 
 ## 책임 경계
 
-MiniBCG는 3D rigid-body simulation에 Jolt를 사용한다. Flecs는 Entity와 Component를 관리하는 ECS이며,
-프로젝트의 Physics simulation을 대신하지 않는다.
-
 | 영역 | 책임 |
 | --- | --- |
-| `modules/physics` | Jolt 초기화, rigid body 생성·삭제, simulation step, pose 조회·변경 |
-| Viewer의 `PhysicsSystemModule` | Physics 설정 Component 해석, Entity와 Body 연결, 좌표 변환, Entity 제거 시 Body 정리 |
-| `EntityFactory` | Floor·Debug·Robot Link Entity 구성과 설정 Component 부착 |
-| `ViewerApp` | Window, Scene, Robot, Physics 객체의 생성 순서와 fixed-step 호출 연결 |
+| `modules/physics` | Jolt 초기화, Body 생성·삭제, 고정 스텝, pose 조회·변경 |
+| `modules/robotics` | RobotState와 모델 명세를 사용한 순기구학 계산 |
+| `modules/viewer` | Flecs Scene, 화면 Transform, GLB·OpenGL 표현 |
+| `modules/simulation` | 물리 설정 컴포넌트, Entity와 Body 연결, 로봇 충돌 프록시, 시뮬레이션 Scene 구성 |
+| `ViewerApp` | 모듈을 만들고 실행 순서를 연결하는 Composition Root |
 
-`PhysicsWorld`와 `PhysicsSystemModule`은 코드 중복을 나눈 두 구현이 아니다. `PhysicsWorld`는 Flecs를
-모르는 Jolt 경계이며, `PhysicsSystemModule`은 Jolt API를 Entity의 Component contract에 연결한다.
-둘을 합치면 Physics 모듈이 ECS에 의존하거나 ViewerApp이 Body 생성, lifetime, 좌표 동기화를 직접
-구현해야 한다.
+`PhysicsWorld`는 Flecs와 OpenGL을 모른다. `PhysicsSystemModule`은 `modules/simulation`에서 Flecs 설정을 Jolt Body로 연결한다. `PhysicsBodyHandle`은 Physics API 내부의 불투명 핸들이며, 앱과 Entity 생성 코드는 이를 보관하지 않는다.
 
-`PhysicsWorld`의 public API는 프로젝트 소유 `PhysicsBodyHandle`과 GLM pose/config를 사용한다. Jolt의
-`JPH::BodyID`와 다른 Jolt 타입은 `modules/physics` 구현 안에만 둔다. Flecs와 OpenGL은 이 모듈의
-dependency가 아니다.
-
-## Entity physics 설정
-
-사용 코드는 Body를 직접 만들지 않고 Entity에 설정을 붙인다.
+물리 객체는 Entity에 설정 컴포넌트를 붙여 선언한다.
 
 ```cpp
 entity.set<RigidBody>(RigidBody{BodyMotionType::Dynamic})
-      .set<BoxCollider>(BoxCollider{{0.5F, 0.5F, 0.5F}});
+    .set<Colliders>(Colliders{{physics_colliders::Box({0.06F, 0.06F, 0.06F})}});
 ```
 
-`RigidBody`는 Body의 motion type을 선언한다.
+`Colliders`는 Box, Cylinder, Sphere, Convex Hull 여러 개를 하나의 Entity/rigid body에 묶는다. `PhysicsSystemModule`은 두 설정이 모두 있는 Entity의 Body를 만든다. 설정이 바뀌거나 제거되면 기존 Body를 정리한다. Entity가 사라질 때 Flecs가 private binding component를 제거하고, observer가 연결된 Body를 삭제한다.
 
-- `Static`: 생성한 World pose를 Jolt가 고정한다.
-- `Kinematic`: Entity Transform이 pose를 결정하고 매 fixed step Jolt에 목표 pose를 전달한다.
-- `Dynamic`: Jolt가 pose를 계산하고 매 fixed step 결과를 Entity에 반영한다.
+## Transform과 물리 좌표
 
-`BoxCollider::halfExtentsMeters`는 collider 각 축의 반 크기 [m]다. `localPositionMeters`와
-`localRotation`은 Entity 기준 collider 위치와 회전이다. Entity scale은 collider 크기에 자동 곱하지
-않는다. Dynamic object와 Robot Link는 unit scale을 쓴다. Floor visual은 GLB의 scale을 유지하고,
-collider는 별도로 지정한 World meter 크기를 사용한다.
+`TransformSystemModule::UpdateWorldTransforms()`가 Entity 계층의 Local/World 행렬을 계산하는 단일 경로다. Physics는 이 결과를 읽어 Jolt에 보낸다. Dynamic Body의 Jolt pose는 Entity 부모의 cached World 행렬 역행렬을 적용해 Local Transform으로 되돌린다.
 
-ViewerApp은 Floor·Robot·Debug Entity의 물리 설정을 먼저 붙이고 integration을 생성한다. 생성자는 기존
-설정을 한 번 검색해 Body를 만든다. 이후 `RigidBody`와 `BoxCollider`의 OnSet 이벤트는 Entity별 pending 목록에
-모아 다음 fixed step 시작 때 한 번 처리한다. 두 설정 Component가 모두 있을 때 `PhysicsWorld::CreateBox()`를
-호출한다. 설정이 바뀌면
-기존 binding을 제거해 Body를 정리한 뒤 새 설정으로 다시 만든다. 둘 중 하나가 제거되면 같은 Entity의
-private `PhysicsBodyBinding`도 제거되고, binding 제거 observer가 실제 Jolt Body를 삭제한다. Entity가
-destroy될 때 Flecs의 Component 제거 event도 같은 정리 경로를 사용한다.
+Physics가 있는 Entity와 모든 조상 Entity는 unit scale이어야 한다. 단, Static Environment collider는 Entity 자신의 시각 scale을 허용한다. Floor Mesh의 authored scale은 Render 표현에만 쓰고, collider 크기와 offset은 meter 단위로 직접 지정한다. Jolt rigid body pose에는 scale이 포함되지 않는다.
 
-`PhysicsBodyBinding`은 integration source 안에서만 정의한다. 게임 코드와 Factory는 handle을 보관하거나
-Body lifetime을 수동으로 관리하지 않는다. PhysicsWorld가 예기치 않게 handle을 무효화한 경우 다음 fixed
-step의 validity 확인에서 설정 Component를 읽어 Body를 다시 만든다.
-
-## 좌표계와 fixed-step 순서
-
-Jolt는 World pose를 사용하고 Scene Entity는 부모 기준 Local Transform을 사용한다. 따라서 두 방향을
-같은 값 대입으로 처리하지 않는다.
-
-1. Kinematic Entity의 최신 Local TRS와 parent hierarchy를 누적해 World pose를 만든다.
-2. Entity-local collider 위치·회전을 더한 pose를 Jolt에 전달한다.
-3. `PhysicsWorld::Step(fixedDeltaSeconds)`를 한 번 실행한다.
-4. Dynamic Body의 World pose에서 collider-local transform을 되돌린다.
-5. 부모 World matrix의 역행렬을 적용해 Entity Local position/rotation에 기록한다.
-6. 다음 render frame의 `TransformSystemModule`이 변경된 Local 값으로 World matrix를 계산하고 Renderer가 읽는다.
-
-고정 실행 순서:
+고정 스텝 흐름은 다음과 같다.
 
 ```text
-FixedControlLoop
-→ RobotController Update
-→ RobotTransformAdapter (RobotState → Joint Local Transform)
-→ PhysicsSystemModule (Kinematic Entity → Physics)
+RobotController Update
+→ RobotKinematics: RobotState → joint rotation / link pose
+→ RobotTransformAdapter: joint rotation → GLB Joint Entity
+→ RobotPhysicsAdapter: link pose → Kinematic collision Entity
+→ TransformSystemModule: Local → World matrix
+→ PhysicsSystemModule: Kinematic Entity → Jolt
 → PhysicsWorld Step
-→ PhysicsSystemModule (Dynamic Physics → Entity Local Transform)
-→ Render frame: TransformSystem / RenderSystem
+→ PhysicsSystemModule: Dynamic Jolt pose → Entity Local Transform
 ```
 
-Physics는 현재 Local Component로 계층 행렬을 계산하고 한 fixed step 안에서 부모 행렬을 캐시한다. 이전
-Render Frame의 World matrix를 사용하지 않으므로 Controller가 바꾼 로봇 관절 자세가 Physics 목표 pose에
-반영된다. 동일한 `CalculateLocalMatrix()`가 TransformSystem과 Physics 양쪽에서 쓰이므로 Local `T * R * S`
-규칙이 따로 복제되지 않는다.
+화면 갱신 전에도 `TransformSystemModule::UpdateWorldTransforms()`가 실행된다. 따라서 RenderSystem은 최신 Local Transform으로 계산한 World 행렬을 읽으며, Physics는 render FPS와 독립된 fixed step에서만 진행한다.
 
-Dynamic Body를 scale 또는 shear가 있는 부모 아래 두는 것은 아직 지원 범위가 아니다. Jolt rigid body pose에
-scale이 없고 현재 동기화가 위치·회전만 Local Component에 되돌린다.
+## Robot pose와 충돌 프록시
 
-## 현재 Scene 구성
+`RobotKinematics`는 모델의 bind pivot 사이 차이를 이전 누적 회전으로 변환하고, joint axis와 controller 관절각으로 joint 회전 및 base-frame link pose를 계산한다. bind pivot은 계산 입력에 쓰인다. FK의 ToolFrame 결과는 controller의 `tcpPose` feedback과 별개이며, 현재 `SimRobotController`의 `tcpPoseValid`는 false다. Viewer 어댑터는 joint 회전을 GLB hierarchy에 적용하고, Simulation 어댑터는 link pose를 별도 Kinematic collision Entity에 적용한다. 화면 Mesh Entity와 Jolt Body의 ID를 같은 것으로 취급하지 않는다.
 
-### Floor
+HCR-12A collider는 GLB 재질 메시의 삼각형 연결로 나눈 부품별로 생성한다. 같은 위치의 seam 정점도 연결해 부품을 판별한다. 4 cm 미만 부품은 제외하고, 나머지는 삼각형 중심을 관절 좌표계 기준 16 cm 셀로 묶는다. 삼각형은 셀 경계에서 자르지 않는다. 1 cm 미만 크기 셀과 부피가 없는 hull 입력도 제외한다. 각 셀의 Convex Hull은 오목한 부분이나 셀 경계 사이를 메울 수 있다. 다음 가동 관절 아래와 `Gripper` geometry는 이 adapter의 hull 생성 대상이 아니다.
 
-`plane.glb`가 단일 primitive인 경우 PrefabFactory가 MeshFilter와 MeshRenderer를 model root Entity에 붙인다.
-같은 Entity에 Factory가 `Static RigidBody`와 단순 `BoxCollider`를 붙인다. 시각 Mesh와 Collider는 하나의
-논리적 Floor Entity가 소유하지만 shape 자체는 서로 다른 표현이다. GLB Mesh를 Jolt triangle mesh로 변환하지
-않는다. 현재 visible plane의 local 반 폭은 scale 적용 후 약 3 m이고 Collider 반 폭은 5 m다. Collider는
-mesh보다 넓게 두며 높이 0.2 m, local y offset -0.1 m로 놓아 윗면을 바닥면 y=0에 맞춘다.
-Collider 크기와 offset 상수는 `EntityFactory.cpp`에 모아둔다.
+`ConfigureTwoF85Colliders`는 고정 `GripperMesh`, outer knuckle+finger compound, inner knuckle, fingertip을 각각 한 mesh 기반 Convex Hull로 만들어 총 일곱 Kinematic proxy로 둔다. 정점은 owning authored Gripper/joint 원점 기준이며, 해당 proxy는 원본 joint Entity의 child라 fixed-step World transform에서 자동으로 따라간다. 현재 authored ECS joint가 pose source of truth다. 시작 형상은 약 85 mm open gap을 보존한다. 이 단계는 controller나 grasp 동역학을 공급하지 않는다.
 
-### Debug Box
+`Robot`과 `Gripper`는 Environment 및 DynamicObject와 충돌한다. Robot 링크끼리, Gripper part끼리, Robot–Gripper 사이 충돌은 제외해 현재 프록시의 자기 충돌을 줄인다. 부착 상태별 필터는 없다.
 
-`Mesh::CreateCube()`는 각 축 -0.5에서 +0.5까지의 unit cube를 만든다. Debug build의 Entity는 크기 배율 1과
-half-extents `{0.5, 0.5, 0.5}`를 쓰므로 Render Cube와 Physics Box의 nominal 크기가 일치한다. 같은 Entity가
-MeshFilter, MeshRenderer, Material/Shader, Transform, Dynamic Body와 collider 설정을 가진다. Robot과 같은
-Shader 인스턴스를 공유한다.
+현재 로봇 물리는 controller가 계산한 자세를 따르는 Kinematic 충돌 프록시다. Jolt joint constraint, 관절 torque, 관성, 동역학 기반 grasp는 구현하지 않았다.
 
-### Robot Link
+## Floor와 디버그 객체
 
-HCR-12A의 J1~J6 Joint Entity에 Kinematic Box Collider를 붙인다. 이 proxy는 Controller의 관절 hierarchy를
-따라 이동하고 환경 collision에 참여한다. 현재 proxy는 link 형상의 근사치다. Jolt joint constraint, 모터
-토크 기반 articulated dynamics, self-collision policy는 구현하지 않았다.
+Floor의 `plane.glb` Mesh와 Static Box Collider는 하나의 model root Entity가 소유한다. GLB 평면은 root scale 3으로 X/Z ±3 m 범위이며, Collider도 half-extents `{3, 0.02, 3}` m로 맞춘다. Collider 윗면은 수치 오차 방지를 위해 시각 평면보다 5 mm 위에 둔다. GLB를 Jolt triangle mesh로 변환하지 않는다.
 
-2F-85 Gripper의 controller spec과 GLB linkage는 있지만, 현재 Physics Component는 Gripper joints에 붙이지
-않는다. Gripper collision, object contact, under-actuated adaptation과 grasp는 이후 단계다.
+`apps/viewer`의 `DebugSceneSetup`은 0.12 m Cube Mesh와 Material을 50개 Entity가 공유하는 물리 데모 객체를 만든다. Box Collider half-extents는 0.06 m다. `--physics-demo`로 활성화할 수 있으며 모든 build type에서 선택 사항이다. 객체 생성은 앱의 데모 설정에 있고, 기본 Simulation Scene의 Floor 설정과는 분리돼 있다.
 
-## Lifetime
+`modules/gui`의 `GuiModule`이 ImGui context·입력·panel 수명을 관리한다. `Show configured colliders`가 켜졌을 때 ECS에 설정된 Collider shape의 Box/Cylinder/Sphere 외곽선과 Convex Hull 투영을 layer별 색으로 표시한다. 선은 100 ms 간격으로 캐시되며 Jolt 내부 shape를 조회하거나 깊이를 검사하지 않는다. Camera가 이동해도 다음 갱신 전까지 이전 투영이 보일 수 있다.
 
-`ViewerApp`이 `PhysicsWorld`를 먼저 만들고 이를 참조하는 `PhysicsSystemModule`을 만든다. Shutdown에서는
-Scene을 제거하고 integration을 해제한 뒤 Flecs World를 비운다. 모든 Entity binding의 Body가 제거되는 동안
-`PhysicsWorld`가 살아 있고, 마지막에 `PhysicsWorld`를 파괴한다.
+`PrefabFactory`는 primitive가 하나인 Node의 Mesh component를 Node Entity에 직접 붙인다. 여러 primitive인 경우에만 primitive별 Render child Entity를 만든다.
 
-`PhysicsSystemModule`은 Flecs World와 PhysicsWorld를 non-owning reference로 보관한다. 둘 다 integration보다
-오래 살아야 한다. 지금 단계에서는 Flecs Entity와 Body의 양방향 lifetime observer를 두어 수명을 맞춘다.
-새로운 Physics client가 생기면 이 소유 순서와 Entity 삭제 경로를 함께 갱신해야 한다.
+## Lifetime과 확장 범위
 
-## 다음 확장 순서
+`ViewerApp`이 `PhysicsWorld`를 소유하고 `PhysicsSystemModule` 및 어댑터보다 먼저 생성한다. Scene 전환은 이전 Scene의 `OnExit`와 root 정리 후 새 root를 만들고 `OnEnter`를 호출한다. 종료할 때 어댑터와 Scene Entity를 먼저 정리하고, `PhysicsSystemModule`을 해제한 다음 Flecs World와 `PhysicsWorld`를 파괴한다. Flecs Entity의 제거 observer가 Physics Body도 삭제한다. `ModelResource`와 Entity가 공유하는 GPU Mesh 참조도 OpenGL Context를 정리하기 전에 해제한다.
 
-1. HCR 링크 Collider 치수와 축 정렬을 model/asset 기준으로 개선하고 self-collision 정책을 정한다.
-2. 2F-85 Simulation controller가 여섯 linkage Joint의 free-space motion을 만들게 한다.
-3. Gripper link Collider와 joint constraint를 추가한다.
-4. Object contact를 측정해 under-actuated adaptation과 grasp 상태를 구현한다.
-5. Dynamic Body와 scale이 있는 부모를 지원해야 할 때 collider scale 변환을 별도 설계한다.
+Collider는 하나의 Body 안에 Box/Cylinder/Sphere/Convex Hull을 여러 개 둘 수 있다. Collider mass properties와 center-of-mass 처리는 Jolt 내부 책임이며, 공개 API는 ECS Entity와 같은 Body 원점의 pose를 주고받는다. Collider 설정 변경은 pending Entity 목록으로 모아 다음 fixed step에서 한 번 반영한다. Dynamic Body의 조상에 Dynamic Body가 있으면 해당 물리 binding을 만들지 않는다.
+
+## 다음 구현 단계
+
+1. 충돌 wireframe과 접촉 결과를 보며 asset 기반 hull을 검증한다.
+2. Gripper controller와 고정 tick pose 공급을 연결한다. 현재는 authored ECS joint가 proxy transform의 source of truth다.
+3. 접촉 결과를 읽고 grasp 상태를 판정한다.
+4. 필요성이 확인되면 joint constraint와 관절 동역학을 추가한다.

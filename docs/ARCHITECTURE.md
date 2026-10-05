@@ -1,125 +1,81 @@
 # Architecture
 
-## 모듈 경계
+## Module boundaries
 
 ```text
 modules/
-├─ robotics/
-│  ├─ core/                 Controller interface / state contract
-│  ├─ models/               Robot/Gripper model constants
-│  └─ backends/             Simulation / Hardware implementations
-├─ viewer/                  OpenGL / Flecs / GLB and ECS integration
-└─ physics/                 Jolt rigid-body simulation
+├── robotics/       Robot models, controller contracts, backends, forward kinematics
+├── physics/        Jolt wrapper and engine-independent physics types
+├── viewer/         Flecs scene, transforms, GLB assets, OpenGL rendering
+├── simulation/     Physics ECS integration, robot collision proxies, floor setup
+└── gui/            ImGui panels and configured collider visualization
 ```
 
-실제 파일은 public header를 `modules/robotics/include/robotics/...` 아래에 둔다.
+Arrows point from a consumer to its dependency. These are the main target dependencies in CMake:
 
-## Robotics 데이터 흐름
+```mermaid
+flowchart TD
+    App[ViewerApp] --> GUI[GUI]
+    App --> Simulation[Simulation]
+    App --> Viewer[Viewer]
+    GUI --> Simulation
+    GUI --> ImGui
+    Simulation --> Viewer
+    Simulation --> Robotics
+    Simulation --> Physics
+    Viewer --> Robotics
+    Viewer --> Graphics[OpenGL graphics]
+    Viewer --> Flecs
+    Physics --> Jolt
+```
+
+`modules/physics` does not depend on Flecs, Viewer, or OpenGL. Jolt-specific types stay inside that module. `modules/simulation` owns Flecs physics configuration and the private runtime binding between an Entity and `PhysicsBodyHandle`.
+
+## Robot state flow
 
 ```text
-Application / Planner / IK
-            ↓
-      IRobotController
-            ↓
-       backend 구현
-      ├─ simulation
-      └─ hardware (future)
-            ↓
-         RobotState
-            ↓
-    RobotTransformAdapter
-            ↓
-       Flecs Joint Entity
-            ↓
-          Renderer
+IRobotController
+→ RobotState
+→ RobotKinematics
+→ RobotKinematicState
+   ├── RobotTransformAdapter → GLB Joint Entity transforms
+   └── RobotPhysicsAdapter → Kinematic link collision Entities
 ```
 
-`modules/robotics`는 Viewer/Flecs/GLM에 의존하지 않는다.
-`modules/viewer/include/viewer/robotics/RobotTransformAdapter.h`만 robotics domain state를 Viewer transform으로 변환한다.
+`RobotKinematics` is the shared source of robot pose. It derives parent-relative offsets from consecutive base-frame bind pivots and accumulates joint rotations for the serial chain. Viewer and Physics consume the same result instead of separately interpreting joint axes and angles. Robotics model data uses plain scalar/vector/quaternion types and does not depend on GLM, Flecs, or Jolt.
 
-## Model과 Backend 분리
+The FK output includes `toolFrameInBaseFrame` when the model defines a ToolFrame. This flange/model reference is separate from `RobotState::tcpPose`; `SimRobotController` leaves `tcpPoseValid` false. IK, `MoveLinear` execution, acceleration limiting, Gripper backends, and articulated dynamics remain unimplemented.
 
-`models/`는 장치의 고정된 기구/사양을 보관한다.
+`RobotTransformAdapter` maps pose data onto the authored GLB hierarchy. `RobotPhysicsAdapter` builds per-link Convex Hulls from connected GLB pieces, stopping at downstream moving joints and Gripper. It uses triangle-centroid cells of 16 cm, excludes parts smaller than 4 cm and cells smaller than 1 cm, and retains only hull inputs with volume. `ConfigureTwoF85Colliders` adds seven Gripper-layer Kinematic proxy children under the authored fixed Gripper or moving joint Entity. Each rigid part gets its own reduced convex hull from its named GLB mesh (outer knuckles include the attached finger mesh); the proxy's local origin is the owning body/joint origin. The authored ECS joints remain the pose source until a gripper backend exists, so the normal World transform update carries proxies through the hierarchy. The fixed Gripper base and moving linkage are covered; this does not add a robot Base collider, controller, FK, grasp behavior, or articulated dynamics.
 
-```text
-models/
-├─ RobotSpecification.h
-├─ GripperSpecification.h
-├─ hanwha/Hcr12a.h
-└─ robotiq/TwoF85.h
-```
+`modules/gui` owns the ImGui context and panels. Configured collider outlines come from ECS settings, not Jolt body inspection. They use X-ray screen projections without depth testing and refresh every 100 ms while enabled, including on first display or resize.
 
-여기에는 joint 이름, pivot, axis, angle limit, max velocity, gripper linkage 같은 model-specific 상수만 둔다.
+## Transform and fixed-step flow
 
-`backends/`는 상태 변화와 외부 장치 연결을 구현한다.
-
-```text
-backends/
-├─ simulation/
-│  └─ SimRobotController
-└─ hardware/               # future
-   ├─ hanwha/
-   └─ robotiq/
-```
-
-따라서 다른 6축/7축 로봇을 추가할 때 `IRobotController`를 다시 만들지 않고 새 `RobotSpecification`을 추가해 동일한 Simulation backend를 재사용할 수 있다.
-
-## Viewer 책임
-
-Viewer는 motion limit, trajectory, FK/IK를 계산하지 않는다.
-`RobotTransformAdapter`는 `RobotState`의 관절 각도를 GLB Joint Entity local rotation에 적용하는 마지막 표현 계층이다.
-
-## Physics와 Flecs 경계
-
-`modules/physics`는 Jolt의 초기화, Body 생성/삭제, 고정 시간 Step과 pose 조회만 담당한다.
-이 모듈은 Flecs, Viewer, OpenGL을 include하지 않고 Jolt 타입도 public API로 내보내지 않는다.
-외부에는 `PhysicsWorld`, `PhysicsBodyHandle`, GLM 기반 물리 설정과 pose만 보인다.
-
-```text
-Entity.set<RigidBody>(...)
-      .set<BoxCollider>(...)
-          ↓
-PhysicsSystemModule (Viewer / Flecs integration)
-  - 설정 컴포넌트로 Body 생성
-  - Entity 수명과 Body 수명 연결
-  - Local / World Transform 변환
-          ↓
-PhysicsWorld (modules/physics)
-  - opaque PhysicsBodyHandle 반환
-  - Jolt Body 생성 / 삭제 / Step
-          ↓
-Jolt types (modules/physics 내부 전용)
-```
-
-`PhysicsSystemModule`은 고정 제어 루프에서 명시적으로 호출하는 ECS 통합 객체다. Flecs의
-render-frame `progress()`에 물리 Step을 맡기지 않는다. 두 객체가 필요한 이유는 Jolt lifetime/API와
-Entity 컴포넌트 해석·좌표 동기화가 서로 다른 책임이기 때문이다. 하나로 합치면 Physics 모듈이 ECS를
-알거나 ViewerApp이 Jolt Body 생성과 Entity 동기화를 직접 떠안게 된다.
-
-`PhysicsBodyBinding`은 같은 Entity에 붙는 private runtime component다. 게임 코드가 Body handle을
-직접 생성·보관하지 않으며, Entity 삭제나 물리 설정 제거 시 observer가 Body를 제거한다.
-
-### 좌표와 실행 순서
-
-- Kinematic Body는 Entity 계층의 현재 Local Transform을 World pose로 계산해 Jolt에 전달한다.
-- Dynamic Body는 Jolt World pose를 부모 World 행렬의 역행렬로 바꿔 Entity Local Transform에 쓴다.
-- Box collider는 Entity 기준 local 위치·회전과 meter 단위 반 크기를 가진다. Entity scale은 Collider 크기에
-  자동 반영하지 않는다. Robot Link와 Dynamic object는 unit scale을 사용하며 Floor는 render scale과 별도로
-  collider 크기를 지정한다.
-- Floor는 `plane.glb`를 렌더링하는 Entity 자체에 Static Box Collider를 가진다. Mesh를 Jolt shape으로
-  변환하지 않는다.
-- 로봇 J1~J6은 Controller가 pose를 정하는 Kinematic collision proxy다. 관절 제약/토크를 계산하는
-  articulated dynamics는 아직 구현하지 않았다.
+`TransformSystemModule::UpdateWorldTransforms()` is the shared Local-to-World transform calculation. The fixed-step loop applies robot pose, updates world matrices, synchronizes Kinematic bodies, steps Jolt, and writes Dynamic body results back to Entity Local transforms. The render frame refreshes world matrices before `RenderSystemModule` reads them.
 
 ```text
 FixedControlLoop
 → RobotController Update
-→ RobotTransformAdapter (joint Local Transform)
-→ PhysicsSystemModule (Entity → Kinematic Body)
+→ RobotKinematics
+→ Viewer + Simulation pose adapters
+→ TransformSystemModule World transforms
+→ PhysicsSystemModule Entity-to-Physics
 → PhysicsWorld Step
-→ PhysicsSystemModule (Dynamic Body → Entity Local Transform)
-→ Render frame: TransformSystem / RenderSystem
+→ PhysicsSystemModule Physics-to-Entity
+→ Render frame: TransformSystemModule / RenderSystemModule
 ```
 
-Entity 계층 행렬 계산은 `TransformSystemModule`의 공용 계산 함수를 쓴다. Physics가 fixed update에서
-바뀐 최신 Local 값을 읽고, Renderer는 다음 render frame에 같은 Local 값으로 World matrix를 갱신한다.
+Physics uses fixed delta time and is independent of render FPS. Physics hierarchies require unit scale; only a Static Environment Entity's own visual scale is allowed. Collider dimensions and offsets are explicit meter values. Bodies with a Dynamic ancestor are rejected. Public body poses use the model/Entity origin; Jolt applies compound-shape center-of-mass offsets internally.
+
+## Scene composition and lifetime
+
+`ViewerApp` is the Composition Root. It creates Window, renderer, scene, controller, `PhysicsWorld`, adapters, `PhysicsSystemModule`, and `GuiModule` in dependency order. It owns no per-object creation APIs.
+
+`SimulationSceneBuilder` configures the floor. Application-side `DebugSceneSetup` adds falling boxes and the robot demo command only with `--physics-demo`, in both Debug and Release. `PrefabFactory` builds visual Entities from GLB nodes. A single-primitive Node owns its render components directly; multi-primitive nodes use render child Entities. The GLB loader requires one node tree under the selected scene root and rejects sparse accessors, invalid byte ranges/strides, unsupported matrix transforms, cycles, and multiple parents.
+
+`ViewerApp` owns Flecs World and PhysicsWorld. Physics integration objects and robot adapters are destroyed before those owners. Flecs removal observers delete the Jolt Body associated with a removed Entity.
+
+Scene Entity creation requires an active SceneRoot. `SceneManager` creates the root before `OnEnter`, so constructors must defer Entity creation until activation. Shutdown removes adapters and Scene Entities while physics observers are live, then removes the integration objects and World. `ModelResource` also holds strong GPU Mesh references; it, AssetManager, shaders, and the renderer are released before the Window destroys the OpenGL context.
+
+For more detail on collision layers, transform spaces, scale requirements, and deferred robot-physics work, see [Physics / Flecs Integration](PHYSICS_ECS_INTEGRATION.md).
