@@ -34,10 +34,7 @@ void Renderer::Init(int framebufferWidth, int framebufferHeight)
 
     m_LightDirection = glm::normalize(m_LightDirection);
 
-    /*
-        Directional light는 위치보다 방향이 핵심이지만 shadow map을 그리려면 가상의 light camera가 필요하다.
-        현재 로봇 작업공간을 중심으로 orthographic projection을 사용한다.
-    */
+    // 좌표: 작업공간 중심에서 광원 쪽으로 4m 이동한 가상 카메라가 중심을 바라봄.
     const glm::vec3 target{0.0F, 0.7F, 0.0F};
     const glm::vec3 lightPosition = target + m_LightDirection * 4.0F;
 
@@ -46,6 +43,7 @@ void Renderer::Init(int framebufferWidth, int framebufferHeight)
         target,
         glm::vec3{0.0F, 1.0F, 0.0F});
 
+    // 범위: 광원 View의 가로·세로 각 5m, 앞뒤 깊이 0.1~10m. 원근 축소 없는 투영.
     const glm::mat4 lightProjection = glm::ortho(
         -2.5F, 2.5F,
         -2.5F, 2.5F,
@@ -53,7 +51,7 @@ void Renderer::Init(int framebufferWidth, int framebufferHeight)
 
     m_LightSpaceMatrix = lightProjection * lightView;
 
-    // TODO(FUTURE): 위 light target/distance/ortho bounds와 shadow resolution을 설정 객체로 이동한다.
+    // 제한: 광원 범위와 그림자 해상도는 현재 작업공간에 맞춘 고정값.
 }
 
 void Renderer::BeginFrame()
@@ -85,12 +83,6 @@ void Renderer::Draw(
 {
     if (!meshFilter.mesh || !meshRenderer.shader || !meshRenderer.material) return;
 
-    /*
-        MVP 역할:
-        Model      : Object local -> World
-        View       : World -> Camera
-        Projection : Camera -> Clip/NDC
-    */
     meshRenderer.shader->Bind();
     meshRenderer.shader->SetMat4("u_Model", model);
     meshRenderer.shader->SetMat4("u_View", view);
@@ -130,7 +122,7 @@ void Renderer::Draw(
         ? meshFilter.mesh->GetIndexCount()
         : meshFilter.indexCount;
 
-    // glDrawElements 마지막 인자는 index 번호가 아니라 EBO 시작점의 byte offset이다.
+    // 단위: indexCount는 index 개수. 시작 index 번호를 EBO의 byte offset으로 변환.
     const std::size_t indexOffset = meshFilter.indexOffset * sizeof(std::uint32_t);
 
     glDrawElements(
@@ -142,7 +134,6 @@ void Renderer::Draw(
     meshFilter.mesh->UnBind();
     meshRenderer.shader->UnBind();
 
-    // TODO(FUTURE): PBR texture 수가 늘어나면 slot 번호를 Renderer 상수로 흩뿌리지 말고 binding policy로 분리한다.
 }
 
 void Renderer::BeginShadowPass()
@@ -156,7 +147,7 @@ void Renderer::DrawShadow(const glm::mat4& model, const MeshFilter& meshFilter)
 {
     if (!meshFilter.mesh) return;
 
-    // Shadow depth shader는 표면 색이 필요 없고 light-space 위치만 계산하면 된다.
+    // 이유: 그림자 판정에는 표면 색 없이 광원 기준 깊이만 필요.
     m_ShadowShader->SetMat4("u_Model", model);
     meshFilter.mesh->Bind();
 

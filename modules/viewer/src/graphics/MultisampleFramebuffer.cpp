@@ -10,7 +10,9 @@ MultisampleFramebuffer::MultisampleFramebuffer(int width, int height, int sample
       m_Height(height),
       m_Samples(samples)
 {
-    // GPU가 지원하는 최대 sample 수보다 큰 요청은 실제 지원 범위로 제한한다.
+    if (width <= 0 || height <= 0)
+        throw std::invalid_argument("MSAA framebuffer dimensions must be positive");
+    // 제한: GPU가 지원하는 pixel당 sample 수를 넘지 않도록 조정.
     GLint maxSamples = 1;
     glGetIntegerv(GL_MAX_SAMPLES, &maxSamples);
     m_Samples = std::min(m_Samples, static_cast<int>(maxSamples));
@@ -28,11 +30,7 @@ MultisampleFramebuffer::~MultisampleFramebuffer()
 
 void MultisampleFramebuffer::Create()
 {
-    /*
-        MSAA framebuffer에는 pixel당 여러 sample을 가진 color attachment와
-        같은 sample 수를 가진 depth/stencil attachment가 필요하다.
-        두 attachment의 sample count가 다르면 framebuffer가 complete하지 않다.
-    */
+    // 조건: 색과 깊이/stencil 저장소의 sample 수가 같아야 렌더 대상이 유효.
     glGenFramebuffers(1, &m_Framebuffer);
     glBindFramebuffer(GL_FRAMEBUFFER, m_Framebuffer);
 
@@ -70,7 +68,9 @@ void MultisampleFramebuffer::Create()
 
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
     {
+        // 수명: 생성 실패에서도 부분 할당한 GPU 객체를 모두 해제.
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        Destroy();
         throw std::runtime_error("MSAA framebuffer is incomplete");
     }
 
@@ -99,10 +99,7 @@ void MultisampleFramebuffer::Bind() const
 
 void MultisampleFramebuffer::ResolveToDefault() const
 {
-    /*
-        multisample texture는 sample 여러 개를 가진 상태라 그대로 화면 color buffer로 사용할 수 없다.
-        glBlitFramebuffer가 sample들을 하나의 pixel color로 resolve하면서 default framebuffer로 복사한다.
-    */
+    // 출력: pixel 안의 여러 sample을 하나의 색으로 합쳐 Window에 복사.
     glBindFramebuffer(GL_READ_FRAMEBUFFER, m_Framebuffer);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
 
@@ -118,12 +115,12 @@ void MultisampleFramebuffer::ResolveToDefault() const
 void MultisampleFramebuffer::Resize(int width, int height)
 {
     if (width <= 0 || height <= 0) return;
-    if (width == m_Width && height == m_Height) return;
+    if (width == m_Width && height == m_Height && m_Framebuffer != 0) return;
 
     m_Width = width;
     m_Height = height;
 
-    // OpenGL texture/renderbuffer storage는 크기를 가진 고정 storage이므로 resize 시 재생성한다.
+    // 이유: GPU 저장소 크기를 바꾸려면 기존 객체를 해제하고 새로 생성해야 함.
     Destroy();
     Create();
 }
