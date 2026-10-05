@@ -305,6 +305,23 @@ if(GRASPLINK_BUILD_GRAPHICS)
     target_compile_definitions(grasplink_gltf_tests PRIVATE GRASPLINK_TEST_ASSET_DIR="${CMAKE_SOURCE_DIR}/assets")
     add_test(NAME GltfLoader COMMAND grasplink_gltf_tests)
 
+    add_executable(grasplink_robot_pose_integration_tests tests/RobotPoseIntegrationTests.cpp)
+    target_link_libraries(grasplink_robot_pose_integration_tests PRIVATE grasplink_viewer)
+    add_test(NAME RobotPoseIntegration COMMAND grasplink_robot_pose_integration_tests)
+    set_tests_properties(RobotPoseIntegration PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+
+    add_executable(grasplink_physics_ecs_tests tests/PhysicsEcsIntegrationTests.cpp)
+    target_link_libraries(grasplink_physics_ecs_tests PRIVATE grasplink_simulation)
+    add_test(NAME PhysicsEcsIntegration COMMAND grasplink_physics_ecs_tests)
+
+    add_executable(grasplink_collision_tests tests/RobotCollisionGeometryTests.cpp)
+    target_link_libraries(grasplink_collision_tests PRIVATE grasplink_simulation)
+    add_test(NAME RobotCollisionGeometry COMMAND grasplink_collision_tests)
+
+    add_test(NAME ViewerSmoke COMMAND grasplink_simulator --smoke-test)
+    add_test(NAME ViewerDemoSmoke COMMAND grasplink_simulator --smoke-test --physics-demo)
+    set_tests_properties(ViewerSmoke ViewerDemoSmoke PROPERTIES
+      WORKING_DIRECTORY "$<TARGET_FILE_DIR:grasplink_simulator>" TIMEOUT 60)
   endif()
 
 endif()
