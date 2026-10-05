@@ -12,7 +12,7 @@ MultisampleFramebuffer::MultisampleFramebuffer(int width, int height, int sample
 {
     if (width <= 0 || height <= 0)
         throw std::invalid_argument("MSAA framebuffer dimensions must be positive");
-    // 제한: GPU가 지원하는 pixel당 sample 수를 넘지 않도록 조정.
+    // GPU 상한까지만 sample 수를 낮춰 색상과 깊이 attachment가 같은 sample 수를 쓰게 한다.
     GLint maxSamples = 1;
     glGetIntegerv(GL_MAX_SAMPLES, &maxSamples);
     m_Samples = std::min(m_Samples, static_cast<int>(maxSamples));
@@ -30,7 +30,7 @@ MultisampleFramebuffer::~MultisampleFramebuffer()
 
 void MultisampleFramebuffer::Create()
 {
-    // 조건: 색과 깊이/stencil 저장소의 sample 수가 같아야 렌더 대상이 유효.
+    // 색상 texture와 깊이/stencil renderbuffer의 크기 및 sample 수를 맞춰 framebuffer attachment를 구성한다.
     glGenFramebuffers(1, &m_Framebuffer);
     glBindFramebuffer(GL_FRAMEBUFFER, m_Framebuffer);
 
@@ -68,7 +68,7 @@ void MultisampleFramebuffer::Create()
 
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
     {
-        // 수명: 생성 실패에서도 부분 할당한 GPU 객체를 모두 해제.
+        // 불완전한 framebuffer를 남기지 않도록 부분 생성된 GPU 객체를 해제한 뒤 실패를 알린다.
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         Destroy();
         throw std::runtime_error("MSAA framebuffer is incomplete");
@@ -99,7 +99,7 @@ void MultisampleFramebuffer::Bind() const
 
 void MultisampleFramebuffer::ResolveToDefault() const
 {
-    // 출력: pixel 안의 여러 sample을 하나의 색으로 합쳐 Window에 복사.
+    // 각 픽셀의 multisample 색상을 기본 framebuffer로 resolve한다. 양쪽 복사 영역은 같은 크기로 유지한다.
     glBindFramebuffer(GL_READ_FRAMEBUFFER, m_Framebuffer);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
 
@@ -120,7 +120,7 @@ void MultisampleFramebuffer::Resize(int width, int height)
     m_Width = width;
     m_Height = height;
 
-    // 이유: GPU 저장소 크기를 바꾸려면 기존 객체를 해제하고 새로 생성해야 함.
+    // 크기 변경에는 새 크기의 GPU 저장소가 필요하므로 기존 attachment를 해제하고 다시 만든다.
     Destroy();
     Create();
 }
