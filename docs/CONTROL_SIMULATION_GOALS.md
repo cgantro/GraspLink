@@ -35,6 +35,7 @@ Kinematics / Physics / Viewer
    - model별 최대 속도 사용
    - 목표 각도를 즉시 적용하지 않고 시간에 따라 상태를 변화
    - `velocityScale`은 model 최대 속도에 대한 비율로 사용
+   - 현재 `accelerationScale`은 저장·검증만 하며 실제 가속도 제한이나 ramp는 적용하지 않는다.
    - 제조사 최대 가속도 값이 확인되기 전에는 임의 상수를 실제 사양으로 취급하지 않음
    - Simulation용 가속도 값이 필요하면 제조사 사양과 분리해서 관리
 
@@ -121,23 +122,24 @@ Flecs Transform
 Renderer
 ```
 
-Jolt 전용 타입은 `modules/physics` 내부에 격리한다. Viewer integration에는 GLM과
+Jolt 전용 타입은 `modules/physics` 내부에 격리한다. Simulation integration에는 GLM과
 프로젝트의 `PhysicsBodyHandle`만 보이며 Jolt `BodyID`는 노출하지 않는다.
 
-6. **Robot Model / FK**
-   - HCR-12A Joint State로부터 TCP Pose 계산
+6. **Robot Model / FK — implemented**
+   - HCR-12A Joint State로부터 base 기준 link pose와 ToolFrame pose 계산
    - Joint hierarchy 기반 kinematic chain 정의
    - ToolFrame 포함
    - parent-relative transform 기준으로 구성
-   - 현재 GLB의 world-space pivot 값만으로 FK를 구성하지 않는다.
+   - bind pivot 사이의 차이를 누적 회전에 적용해 base-frame pose를 계산한다.
+   - FK ToolFrame output은 controller TCP feedback과 별도다. 현재 controller `tcpPoseValid`는 false다.
 
 ```text
 q1 ... q6
     ↓
 Forward Kinematics
     ↓
-TCP Position
-TCP Orientation
+ToolFrame Position
+ToolFrame Orientation
 ```
 
 검증 대상:
@@ -179,7 +181,7 @@ Joint Controller
 - Maximum Iteration
 - Unreachable Target
 
-8. **Gripper Runtime Controller**
+8. **Gripper Runtime Controller — contract/spec only**
    - `IGripperController` contract와 2F-85 specification은 준비됨
    - request를 runtime state로 바꾸는 Simulation backend는 아직 구현하지 않음
    - 이후 free-space mimic relation을 적용
@@ -210,9 +212,10 @@ RightTip   = +q
 ```
 
 9. **Robot / Gripper Physics**
-   - J1~J6에 Kinematic box collision proxy를 붙이는 기반은 구현됨
-   - proxy는 관절 hierarchy를 따라가지만 관절 제약이나 토크를 푸는 articulated dynamics는 아님
-   - Gripper collision과 실제 Robot/Gripper 물리는 다음 단계
+   - GLB에서 만든 Convex Hull을 별도 Kinematic link proxy Entity에 붙이는 기반은 구현됨
+   - proxy는 FK의 base-frame link pose를 따르며 관절 제약이나 토크를 푸는 articulated dynamics는 아님
+   - Kinematic gripper collision proxy는 구현됨
+   - Gripper controller, grasp 판단, 부착 상태별 collision filter 및 실제 Robot/Gripper 동역학은 다음 단계
 
 ```text
 Robot Link
@@ -283,7 +286,7 @@ Grasp State
 Flecs Entity
 ├─ Transform / Render Components
 ├─ RigidBody
-└─ BoxCollider
+└─ Colliders
        │
        ▼
 PhysicsSystemModule
@@ -317,8 +320,8 @@ Renderer
 runtime component이며 Entity나 물리 설정이 제거될 때 observer가 Jolt Body를 삭제한다.
 
 Collider 반 크기는 meter 단위이며 Entity scale을 자동 곱하지 않는다. Robot Link와 Dynamic Entity는 unit
-scale을 쓰고, Floor는 렌더 GLB scale과 독립된 collider 크기를 명시한다. Dynamic Entity의 parent가
-scale/shear를 가지는 경우는 아직 지원 범위가 아니다.
+scale을 쓰고, Floor는 렌더 GLB scale과 독립된 collider 크기를 명시한다. Dynamic Body 조상 아래의 Dynamic
+Body는 binding 생성 시 거부된다. Dynamic Entity의 parent가 scale/shear를 가지는 경우도 지원 범위가 아니다.
 
 ## 구현 순서
 
@@ -345,7 +348,7 @@ scale/shear를 가지는 경우는 아직 지원 범위가 아니다.
    - Kinematic Chain
    - ToolFrame
    - FK 검증
-                    ← 다음 계산 기능
+                    ✅ 구현
 
 6. IK / MoveLinear
 
@@ -356,9 +359,9 @@ scale/shear를 가지는 경우는 아직 지원 범위가 아니다.
                     ← contract/spec 준비, backend 미구현
 
 8. Robot / Gripper Physics
-   - Gripper Collider
-   - Constraint
-   - Articulated dynamics
+   - Asset 메시 기반 Gripper Kinematic collider proxy
+                    ✅ 기본 기반
+   - Constraint / articulated dynamics
                     ← 다음 물리 확장
 
 9. Physics / Grasp

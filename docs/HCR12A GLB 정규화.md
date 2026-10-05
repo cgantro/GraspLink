@@ -99,9 +99,10 @@ Joint axis           = 모델 specification에 명시
 ```text
 q [rad]
 +
-Joint local axis
-→ angleAxis(q, axis)
-→ Joint local rotation
+joint pivot + local axis
+→ RobotKinematics
+→ Joint local rotation / LinkPose
+→ RobotTransformAdapter / RobotPhysicsAdapter
 ```
 
 현재 `RobotTransformAdapter`도 이 asset contract를 검사한다. J1~J6 bind Euler가 identity가 아니면 controller-ready GLB가 아니라고 판단한다.
@@ -252,8 +253,12 @@ Hcr12a.h
 SimRobotController
   RobotState.q [rad]
         ↓
+RobotKinematics
+  q + pivot / axis
+  → joint rotation + link pose
+        ↓
 RobotTransformAdapter
-  angleAxis(q, axis)
+  quaternion → ECS Euler
         ↓
 Entity::SetLocalRotation
         ↓
@@ -264,7 +269,7 @@ TransformSystemModule
 Renderer
 ```
 
-Pivot translation은 GLB hierarchy에 이미 들어 있으므로 `RobotTransformAdapter`가 매 frame pivot을 다시 더하지 않는다.
+Pivot translation은 GLB hierarchy에 이미 들어 있다. `RobotTransformAdapter`가 다시 더하지 않고, `RobotKinematics`가 동일한 bind pivot을 사용해 base-frame LinkPose를 계산한다.
 
 ---
 

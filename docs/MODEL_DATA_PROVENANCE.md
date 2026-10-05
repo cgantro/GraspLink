@@ -15,7 +15,7 @@
 | `MANUFACTURER` | 제조사 매뉴얼/제품 명세/장치 protocol이 직접 정의한 값 | HCR 관절 limit·속도, 2F-85 rPR/rSP/rFR 범위 |
 | `CAD-DERIVED` | STEP/CAD의 실제 체결 형상과 축에서 계산한 값 | HCR J1~J6 기계 pivot 중심 |
 | `KINEMATIC-REFERENCE` | 공개 URDF/Xacro 등 기구학 모델에서 가져온 시뮬레이션 기준 | 2F-85 master closed angle, mimic 관계 |
-| `ASSET-DERIVED` | 위 데이터를 현재 controller-ready GLB 좌표계에 맞춰 변환한 값 | 2F-85 Gripper-local pivot, local -Z axis, joint plane Z |
+| `ASSET-DERIVED` | 위 데이터를 현재 controller-ready GLB 좌표계에 맞춰 변환한 값 | 2F-85 Gripper-local pivot, local -Z axis, joint plane Z, HCR Link collider 기준 |
 
 `KINEMATIC-REFERENCE`와 `ASSET-DERIVED`는 제조사의 내부 모터 설계값을 의미하지 않는다.
 
@@ -70,6 +70,14 @@ ToolFrame bind 위치는 `(0, 1.0150, 0.9145)` m다.
 
 물리 회전축 방향은 CAD에서 확인했지만, 코드의 `axis`는 현재 controller-ready GLB의 Joint local frame에서 사용하는 단위축이다.
 현재 GLB는 J1~J6 moving node의 bind rotation을 identity로 만들었으므로 physical axis와 runtime local axis가 직접 일치한다.
+
+### Link collider 구성 — ASSET-DERIVED
+
+HCR-12A Link collider는 `HCR12A_2F-85.glb`의 재질 메시에서 삼각형 연결별로 생성한다. 같은 위치의 mesh seam 정점도 이어 분리 부품을 찾는다. 4 cm 미만 부품은 제외하고, 나머지 삼각형은 중심점 기준 관절 좌표계의 16 cm 셀에 묶는다. 삼각형은 셀 경계에서 자르지 않으며 1 cm 미만 셀과 부피가 없는 hull 입력도 제외한다. 방향별 극점으로 축약한 Convex Hull은 오목한 부분을 메울 수 있다. 다음 가동 관절 아래와 Gripper geometry는 `RobotPhysicsAdapter`의 대상에서 제외한다.
+
+2F-85의 별도 collider 구성기는 현재 GLB의 이름 있는 rigid-part mesh마다 방향별 극점으로 정점을 축약해 Convex Hull을 만든다. 고정 `GripperMesh`, 좌우 outer knuckle과 각 attached finger mesh의 compound, 좌우 inner knuckle, 좌우 fingertip으로 총 일곱 Kinematic proxy다. Mesh 정점을 owning authored Gripper/joint 원점 기준으로 바꿔 shape를 저장하므로 collider 중심은 각 body 원점과 다를 수 있다. 모델 및 Scene 계층의 scale은 unit이어야 한다. 이는 현재 `HCR12A_2F-85.glb`에 맞춘 asset-derived 형상이며 다른 GLB에 그대로 적용할 수 없다. 초기 open pose는 약 85 mm gap이다. 현재 authored ECS Gripper와 six joint transform이 pose source of truth이며 향후 backend가 관절 상태를 공급하면 이 연결의 source가 바뀔 수 있다.
+
+볼록 외피는 각 16 cm 구간 안의 오목한 부분을 메울 수 있고, 두께가 없는 평면 장식 조각은 충돌에서 제외한다. 제조사 CAD 충돌 모델과 비교 검증한 값은 아니므로 ImGui 충돌 표시와 실제 접촉 결과로 계속 확인한다.
 
 ---
 
@@ -144,10 +152,12 @@ Hcr12a.h [m, rad, rad/s]
       ↓
 SimRobotController -> RobotState q [rad]
       ↓
-RobotTransformAdapter
-      q + Joint-local axis
-      -> angleAxis(q, axis)
-      -> current ECS Euler [rad]
+RobotKinematics
+      q + joint pivot / local axis
+      -> joint rotation + base-frame link poses
+      ↓
+      ├─ RobotTransformAdapter -> current ECS Euler [rad]
+      └─ RobotPhysicsAdapter -> Kinematic link proxies
       ↓
 Flecs / GLB
 ```

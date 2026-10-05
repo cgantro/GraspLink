@@ -5,7 +5,7 @@
 실제 장비와 시뮬레이터가 같은 상위 제어 코드를 사용하도록 robotics 계층을 분리한다.
 
 ```text
-Application / Planner / IK
+Application / Planner
         |
         v
 IRobotController / IGripperController
@@ -100,12 +100,14 @@ Quaternion      xyzw
 Time            s
 ```
 
+위 quaternion 순서는 `CartesianPose`의 배열 기준이다. 모델/FK의 `QuaternionWxyz`는 wxyz 순서이며, 어댑터가 타입에 맞춰 명시적으로 변환한다.
+
 ## Simulation backend
 
 `SimRobotController`는 `RobotSpecification`을 생성자에서 받고 모델의 joint count/limit/max velocity를 그대로 사용한다.
-현재 책임은 연결 상태, joint target 검증, 속도 제한 기반 target 추종, Stop, state feedback이다.
+현재 책임은 연결 상태, joint target 검증, 속도 제한 기반 target 추종, Stop, state feedback이다. `accelerationScale`은 command에 보관하지만 시뮬레이터가 가속도 제한이나 ramp를 계산하지 않는다.
 
-`MoveLinear`는 FK/IK 계층이 연결되기 전까지 `Unsupported`다.
+`MoveLinear`는 현재 `Unsupported`다. FK는 별도 `RobotKinematics` 계층에서 구현됐지만 controller command와 IK는 연결되지 않았다. FK가 ToolFrame pose를 계산해도 controller `RobotState.tcpPoseValid`는 false이며, TCP feedback을 만들어 내지 않는다.
 확인되지 않은 최대 가속도 값은 제조사 사양처럼 임의로 넣지 않는다.
 
 ## Viewer adapter
@@ -115,7 +117,7 @@ modules/viewer/include/viewer/robotics/RobotTransformAdapter.h
 modules/viewer/src/robotics/RobotTransformAdapter.cpp
 ```
 
-Adapter는 `RobotState`를 Flecs/GLB transform으로 표현할 뿐 제어 로직을 수행하지 않는다.
+`RobotKinematics`가 `RobotState`를 pose로 바꾸고, Adapter는 그 결과를 Flecs/GLB transform으로 표현한다. Viewer는 FK나 제어 로직을 수행하지 않는다.
 
 ## Hardware backend 예정
 

@@ -86,13 +86,13 @@ J6 axis = +Z
 이전 중간 모델에서 사용했던 ±90° bind quaternion 보정은 현재 contract가 아니다.
 Arm visual transform은 mesh vertex/normal에 bake해 bind pose 외형을 유지한다.
 
-`RobotTransformAdapter`는 다음 방식으로 상태를 화면에 반영한다.
+`RobotKinematics`는 bind pivot 사이 차이를 이전 누적 회전으로 변환하고, 모델 axis와 RobotState로 pose를 계산한다. 화면과 충돌 프록시는 같은 FK 결과를 사용한다. FK의 ToolFrame pose는 controller TCP feedback과 별개다. `SimRobotController`의 `tcpPoseValid`는 현재 false다.
 
 ```text
 RobotState q [rad]
-+
-JointSpecification.axis
-→ angleAxis(q, axis)
+→ RobotKinematics
+→ joint local rotation / base-frame link pose
+→ RobotTransformAdapter
 → Joint local rotation
 ```
 
@@ -258,6 +258,10 @@ Hcr12a model specification
 TwoF85 model specification
 SimRobotController : IRobotController
 RobotTransformAdapter
+RobotKinematics (FK / ToolFrame calculation)
+FixedControlLoop (250 Hz callback loop)
+PhysicsWorld + Flecs PhysicsSystemModule
+J1~J6 Kinematic collision proxies
 Joint angle limit 검증
 Joint max velocity 기반 target 추종
 software Stop
@@ -266,14 +270,11 @@ software Stop
 ### 아직 미구현/후순위
 
 ```text
-Fixed Control Loop
-Acceleration limiting (검증된 max acceleration 값 필요)
-FK
+Acceleration limiting (구현 안 됨; 검증된 max acceleration 값 필요)
 IK
 SimGripperController
 Hardware Robot backend
 Hardware Gripper backend
-Jolt Physics
 Contact-based adaptive grasp
 Watchdog / E-Stop state / Zero Offset
 ```
@@ -346,13 +347,20 @@ docs/CONTROLLER_INTERFACE.md
 
 ## 13. 현재 Physics 구현 상태
 
-HCR-12A의 J1~J6 Entity에는 Kinematic Box Collider가 연결되어 있다. Controller가 만든 관절 Local
-Transform을 Physics integration이 World pose로 바꿔 Jolt에 전달하므로 링크 proxy가 환경 충돌에 참여할
-수 있다. 이 proxy는 관절 축 제약이나 모터 토크를 계산하지 않는다.
+HCR-12A의 GLB link geometry에서 만든 Convex Hull을 별도 Kinematic proxy Entity에 연결한다.
+Controller의 관절 상태로 계산한 FK link pose를 proxy의 Local 값에 저장하고, Physics integration이
+World pose로 바꿔 Jolt에 전달한다. Link1~Link6을 지원하며 robot Base collider는 없다. Gripper는
+`ConfigureTwoF85Colliders`가 현재 asset의 메시별 축약 Convex Hull로 일곱 Kinematic proxy를 구성한다.
+고정 base, outer knuckle+finger compound, inner knuckle, fingertip proxy는 authored `Gripper` 또는
+6개 joint Entity의 자식이라 ECS 계층의 fixed-step World transform을 따른다. 각 hull 정점은 owning
+body/joint origin 기준으로 표현되며, 초기 자유공간 open gap 약 85 mm를 보존한다. 현재 authored ECS
+joints가 pose source of truth다. Gripper controller, 접촉 후 수동 linkage 적응, grasp, constraint와
+관절 동역학은 구현 범위 밖이다.
+이 proxy는 관절 축 제약이나 모터 토크를 계산하지 않는다.
 
-2F-85에는 현재 `IGripperController` contract와 model specification, controller-ready GLB linkage 구조가
-있다. Simulation gripper controller와 gripper Collider는 아직 연결되지 않았으며, 물체 접촉·수동 linkage
-적응·grasp도 구현 범위 밖이다. `0.7929 rad`는 현재 GLB geometry 기준의 nominal closed master linkage
+2F-85에는 현재 `IGripperController` contract와 model specification, controller-ready GLB linkage 구조 및
+메시 기반 gripper Collider proxy가 있다. Simulation gripper controller는 아직 연결되지 않았으며,
+물체 접촉·수동 linkage 적응·grasp도 구현 범위 밖이다. `0.7929 rad`는 현재 GLB geometry 기준의 nominal closed master linkage
 angle이며 실제 motor shaft angle이나 접촉 후 finger 자세를 뜻하지 않는다.
 
 Physics/Flecs 설정, ownership, fixed-step 및 좌표 변환은 [`PHYSICS_ECS_INTEGRATION.md`](PHYSICS_ECS_INTEGRATION.md)에 정리한다.
