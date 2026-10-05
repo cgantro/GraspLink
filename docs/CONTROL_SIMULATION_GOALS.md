@@ -181,22 +181,29 @@ Joint Controller
 - Maximum Iteration
 - Unreachable Target
 
-8. **Gripper Runtime Controller — contract/spec only**
+8. **Gripper Runtime Controller — 자유공간 개폐 구현**
    - `IGripperController` contract와 2F-85 specification은 준비됨
-   - request를 runtime state로 바꾸는 Simulation backend는 아직 구현하지 않음
-   - 이후 free-space mimic relation을 적용
-   - contact 이후 under-actuated 동작은 여기서 처리하지 않는다.
+   - `SimGripperController`가 raw 요청을 연속 `closureFraction` 상태로 갱신
+   - `GripperKinematics`의 master/mimic Local 회전을 `GripperTransformAdapter`가 GLB bind에 적용
+   - raw 위치의 선형 fraction 매핑과 기본 master 속도 0.1..1.0 rad/s는 제조사 사양이 아닌 시뮬레이션 가정
+   - force·contact 판정·접촉 시 정지·접촉 이후 under-actuated 동작·파지는 아직 구현하지 않음
 
 ```text
 positionRequest
 0 ... 255
+     ↓
+GripperState.closureFraction [0,1]
      ↓
 master linkage angle q
      ↓
 mimic relation
      ↓
 Gripper Joint State
+     ↓
+GLB 관절 Local 회전 → World 변환 → 기존 7개 Kinematic proxy
 ```
+
+4 ms마다 Controller 갱신 → 팔·그리퍼 자세 적용 → World 변환 갱신 → Jolt step → World 변환 재갱신 순서다. GUI는 인터페이스에 요청을 보내며 Entity를 직접 변경하지 않는다. 현재 계약과 검증은 [그리퍼 런타임 설계](GRIPPER_RUNTIME_DESIGN.md)에 정리한다.
 
 Free-space 관계:
 
@@ -215,7 +222,7 @@ RightTip   = +q
    - GLB에서 만든 Convex Hull을 별도 Kinematic link proxy Entity에 붙이는 기반은 구현됨
    - proxy는 FK의 base-frame link pose를 따르며 관절 제약이나 토크를 푸는 articulated dynamics는 아님
    - Kinematic gripper collision proxy는 구현됨
-   - Gripper controller, grasp 판단, 부착 상태별 collision filter 및 실제 Robot/Gripper 동역학은 다음 단계
+   - 접촉 기반 그리퍼 정지·grasp 판단, 부착 상태별 collision filter 및 실제 Robot/Gripper 동역학은 다음 단계
 
 ```text
 Robot Link
@@ -356,7 +363,9 @@ Body는 binding 생성 시 거부된다. Dynamic Entity의 parent가 scale/shear
    - 2F-85 request
    - master q
    - free-space mimic
-                    ← contract/spec 준비, backend 미구현
+                    ✅ 자유공간 backend / 기구학 / GLB·proxy 연결
+   - Force / contact stop / grasp
+                    ← 후속 물리 작업
 
 8. Robot / Gripper Physics
    - Asset 메시 기반 Gripper Kinematic collider proxy

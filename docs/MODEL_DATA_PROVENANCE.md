@@ -75,7 +75,7 @@ ToolFrame bind 위치는 `(0, 1.0150, 0.9145)` m다.
 
 HCR-12A Link collider는 `HCR12A_2F-85.glb`의 재질 메시에서 삼각형 연결별로 생성한다. 같은 위치의 mesh seam 정점도 이어 분리 부품을 찾는다. 4 cm 미만 부품은 제외하고, 나머지 삼각형은 중심점 기준 관절 좌표계의 16 cm 셀에 묶는다. 삼각형은 셀 경계에서 자르지 않으며 1 cm 미만 셀과 부피가 없는 hull 입력도 제외한다. 방향별 극점으로 축약한 Convex Hull은 오목한 부분을 메울 수 있다. 다음 가동 관절 아래와 Gripper geometry는 `RobotPhysicsAdapter`의 대상에서 제외한다.
 
-2F-85의 별도 collider 구성기는 현재 GLB의 이름 있는 rigid-part mesh마다 방향별 극점으로 정점을 축약해 Convex Hull을 만든다. 고정 `GripperMesh`, 좌우 outer knuckle과 각 attached finger mesh의 compound, 좌우 inner knuckle, 좌우 fingertip으로 총 일곱 Kinematic proxy다. Mesh 정점을 owning authored Gripper/joint 원점 기준으로 바꿔 shape를 저장하므로 collider 중심은 각 body 원점과 다를 수 있다. 모델 및 Scene 계층의 scale은 unit이어야 한다. 이는 현재 `HCR12A_2F-85.glb`에 맞춘 asset-derived 형상이며 다른 GLB에 그대로 적용할 수 없다. 초기 open pose는 약 85 mm gap이다. 현재 authored ECS Gripper와 six joint transform이 pose source of truth이며 향후 backend가 관절 상태를 공급하면 이 연결의 source가 바뀔 수 있다.
+2F-85의 별도 collider 구성기는 현재 GLB의 이름 있는 rigid-part mesh마다 방향별 극점으로 정점을 축약해 Convex Hull을 만든다. 고정 `GripperMesh`, 좌우 outer knuckle과 각 attached finger mesh의 compound, 좌우 inner knuckle, 좌우 fingertip으로 총 일곱 Kinematic proxy다. Mesh 정점을 owning authored Gripper/joint 원점 기준으로 바꿔 shape를 저장하므로 collider 중심은 각 body 원점과 다를 수 있다. 모델 및 Scene 계층의 scale은 unit이어야 한다. 이는 현재 `HCR12A_2F-85.glb`에 맞춘 asset-derived 형상이며 다른 GLB에 그대로 적용할 수 없다. 초기 open pose는 약 85 mm gap이다. 개폐 자세는 `GripperState.closureFraction`에서 계산한 Local 회전을 authored GLB 관절에 적용해 공급하며, 기존 proxy는 자식 계층의 World 변환을 따른다.
 
 볼록 외피는 각 16 cm 구간 안의 오목한 부분을 메울 수 있고, 두께가 없는 평면 장식 조각은 충돌에서 제외한다. 제조사 CAD 충돌 모델과 비교 검증한 값은 아니므로 ImGui 충돌 표시와 실제 접촉 결과로 계속 확인한다.
 
@@ -162,20 +162,23 @@ RobotKinematics
 Flecs / GLB
 ```
 
-2F-85는 아직 runtime controller를 구현하지 않았다.
-향후 자유공간 동작은 다음 경계를 사용한다.
+2F-85의 현재 자유공간 런타임은 다음 경계를 사용한다.
 
 ```text
 rPR [0..255]
       ↓
-SimGripperController
-      ↓ model-specific mapping
-master q [rad]
+SimGripperController -> GripperState.closureFraction [0,1]
+      ↓ GripperKinematics
+master q = fraction * 0.7929 [rad]
       ↓ masterMultiplier
-6 linkage Joint local rotations
+6 linkage Joint local delta rotations
+      ↓ GripperTransformAdapter: bind * delta
+authored GLB 관절 -> World 변환 -> 기존 Kinematic proxies
 ```
 
-접촉 이후는 Jolt Physics/contact/constraint 계층에서 처리한다.
+raw 위치를 fraction으로 선형 대응하는 식과 `SimGripperMotionSettings` 기본 master 속도 0.1..1.0 rad/s는 프로젝트의 시뮬레이션 가정이다. 제조사 위치 보정식이나 위 제조사 finger speed를 환산한 값이 아니다. raw speed 0..255를 이 각속도 범위에 선형 대응하며 raw 0도 양의 최소 속도다. `actualPosition`은 연속 위치의 표시용 반올림이며 관절 계산에 재입력하지 않는다.
+
+4 ms Controller 갱신 → 자세 적용 → World 변환 → Jolt step → World 재갱신 순서와 상태 계약은 [그리퍼 런타임 설계](GRIPPER_RUNTIME_DESIGN.md)를 참고한다. force는 범위만 검사하며 전류·접촉 판정·접촉 시 정지·파지는 아직 구현하지 않았다. 접촉 이후 적응은 후속 Physics/contact/constraint 작업이다.
 
 ## 작성 규칙
 

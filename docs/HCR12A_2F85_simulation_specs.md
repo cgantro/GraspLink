@@ -1,6 +1,6 @@
 # HCR-12A + Robotiq 2F-85 Simulation Specification
 
-> 기준일: 2026-10-04  
+> 기준일: 2026-10-05
 > 현재 runtime asset: `assets/HCR12A_2F-85.glb`  
 > 목적: HCR-12A + 2F-85의 장비 규격, 프로젝트 기구학 기준, GLB-specific 좌표를 구분해 시뮬레이션 source of truth를 명확히 한다.
 
@@ -222,6 +222,7 @@ Gripper
 ```
 
 Moving gripper joints의 bind rotation도 identity다.
+`Gripper` root 자체는 비항등 장착 `matrix`를 갖는다. 런타임은 이 장착 변환과 중첩 Tip 계층을 보존한다.
 
 ---
 
@@ -242,7 +243,7 @@ Right 12,952 -> 12,952
 ```
 
 현재 runtime GLB에는 baked open/close animation이 없다.
-GLB는 geometry/hierarchy/pivot만 제공하고 동작은 향후 C++ controller가 만든다.
+GLB는 geometry/hierarchy/pivot만 제공하고 동작은 현재 C++ `SimGripperController`와 `GripperKinematics`가 만든다.
 
 ---
 
@@ -257,11 +258,16 @@ RobotSpecification / GripperSpecification
 Hcr12a model specification
 TwoF85 model specification
 SimRobotController : IRobotController
+SimGripperController : IGripperController (자유공간 개폐)
 RobotTransformAdapter
 RobotKinematics (FK / ToolFrame calculation)
+GripperKinematics (master/mimic Local 회전)
+GripperTransformAdapter (GLB bind 회전 보존)
 FixedControlLoop (250 Hz callback loop)
 PhysicsWorld + Flecs PhysicsSystemModule
 J1~J6 Kinematic collision proxies
+Gripper Kinematic collision proxies 7개
+GUI 그리퍼 요청 / 상태 표시
 Joint angle limit 검증
 Joint max velocity 기반 target 추종
 software Stop
@@ -272,18 +278,18 @@ software Stop
 ```text
 Acceleration limiting (구현 안 됨; 검증된 max acceleration 값 필요)
 IK
-SimGripperController
 Hardware Robot backend
 Hardware Gripper backend
+Gripper force / current / contact detection / contact stop
 Contact-based adaptive grasp
 Watchdog / E-Stop state / Zero Offset
 ```
 
-그리퍼 runtime 제어는 현재 의도적으로 뒤로 미뤘다. 먼저 Robot/Hardware/Simulation 공통 interface와 simulation robot backend 구조를 고정한다.
+그리퍼 자유공간 개폐는 공통 interface로 연결됐다. 접촉 기반 정지·파지와 Hardware backend는 후속 작업이다.
 
 ---
 
-## 11. 향후 gripper runtime 흐름
+## 11. 현재 gripper runtime 흐름
 
 자유 공간:
 
@@ -292,16 +298,22 @@ rPR 0..255
     ↓
 SimGripperController
     ↓
-model-specific rPR -> master q mapping
+GripperState.closureFraction [0,1]
+    ↓ GripperKinematics
+master q = fraction * nominal closed angle
     ↓
 masterMultiplier
     ↓
-6 linkage Joint local rotation
+6 linkage Joint local delta rotation
+    ↓ GripperTransformAdapter: bind * delta
+GLB 관절 Local 회전 → World 변환 → 기존 7개 Kinematic proxy
 ```
 
-초기에는 endpoint가 맞는 단순 mapping으로 시작할 수 있지만 실제 장비 정밀 대응이 필요하면 256-entry LUT 또는 측정 기반 calibration을 사용한다.
+raw 위치에서 fraction으로의 선형 매핑은 자유공간 시뮬레이션 가정이며 실제 장치 보정식이 아니다. 연속 fraction을 관절 계산에 사용하고 raw actual position은 표시용 반올림만 한다. 기본 master 각속도 0.1..1.0 rad/s와 raw speed의 선형 대응도 프로젝트 설정이며 제조사 finger speed 사양을 환산한 값이 아니다. raw speed 0도 최소 양의 속도로 움직인다. 실제 장비 정밀 대응이 필요하면 LUT 또는 측정 기반 calibration을 검토한다.
 
-접촉 이후:
+4 ms마다 두 Controller 갱신 → 팔·그리퍼 자세 적용 → World 변환 갱신 → Jolt step → World 변환 재갱신 순서로 진행한다. Stop은 현재 위치·요청 echo를 유지하고 `Stopped`로 전환하며 Reset은 현재 위치를 유지한 채 비활성화한다. GUI는 인터페이스에 요청을 보내고 상태를 표시한다. 자세한 계약은 [그리퍼 런타임 설계](GRIPPER_RUNTIME_DESIGN.md)에 정리한다.
+
+접촉 이후 목표 흐름 (아직 미구현):
 
 ```text
 rPR / rFR
@@ -343,6 +355,7 @@ Controller architecture:
 ```text
 docs/ARCHITECTURE.md
 docs/CONTROLLER_INTERFACE.md
+docs/GRIPPER_RUNTIME_DESIGN.md
 ```
 
 ## 13. 현재 Physics 구현 상태
@@ -353,14 +366,14 @@ World pose로 바꿔 Jolt에 전달한다. Link1~Link6을 지원하며 robot Bas
 `ConfigureTwoF85Colliders`가 현재 asset의 메시별 축약 Convex Hull로 일곱 Kinematic proxy를 구성한다.
 고정 base, outer knuckle+finger compound, inner knuckle, fingertip proxy는 authored `Gripper` 또는
 6개 joint Entity의 자식이라 ECS 계층의 fixed-step World transform을 따른다. 각 hull 정점은 owning
-body/joint origin 기준으로 표현되며, 초기 자유공간 open gap 약 85 mm를 보존한다. 현재 authored ECS
-joints가 pose source of truth다. Gripper controller, 접촉 후 수동 linkage 적응, grasp, constraint와
+body/joint origin 기준으로 표현되며, 초기 자유공간 open gap 약 85 mm를 보존한다. 개폐 자세의 기준은
+`GripperState.closureFraction`이며 `GripperKinematics`와 `GripperTransformAdapter`가 원본 관절에 적용한다. 접촉 후 수동 linkage 적응, grasp, constraint와
 관절 동역학은 구현 범위 밖이다.
 이 proxy는 관절 축 제약이나 모터 토크를 계산하지 않는다.
 
-2F-85에는 현재 `IGripperController` contract와 model specification, controller-ready GLB linkage 구조 및
-메시 기반 gripper Collider proxy가 있다. Simulation gripper controller는 아직 연결되지 않았으며,
-물체 접촉·수동 linkage 적응·grasp도 구현 범위 밖이다. `0.7929 rad`는 현재 GLB geometry 기준의 nominal closed master linkage
+2F-85에는 현재 `IGripperController` contract와 model specification, 자유공간 Simulation controller·기구학·GLB adapter 및
+메시 기반 gripper Collider proxy가 있다. force는 raw 범위만 검사하고 전류는 제공하지 않는다.
+물체 접촉 판정·접촉 시 정지·수동 linkage 적응·grasp는 구현 범위 밖이다. `0.7929 rad`는 현재 GLB geometry 기준의 nominal closed master linkage
 angle이며 실제 motor shaft angle이나 접촉 후 finger 자세를 뜻하지 않는다.
 
 Physics/Flecs 설정, ownership, fixed-step 및 좌표 변환은 [`PHYSICS_ECS_INTEGRATION.md`](PHYSICS_ECS_INTEGRATION.md)에 정리한다.
