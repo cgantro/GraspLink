@@ -6,65 +6,69 @@ namespace grasplink::robotics
 {
 
 /**
- * @brief 실제 Robot backend와 Simulation backend가 공통으로 구현할 제어 인터페이스.
- *
- * 제조사 protocol, Flecs Entity, GLB hierarchy를 상위 계층에 노출하지 않는다.
- * Joint 개수/이름/축/limit은 models::RobotSpecification이 결정한다.
+ * @brief 실제 장치와 Simulation backend가 공유하는 로봇 제어 계약.
+ * @details
+ * 관절 순서와 제한은 RobotSpecification에서 제공한다. 이 순수 domain 인터페이스는 명령과
+ * feedback만 정의하며 Flecs entity나 GLM transform을 직접 다루지 않는다. 호출 성공은 요청의
+ * 수락을 나타낼 수 있고 목표 도달은 GetState()로 별도 확인한다. 연결, fault, 명령 교체 정책은
+ * backend마다 다르다. Joint-space 명령은 각 관절 목표각을 지정하고 Cartesian 명령은 TCP의
+ * 위치와 방향을 지정한다. Backend는 이 계약 뒤에서 실제 장치 또는 Simulation을 수행한다.
+ * GetState()는 특정 시점의 상태 복사본이다. software Stop은 보호 정지나 하드웨어 E-Stop을 대신하지 않는다.
  */
 class IRobotController
 {
 public:
     virtual ~IRobotController() = default;
 
-    /*
-     * [추가 용어 설명]
-     * - Interface: 구현 방법은 숨기고 외부에서 사용할 함수 형태만 약속하는 계약.
-     * - Backend: 이 Interface 뒤에서 실제 장비 또는 Simulation을 수행하는 구현체.
-     * - Joint-space motion: TCP 좌표가 아니라 각 관절의 목표각으로 움직이는 방식.
-     * - Cartesian motion: TCP의 3차원 위치/방향을 기준으로 움직이는 방식.
-     * - Software Stop: 프로그램이 이동 명령을 중단하는 것. 안전등급 Emergency Stop 회로와 다르다.
-     * - Update(dt): dt초가 지났다고 보고 backend 내부 상태를 한 제어 step 진행하는 함수.
-     */
-
     /**
-     * @brief backend를 사용할 수 있는 상태로 초기화/연결한다.
-     * @return 성공이면 Result::Success(), 실패면 오류 코드와 message를 반환한다.
-     * @note Hardware 구현은 통신 연결을 열 수 있고 Simulation 구현은 내부 state를 초기화할 수 있다.
+     * @brief backend 연결 또는 초기화를 요청한다.
+     * @return 성공 또는 구체적인 실패 분류와 진단. 성공만으로 물리 장비의 안전 상태를 보장하지 않는다.
      */
     virtual Result Connect() = 0;
 
-    /**
-     * @brief backend 연결/리소스를 정리한다.
-     * @note noexcept이므로 구현체는 정리 중 예외를 외부로 던지지 않아야 한다.
-     */
+    /** @brief backend 자원을 정리하고 연결을 해제한다. */
     virtual void Disconnect() noexcept = 0;
 
-    /** @return Connect 이후 command를 처리할 준비가 되어 있으면 true. */
+    /** @brief backend가 명령을 처리할 연결 상태인지 반환한다. */
     [[nodiscard]] virtual bool IsConnected() const noexcept = 0;
 
     /**
-     * @brief J1..Jn의 절대 목표 관절각으로 이동을 요청한다.
-     * @param command 목표각 [rad]과 속도/가속도 비율.
-     * @note 명령 수락과 목표 도달은 같은 뜻이 아니다. 보통 실제 상태 변화는 이후 Update/feedback에서 확인한다.
+     * @brief 절대 관절 목표를 요청한다.
+     * @param command J1..Jn 목표각 [rad]과 backend별 속도·가속도 비율.
+     * @return 요청을 받아들였는지 나타낸다. 성공은 목표 도달이나 동작 완료가 아니다.
+     * @details 관절 개수·범위와 Busy 처리, 실행 중 명령 교체 여부는 backend 계약에 따른다.
      */
     virtual Result MoveJoint(const JointMoveCommand& command) = 0;
 
     /**
-     * @brief TCP를 목표 Cartesian pose로 직선 이동시키도록 요청한다.
-     * @param command 목표 위치 [m], 방향 quaternion, 최대 선/각속도.
-     * @note Simulation에서 IK/trajectory가 아직 없으면 Unsupported를 반환할 수 있다.
+     * @brief TCP 직선 이동을 요청한다.
+     * @param command TCP 위치 [m], quaternion [x,y,z,w], 선속도 상한 [m/s], 각속도 상한 [rad/s].
+     * @return 수락 여부와 실패 분류. backend가 기능을 제공하지 않으면 Unsupported일 수 있다.
+     * @details 실행에는 IK와 경로 실행이 필요하다. FK로 pose를 계산할 수 있어도 이 명령이 지원된다는
+     * 뜻은 아니다. pose의 기준 좌표계는 이 공통 형식만으로 정해지지 않는다.
      */
     virtual Result MoveLinear(const LinearMoveCommand& command) = 0;
 
-    /** @warning 실제 물리 E-Stop 회로를 대체하지 않는 software motion stop이다. */
+    /**
+     * @brief backend의 software 동작 정지를 요청한다.
+     * @return 요청 처리 결과. 성공은 backend 수준에서 요청을 처리했다는 뜻이다.
+     * @details 물리 E-Stop이나 protective stop 회로의 동작을 보장하거나 대체하지 않는다.
+     */
     virtual Result Stop() = 0;
 
-    /** @return 현재 관절 위치/속도, mode, fault, TCP 등을 담은 상태 snapshot 복사본. */
+    /**
+     * @brief 현재 feedback snapshot을 값으로 반환한다.
+     * @return 관절 위치 [rad], 속도 [rad/s], mode, fault 및 TCP pose [m] 복사본.
+     * @details valid는 전체 snapshot, tcpPoseValid는 TCP pose만의 유효성을 나타낸다. faultCode 의미는
+     * backend/장치 계약을 따른다. TCP pose가 FK의 ToolFrame 결과와 동일하다고 가정할 수 없다.
+     */
     [[nodiscard]] virtual RobotState GetState() const = 0;
 
     /**
-     * @brief backend 내부 상태를 한 제어 주기 진행한다.
-     * @param dtSeconds 이전 호출 이후 경과 시간 [s].
+     * @brief backend 상태를 경과 시간만큼 진행하거나 갱신한다.
+     * @param dtSeconds 경과 시간 [s]. 유효 범위와 갱신 정책은 backend 계약에 따른다.
+     * @details 하드웨어 backend는 실제 제어 주기를 별도로 가질 수 있다. 이 함수가 호출됐다고 해서
+     * 고정된 관절 이동량이나 동작 완료가 보장되는 것은 아니다.
      */
     virtual void Update(double dtSeconds) = 0;
 };
