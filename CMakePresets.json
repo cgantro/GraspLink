@@ -1,23 +1,40 @@
-{
+﻿{
   "version": 3,
   "configurePresets": [
     {
       "name": "ninja",
-      "displayName": "Ninja",
-      "description": "Configure with the Ninja generator",
+      "displayName": "Ninja Debug",
+      "description": "Configure a Debug build with Ninja",
       "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build-ninja",
+      "binaryDir": "${sourceDir}/build-ninja-debug",
       "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "GRASPLINK_BUILD_GRAPHICS": "ON"
+      }
+    },
+    {
+      "name": "ninja-release",
+      "displayName": "Ninja Release",
+      "description": "Configure a Release build with Ninja",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-ninja-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
         "GRASPLINK_BUILD_GRAPHICS": "ON"
       }
     }
   ],
   "buildPresets": [
     {
-      "name": "ninja-release",
-      "displayName": "Ninja Release (parallel)",
+      "name": "ninja-debug",
+      "displayName": "Ninja Debug",
       "configurePreset": "ninja",
-      "configuration": "Release",
+      "jobs": 0
+    },
+    {
+      "name": "ninja-release",
+      "displayName": "Ninja Release",
+      "configurePreset": "ninja-release",
       "jobs": 0
     }
   ]
