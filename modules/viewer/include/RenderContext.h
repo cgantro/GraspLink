@@ -4,29 +4,17 @@ class Renderer;
 class Camera;
 
 /**
- * @brief RenderSystem이 Renderer와 Camera에 접근하기 위한 non-owning context.
- *
+ * @brief RenderSystem이 현재 프레임에 사용할 Renderer와 Camera를 빌려 받는 World singleton이다.
  * @details
- * ECS Component는 보통 Entity가 가진 상태를 표현하지만 RenderContext는
- * System 전체가 공통으로 사용하는 외부 객체를 연결한다.
- *
- * Renderer와 Camera의 소유권은 ViewerApp에 있으므로 여기서는 raw pointer만 보관한다.
- * 따라서 RenderContext보다 Renderer/Camera의 수명이 반드시 길어야 한다.
- */
-/*
- * [추가 용어 설명]
- * - Context: 여러 함수/System이 공통으로 필요한 객체 묶음을 전달하기 위한 접근 지점.
- * - non-owning: 이 구조체가 Renderer/Camera를 생성하거나 삭제할 책임은 없다는 뜻.
- * - raw pointer: C++의 일반 포인터. 여기서는 소유권이 아니라 접근용 주소로만 사용한다.
- * - ECS Singleton/Context 용도: 특정 Entity 하나의 상태가 아니라 World 전체 System이 공유할 외부 서비스를 연결한다.
- *
- * renderer/camera가 nullptr이면 RenderSystem이 사용할 실제 객체가 연결되지 않은 상태다.
+ * 이 포인터들은 소유권을 넘기지 않는 borrowed 참조다. ViewerApp이 Renderer와 Camera를 소유하고,
+ * 종료 시 World와 이 Context를 먼저 정리한 뒤 소유 객체를 파괴해야 한다. 두 포인터 중 하나라도 null이면
+ * RenderSystem은 해당 프레임의 draw를 건너뛴다. World 밖에 복사해 저장하거나 소유 객체보다 오래 보관하지 않는다.
  */
 struct RenderContext
 {
-    // 실제 OpenGL draw를 수행할 Renderer. 소유권은 ViewerApp에 있다.
+    /// OpenGL draw 명령을 처리하는 ViewerApp 소유 객체의 비소유 포인터.
     Renderer* renderer = nullptr;
 
-    // 현재 frame의 View/Projection 정보를 제공할 Camera. 소유권은 ViewerApp에 있다.
+    /// 현재 프레임의 View/Projection 행렬을 제공하는 ViewerApp 소유 객체의 비소유 포인터.
     Camera* camera = nullptr;
 };
