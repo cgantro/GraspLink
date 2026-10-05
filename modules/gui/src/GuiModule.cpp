@@ -44,6 +44,7 @@ bool Project(const glm::vec3& position, const glm::mat4& viewProjection,
     if (clip.w <= 0.001F)
         return false;
 
+    // Clip 좌표를 w로 나눠 NDC [-1,1]로 바꾸고 y축을 뒤집어 ImGui 화면 픽셀로 옮긴다.
     const glm::vec3 ndc = glm::vec3{clip} / clip.w;
     result = {((ndc.x + 1.0F) * 0.5F) * displaySize.x,
         ((1.0F - ndc.y) * 0.5F) * displaySize.y};
@@ -67,6 +68,7 @@ void DrawBox(std::vector<ScreenLine>& lines, const grasplink::physics::Collision
     const glm::mat4& entityWorld, const glm::mat4& viewProjection,
     const ImVec2& displaySize, ImU32 color)
 {
+    // 설정된 반쪽 크기로 8 꼭짓점을 만들고 12개 모서리를 World→ViewProjection→화면으로 변환한다.
     const glm::mat4 world = entityWorld * LocalShapeMatrix(shape.localTransform);
     std::array<glm::vec3, 8> corners;
     for (unsigned int i = 0; i < corners.size(); ++i)
@@ -87,6 +89,7 @@ void DrawCylinder(std::vector<ScreenLine>& lines, const grasplink::physics::Coll
     const ImVec2& displaySize, ImU32 color)
 {
     constexpr int Segments = 24;
+    // Cylinder 축은 Local Y. 위·아래 원과 일정 간격의 세로 모서리로 원통을 선 근사한다.
     const glm::mat4 world = entityWorld * LocalShapeMatrix(shape.localTransform);
     for (int i = 0; i < Segments; ++i)
     {
@@ -110,6 +113,7 @@ void DrawSphere(std::vector<ScreenLine>& lines, const grasplink::physics::Collis
     const ImVec2& displaySize, ImU32 color)
 {
     constexpr int Segments = 24;
+    // 서로 직교하는 세 원으로 구의 설정 반지름을 읽기 쉽게 표시한다.
     const glm::mat4 world = entityWorld * LocalShapeMatrix(shape.localTransform);
     for (int plane = 0; plane < 3; ++plane)
     {
@@ -208,7 +212,7 @@ glm::mat4 PhysicsTransform(const glm::mat4& world)
 struct GuiModule::Impl
 {
     Camera& camera;
-    // ECS 설정과 마지막 World 행렬을 읽는다. Jolt가 생성한 Shape의 변형/축약 결과는 반영하지 않는다.
+    // ECS 설정 Collider와 최신 World 행렬을 읽는다. Jolt가 실제 생성한 Shape의 변형/축약 결과는 조회하지 않는다.
     flecs::query<const RigidBody, const Colliders, const TransformMatrix> colliderQuery;
     std::vector<ScreenLine> collisionLines;
     std::chrono::steady_clock::time_point nextCollisionRefresh{};
@@ -241,6 +245,7 @@ struct GuiModule::Impl
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
 
+        // 패널 문구로 선이 실제 Body 대신 ECS 설정의 근사임을 구분한다.
         ImGui::Begin("Configured colliders");
         ImGui::Checkbox("Show configured colliders", &visible);
         ImGui::TextUnformatted("ECS approximation; refresh: 100 ms");
@@ -258,7 +263,8 @@ struct GuiModule::Impl
                 cachedDisplaySize = displaySize;
                 nextCollisionRefresh = now + std::chrono::milliseconds(100);
             }
-            // Screen 좌표를 캐시하므로 Camera 이동도 다음 갱신까지 이전 투영을 쓴다. 깊이 검사는 없다.
+            // Screen 좌표를 캐시하므로 Camera 이동도 다음 갱신까지 이전 투영을 쓴다.
+            // Foreground draw list는 깊이 버퍼를 검사하지 않아 가려진 Collider 선도 보인다.
             ImDrawList* drawList = ImGui::GetForegroundDrawList();
             for (const ScreenLine& line : collisionLines)
                 drawList->AddLine(line.from, line.to, line.color, 1.5F);
@@ -281,6 +287,7 @@ struct GuiModule::Impl
     void RefreshCollisionLines()
     {
         collisionLines.clear();
+        // Camera 투영 × View로 World 좌표를 clip 좌표로 보낸다. Entity scale은 PhysicsTransform에서 제외한다.
         const glm::mat4 viewProjection = camera.GetProjectionMatrix() * camera.GetViewMatrix();
         const ImVec2 displaySize = ImGui::GetIO().DisplaySize;
         colliderQuery.each([&](flecs::entity, const RigidBody& rigidBody,

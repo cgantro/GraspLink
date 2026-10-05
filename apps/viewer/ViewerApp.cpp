@@ -88,7 +88,8 @@ int ViewerApp::Run()
 
 bool ViewerApp::Init()
 {
-    // 초기화 순서: Viewer → Scene·모델 → Robot Controller → Physics
+    // 초기화 순서: Context가 필요한 Viewer → GPU 모델/Entity Scene → Controller와 FK → Physics Body.
+    // 각 단계 실패도 Run의 종료 경로에서 Shutdown이 부분 생성 자원을 정리한다.
     if (!InitViewer())
         return false;
 
@@ -107,7 +108,7 @@ bool ViewerApp::Init()
 
 bool ViewerApp::InitViewer()
 {
-    // Window 생성. OpenGL Context도 Window가 소유
+    // Window가 OpenGL Context를 소유한다. Renderer와 AssetManager의 GPU 자원은 이 Context 안에서 만든다.
     m_Window = std::make_unique<Window>(
         Window::Properties{kWindowWidth, kWindowHeight, kWindowTitle, !m_Options.smokeTest, !m_Options.smokeTest});
 
@@ -126,17 +127,17 @@ bool ViewerApp::InitViewer()
 
     m_CameraController = std::make_unique<OrbitCameraController>(*m_Camera, *m_Window);
 
-    // RenderSystem이 사용할 Renderer·Camera 등록
+    // World context는 소유하지 않고 포인터를 빌린다. Shutdown에서 World와 참조 객체를 알맞은 순서로 없앤다.
     m_World.set<RenderContext>({m_Renderer.get(), m_Camera.get()});
 
-    // Transform은 fixed step과 렌더 직전에 명시적으로 계산하고, RenderSystem은 World 진행 때 실행한다.
+    // Transform은 fixed step의 물리 전후와 렌더 직전에 계산한다. RenderSystem은 World 진행 시 렌더 대상을 처리한다.
     m_World.import<TransformSystemModule>();
     m_World.import<RenderSystemModule>();
 
     m_SceneManager = std::make_unique<SceneManager>(m_World);
     m_SceneManager->LoadScene<Scene>();
 
-    // 예약 Scene을 활성화해 root를 만든 뒤 모델 Entity를 생성한다.
+    // 예약 Scene을 활성화해 root와 계층을 만든 뒤, 이 Entity 소유 Scene 안에 모델 Entity를 생성한다.
     m_SceneManager->OnUpdate(0.0F);
 
     m_AssetManager = std::make_unique<AssetManager>();
@@ -194,7 +195,7 @@ bool ViewerApp::InitRobot(const Entity& robotRoot)
 
     m_RobotController = std::move(simController);
 
-    // 같은 FK 결과를 시각 Entity와 Kinematic collider Entity에 각각 전달한다.
+    // 같은 FK 결과를 렌더 Entity와 Kinematic collider Entity에 전달해 충돌 프록시가 렌더 자세를 따른다.
     m_RobotKinematics = std::make_unique<grasplink::robotics::kinematics::RobotKinematics>(robotSpec);
     m_RobotTransformAdapter = std::make_unique<RobotTransformAdapter>(robotRoot, robotSpec);
 
@@ -220,17 +221,18 @@ void ViewerApp::InitPhysics(const Entity& robotRoot, Entity& floorEntity)
     m_RobotPhysicsAdapter = std::make_unique<grasplink::simulation::RobotPhysicsAdapter>(
         *m_SceneManager->GetActiveScene(), robotRoot, grasplink::robotics::models::hanwha::kHcr12a,
         m_RobotModel);
-    // 화면 Mesh는 원본 GLB 형상을 렌더링하지만, Physics에는 정점의 방향별 극점으로 축약한 Convex Hull을 보낸다.
+    // 렌더 Mesh는 원본 GLB 형상, Physics는 정점의 방향별 극점으로 축약한 Convex Hull 설정을 사용한다.
     // outer knuckle과 finger처럼 한 rigid part에 묶인 메시만 compound로 합쳐 접촉 형상을 만든다.
-    // 각 proxy는 authored Gripper/joint Entity의 자식이다. Fixed Update의 FK가 arm 계층을 갱신한 뒤
-    // World 행렬 계산이 그 자세를 proxy에 전달하므로, collider용 별도 pose adapter나 Gripper controller는 없다.
-    // Physics GUI는 이 설정 shape를 Gripper layer의 보라색 X-ray 선으로 그린다. 이는 실제 렌더 메시나 Jolt hull의 시각화가 아니다.
+    // Gripper 본체와 6개 관절 프록시, 총 7개 Kinematic Body 설정을 만든다. 각 proxy는 authored joint Entity의 자식이다.
+    // 현재 관절 자세의 출처는 ECS/GLB 관절 계층이다. FK가 arm 계층을 갱신하고 World 행렬이 자식 proxy에 전파한다.
+    // Gripper controller/backend와 grasp 동작은 연결되어 있지 않다. 별도 collider pose adapter도 없다.
+    // GUI 보라색 선은 ECS 설정 shape를 그린 X-ray 근사이며 렌더 Mesh/Jolt가 실제 생성한 hull의 시각화가 아니다.
     grasplink::simulation::ConfigureTwoF85Colliders(
         *m_SceneManager->GetActiveScene(), robotRoot, m_RobotModel);
     if (m_Options.physicsDemo)
         viewer_debug::CreatePhysicsBoxes(
             *m_SceneManager->GetActiveScene(), m_RobotShader);
-    // Body 생성 전에 초기 FK와 World 행렬을 준비한다. 첫 Jolt pose가 화면 Entity와 일치해야 한다.
+    // Body 생성 전에 초기 FK와 World 행렬을 준비해 첫 Kinematic 목표와 렌더 Entity를 맞춘다.
     const auto& robotPose = m_RobotKinematics->Update(m_RobotController->GetState());
     m_RobotTransformAdapter->Apply(robotPose);
     m_RobotPhysicsAdapter->Apply(robotPose);
@@ -264,7 +266,8 @@ void ViewerApp::MainLoop()
             m_CameraController->OnUpdate();
 
         // 고정 순서: Controller 상태 → FK → 시각/물리 Entity → World 행렬 → Jolt step.
-        // step 뒤 Dynamic 결과가 Local로 돌아오므로 World 행렬을 다시 계산한다. 최소화 중에도 실행한다.
+        // PhysicsSystem은 Kinematic 목표를 제출하고 Dynamic Body 결과를 ECS Local로 반영한다.
+        // step 뒤 World 행렬을 다시 계산해 다음 렌더에서 부모/자식 Entity 자세가 맞게 한다. 최소화 중에도 시뮬레이션은 돈다.
         m_ControlLoop.Advance(frameDeltaSeconds, [this](double fixedDeltaSeconds)
         {
             m_RobotController->Update(fixedDeltaSeconds);
@@ -290,7 +293,7 @@ void ViewerApp::MainLoop()
         const float aspectRatio = static_cast<float>(framebufferWidth) / static_cast<float>(framebufferHeight);
         m_Camera->SetAspectRatio(aspectRatio);
 
-        // 렌더 직전 Scene logic과 World 행렬을 반영한다. GUI는 갱신 주기에 맞춰 이 상태를 읽는다.
+        // 렌더 주기 Scene logic과 최신 World 행렬을 반영한다. GUI는 이 ECS 설정/자세를 별도 갱신 주기로 읽는다.
         m_Renderer->BeginFrame();
 
         m_SceneManager->OnUpdate(renderDeltaSeconds);
@@ -308,7 +311,7 @@ void ViewerApp::MainLoop()
 
 void ViewerApp::Shutdown()
 {
-    // Entity handle을 빌리는 Adapter를 Scene보다 먼저 정리한다.
+    // Entity handle을 빌리는 Adapter를 Scene보다 먼저 정리한다. 그렇지 않으면 소멸 과정에서 stale handle이 된다.
     m_RobotTransformAdapter.reset();
     m_RobotPhysicsAdapter.reset();
     m_RobotKinematics.reset();
@@ -318,12 +321,12 @@ void ViewerApp::Shutdown()
 
     m_RobotController.reset();
 
-    // Scene 삭제 observer가 Jolt Body를 제거할 때 PhysicsSystem과 PhysicsWorld가 살아 있어야 한다.
+    // Scene 정리의 ECS observer가 Jolt Body를 제거할 수 있도록 PhysicsSystemModule과 PhysicsWorld를 아직 살려 둔다.
     m_SceneManager.reset();
     m_PhysicsSystemModule.reset();
     m_GuiModule.reset();
 
-    // GUI query와 물리 observer를 먼저 해제한 뒤 World와 PhysicsWorld를 정리한다.
+    // Scene의 Body 정리가 끝난 다음 observer/query를 해제하고 World, 이어 Jolt PhysicsWorld를 정리한다.
     m_World.reset();
     m_PhysicsWorld.reset();
 

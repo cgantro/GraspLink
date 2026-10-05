@@ -42,45 +42,56 @@ class PhysicsSystemModule;
 class RobotPhysicsAdapter;
 }
 
+/**
+ * @brief Viewer의 선택 실행 모드.
+ * @details physicsDemo는 로봇 이동과 물리 디버그 객체를 명시적으로 켠다. smokeTest는 자동 검증용으로
+ * 창 표시를 끄고 정해진 렌더 프레임 수를 실행한다.
+ */
 struct ViewerOptions
 {
     bool physicsDemo = false;
     bool smokeTest = false;
 };
 
-// Runtime 객체를 조합하고 실행 순서와 수명을 관리한다. FK·물리·렌더 계산은 각 모듈에 맡긴다.
-// Shutdown에서 빌린 참조를 먼저 정리하고, Entity/GPU 리소스를 World/OpenGL Context보다 먼저 해제한다.
+/**
+ * @brief Viewer, Scene, 로봇 제어, 물리와 GUI 모듈의 수명을 조정한다.
+ * @details
+ * 계산은 각 모듈에 위임한다. 초기화는 Window/Context와 ECS에서 시작해 Scene·모델, Controller/FK,
+ * Physics 순으로 연결한다. Shutdown은 빌린 Scene handle과 observer를 먼저 정리한 뒤 ECS/Physics를
+ * 해제하고, 마지막에 GPU 자원과 이를 해제할 OpenGL Context를 정리한다.
+ */
 class ViewerApp
 {
 public:
     explicit ViewerApp(ViewerOptions options = {});
     ~ViewerApp();
 
+    /** @brief 초기화에 성공하면 프레임 반복을 실행하고 종료 코드를 반환한다. */
     int Run();
 
 private:
     ViewerOptions m_Options;
     bool Init();
 
-    // Window·Renderer·Camera·ECS·Scene 준비
+    // Window와 OpenGL Context를 먼저 만들고, 그 Context를 쓰는 GPU/ECS/Scene을 준비한다.
     bool InitViewer();
 
-    // Robot·Floor GLB를 Scene Entity로 생성
+    // GPU 업로드 모델을 Scene의 Entity 계층으로 만들고, 로봇 모델 리소스는 collider 추출에도 보관한다.
     void InitScene(Entity& robotRoot, Entity& floorEntity);
 
-    // Simulation Controller와 GLB Robot 연결
+    // Controller 상태 → FK 결과 → 시각 Entity와 Kinematic collider Entity 연결을 구성한다.
     bool InitRobot(const Entity& robotRoot);
 
-    // PhysicsWorld와 Floor·Robot 설정 연결
+    // ECS 설정에서 Jolt Body를 만들고, 시각/물리 프록시의 첫 자세를 동기화한다.
     void InitPhysics(const Entity& robotRoot, Entity& floorEntity);
 
-    // 입력·Simulation·ECS·Render 반복
+    // 입력, 누적 Fixed Update, 렌더 프레임 처리를 서로 다른 주기로 반복한다.
     void MainLoop();
 
     // 부분 초기화 실패 때도 호출된다. World observer와 OpenGL Context가 필요한 정리를 먼저 끝낸다.
     void Shutdown();
 
-    // GLFW Window·OpenGL Context 소유
+    // GLFW Window와 OpenGL Context 소유. Renderer/GPU 객체보다 오래 살아야 한다.
     std::unique_ptr<Window> m_Window;
 
     // OpenGL Render 담당
@@ -104,7 +115,7 @@ private:
     // Robot·Debug Box 공용 Shader
     std::shared_ptr<Shader> m_RobotShader;
 
-    // Flecs Entity·Component·System 소유
+    // Flecs Entity·Component·System 소유. Physics observer가 Body를 정리할 때까지 PhysicsWorld가 살아 있어야 한다.
     flecs::world m_World;
 
     // Robot 제어 Backend

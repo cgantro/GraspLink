@@ -10,8 +10,13 @@ class Window;
 namespace grasplink::gui
 {
 
-// ECS에 설정된 Collider를 화면에 투영한다. 실제 Jolt Body/Shape 상태를 조회하지 않는다.
-// World·Window·Camera는 ViewerApp에서 빌린다. GUI를 World와 OpenGL Context보다 먼저 파괴한다.
+/**
+ * @brief ECS Collider 설정을 화면 위 선으로 표시하고 ImGui 입력 상태를 제공한다.
+ * @details
+ * flecs::world, Window, Camera는 ViewerApp에서 빌린 참조이며 이 모듈이 소유하지 않는다. 따라서 query와
+ * ImGui/OpenGL backend를 정리할 때 세 객체가 살아 있어야 한다. 선은 ECS Colliders 설정을 투영한 근사
+ * 표시다. Jolt Body/Shape를 조회하지 않으며 실제 충돌 형상과 다를 수 있다.
+ */
 class GuiModule
 {
 public:
@@ -21,8 +26,14 @@ public:
     GuiModule(const GuiModule&) = delete;
     GuiModule& operator=(const GuiModule&) = delete;
 
-    // 화면 선과 Camera 투영은 약 100 ms 간격으로 갱신하며, 깊이 검사 없이 그린다.
+    /**
+     * @brief ImGui 패널과 설정 Collider 선을 현재 프레임에 그린다.
+     * @details Collider 선과 투영 결과는 약 100 ms 간격으로 다시 계산해 캐시한다. Screen 좌표 캐시이므로
+     * 그 사이 Camera가 움직여도 다음 갱신 전까지 선이 이전 위치에 남을 수 있고, 깊이 검사 없이 전경에 그린다.
+     */
     void Draw();
+
+    /** @brief ImGui가 마우스를 잡고 있어 Camera 입력을 막아야 하는지 알려준다. */
     bool WantsMouse() const;
 
 private:
