@@ -17,14 +17,15 @@ Window::~Window()
 
 void Window::Init(const Properties& properties)
 {
-    // GLFW는 Window 생성, 입력 이벤트, OpenGL Context 생성을 OS별로 추상화한다.
+
+    // 현재 계약은 프로세스당 단일 Window와 GLFW 수명이다.
     if (glfwInit() == GLFW_FALSE)
         throw std::runtime_error("Failed to Init GLFW");
 
-    // OpenGL 3.3 Core Profile을 요청한다.
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    glfwWindowHint(GLFW_VISIBLE, properties.visible ? GLFW_TRUE : GLFW_FALSE);
 
     m_Handle = glfwCreateWindow(
         properties.width,
@@ -39,7 +40,7 @@ void Window::Init(const Properties& properties)
         throw std::runtime_error("Failed to create GLFW Window");
     }
 
-    // 이후 OpenGL 호출이 이 Window의 Context를 사용하도록 현재 Thread에 연결한다.
+    // GPU 자원은 이 Context에서만 쓸 수 있으며 Window보다 먼저 해제한다.
     glfwMakeContextCurrent(m_Handle);
 
     if (!gladLoadGLLoader(reinterpret_cast<GLADloadproc>(glfwGetProcAddress)))
@@ -48,10 +49,6 @@ void Window::Init(const Properties& properties)
         throw std::runtime_error("Failed to Init GLAD");
     }
 
-    /*
-        GLFW callback은 static/free function 형태라 this를 직접 받을 수 없다.
-        Window*를 user pointer에 저장해 callback에서 다시 복원한다.
-    */
     glfwSetWindowUserPointer(m_Handle, this);
     glfwSetFramebufferSizeCallback(m_Handle, FramebufferSizeCallback);
     glfwSetScrollCallback(m_Handle, ScrollCallback);
@@ -62,7 +59,6 @@ void Window::Init(const Properties& properties)
     int framebufferHeight = 0;
     glfwGetFramebufferSize(m_Handle, &framebufferWidth, &framebufferHeight);
 
-    // HiDPI 환경을 포함해 실제 framebuffer pixel 크기에 맞춰 viewport를 설정한다.
     glViewport(0, 0, framebufferWidth, framebufferHeight);
 }
 
@@ -122,6 +118,11 @@ void Window::GetCursorPosition(double& x, double& y) const
     glfwGetCursorPos(m_Handle, &x, &y);
 }
 
+GLFWwindow* Window::GetNativeHandle() const
+{
+    return m_Handle;
+}
+
 double Window::ConsumeScrollOffset()
 {
     const double result = m_ScrollOffset;
@@ -145,6 +146,6 @@ void Window::ScrollCallback(
     Window* self = static_cast<Window*>(glfwGetWindowUserPointer(window));
     if (self == nullptr) return;
 
-    // 한 frame 사이 여러 scroll event가 발생할 수 있으므로 누적한다.
+    // 여러 callback의 세로 scroll을 합쳐 Controller가 한 번에 소비한다.
     self->m_ScrollOffset += yOffset;
 }
