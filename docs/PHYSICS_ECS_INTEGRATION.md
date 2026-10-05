@@ -23,9 +23,9 @@ entity.set<RigidBody>(RigidBody{BodyMotionType::Dynamic})
 
 ## Transform과 물리 좌표
 
-`TransformSystemModule::UpdateWorldTransforms()`가 Entity 계층의 Local/World 행렬을 계산하는 단일 경로다. Physics는 이 결과를 읽어 Jolt에 보낸다. Dynamic Body의 Jolt pose는 Entity 부모의 cached World 행렬 역행렬을 적용해 Local Transform으로 되돌린다.
+`TransformSystemModule::UpdateWorldTransforms()`가 Entity 계층의 Local/World 행렬을 계산하는 단일 경로다. Scene-driven Static·Kinematic은 이 결과를 Jolt에 보낸다. Physics-driven Dynamic은 SceneRoot 또는 항등 grouping 조상만 허용해 World≈Local로 다룬다. Jolt의 World 위치·회전을 Local에 직접 기록하므로 부모 역행렬이나 Local 행렬 분해를 사용하지 않는다. 조상 각각이 항등이어야 하며 서로 상쇄되는 부모 변환도 허용하지 않는다.
 
-Entity의 `Rotation, Local`은 단위 `glm::quat`이다. FK quaternion은 정규화해 Kinematic Entity에 직접 저장하며, Dynamic 결과도 Local 행렬에서 분해한 quaternion을 직접 저장한다. Euler 왕복 변환은 없다. `Rotation`과 `ComposeLocalMatrix`는 영 quaternion·NaN 등 비유한 회전을 거부하고 단위 정규화한다. `q`와 `-q`는 같은 자세다. GLB 회전 배열 `[x,y,z,w]`는 로더에서 GLM 생성자 `(w,x,y,z)`로 변환한다. Entity pose와 행렬의 float 정밀도는 유지하며, 제어 관절각은 rad 스칼라로 전달한다.
+Entity의 `Rotation, Local`은 단위 `glm::quat`이다. FK quaternion은 정규화해 Kinematic Entity에 직접 저장하며, Dynamic 결과도 Jolt quaternion을 직접 저장한다. Euler 왕복 변환은 없다. `Rotation`과 `ComposeLocalMatrix`는 영 quaternion·NaN 등 비유한 회전을 거부하고 단위 정규화한다. `q`와 `-q`는 같은 자세다. GLB 회전 배열 `[x,y,z,w]`는 로더에서 GLM 생성자 `(w,x,y,z)`로 변환한다. Entity pose와 행렬의 float 정밀도는 유지하며, 제어 관절각은 rad 스칼라로 전달한다.
 
 Physics가 있는 Entity와 모든 조상 Entity는 unit scale이어야 한다. 단, Static Environment collider는 Entity 자신의 시각 scale을 허용한다. Floor Mesh의 authored scale은 Render 표현에만 쓰고, collider 크기와 offset은 meter 단위로 직접 지정한다. Jolt rigid body pose에는 scale이 포함되지 않는다.
 
@@ -39,13 +39,15 @@ RobotController / GripperController Update
 → GripperKinematics: 연속 closureFraction → master/mimic Local 회전
 → GripperTransformAdapter: bind 회전과 결합 → GLB 관절 Local 회전
 → TransformSystemModule: Local → World matrix
-→ PhysicsSystemModule: Kinematic Entity → Jolt
+→ PrePhysicsSync: Body 설정 재구성 / Static·Kinematic Scene 목표 → Jolt
 → PhysicsWorld Step
-→ PhysicsSystemModule: Dynamic Jolt pose → Entity Local Transform
+→ PostPhysicsSync: Dynamic Jolt pose → Entity Local 위치·회전 직접 저장
 → TransformSystemModule: World matrix 재갱신
 ```
 
 화면 갱신 전에도 `TransformSystemModule::UpdateWorldTransforms()`가 실행된다. 따라서 RenderSystem은 최신 Local Transform으로 계산한 World 행렬을 읽으며, Physics는 render FPS와 독립된 fixed step에서만 진행한다.
+
+`IsSceneDriven`은 Static·Kinematic, `IsPhysicsDriven`은 Dynamic을 분류한다. Static은 Scene World 목표가 변경될 때만 `SetBodyTransform`으로 배치한다. Kinematic은 목표가 같아도 실제 도달 전에는 `MoveKinematic`을 계속해 이동 속도를 만든다. 도달 후 `StopKinematic`을 한 번 호출해 Step 뒤 남는 속도를 제거하고, 이후 같은 목표의 자세 전달은 생략한다. 도달 판정은 위치 1 μm·quaternion 성분 1e-6 이내이며 quaternion 부호 차이를 허용한다. Dynamic은 PostPhysicsSync에서 Jolt 결과만 읽어 Local 위치·회전을 교체하고 Scale은 유지한다.
 
 ## Robot pose와 충돌 프록시
 
@@ -65,18 +67,19 @@ Floor의 `plane.glb` Mesh와 Static Box Collider는 하나의 model root Entity�
 
 `apps/viewer`의 `DebugSceneSetup`은 0.12 m Cube Mesh와 Material을 50개 Entity가 공유하는 물리 데모 객체를 만든다. Box Collider half-extents는 0.06 m다. `--physics-demo`로 활성화할 수 있으며 모든 build type에서 선택 사항이다. 객체 생성은 앱의 데모 설정에 있고, 기본 Simulation Scene의 Floor 설정과는 분리돼 있다.
 
-`modules/gui`의 `GuiModule`이 ImGui context·입력·panel 수명을 관리한다. `Show configured colliders`가 켜졌을 때 ECS에 설정된 Collider shape의 Box/Cylinder/Sphere 외곽선과 Convex Hull 투영을 layer별 색으로 표시한다. 선은 100 ms 간격으로 캐시되며 Jolt 내부 shape를 조회하거나 깊이를 검사하지 않는다. Camera가 이동해도 다음 갱신 전까지 이전 투영이 보일 수 있다.
+`GuiModule`은 ImGui context·GLFW/OpenGL backend와 프레임·입력 capture 수명을 관리한다. `ViewerApp`이 `BeginFrame`과 `EndFrame` 사이에 `GripperPanel`, `PhysicsDebugPanel`, `ColliderOverlay`를 명시적으로 호출한다. `PhysicsDebugPanel`은 `Show configured colliders` 체크박스 상태를 보관하고 `ColliderOverlay`가 ECS shape의 Box/Cylinder/Sphere 외곽선과 Convex Hull 투영을 layer별 색으로 표시한다. Overlay는 World query와 화면 선 캐시를 소유하며 Camera는 Draw 동안만 빌린다. 첫 표시·resize 때 즉시 갱신하고 이후 100 ms 간격으로 캐시를 갱신한다. Jolt 내부 shape를 조회하거나 깊이를 검사하지 않으며 Camera 이동도 다음 갱신 전까지 이전 투영으로 보일 수 있다.
 
 `PrefabFactory`는 primitive가 하나인 Node의 Mesh component를 Node Entity에 직접 붙인다. 여러 primitive인 경우에만 primitive별 Render child Entity를 만든다.
 
 ## Lifetime과 확장 범위
 
-`ViewerApp`이 `PhysicsWorld`를 소유하고 `PhysicsSystemModule` 및 어댑터보다 먼저 생성한다. Scene 전환은 이전 Scene의 `OnExit`와 root 정리 후 새 root를 만들고 `OnEnter`를 호출한다. 종료할 때 어댑터와 Scene Entity를 먼저 정리하고, `PhysicsSystemModule`을 해제한 다음 Flecs World와 `PhysicsWorld`를 파괴한다. Flecs Entity의 제거 observer가 Physics Body도 삭제한다. `ModelResource`와 Entity가 공유하는 GPU Mesh 참조도 OpenGL Context를 정리하기 전에 해제한다.
+`ViewerApp`이 `PhysicsWorld`를 소유하고 `PhysicsSystemModule` 및 어댑터보다 먼저 생성한다. Scene 전환은 이전 Scene의 `OnExit`와 root 정리 후 새 root를 만들고 `OnEnter`를 호출한다. 종료할 때 Overlay의 World query와 패널, 어댑터와 Scene Entity를 먼저 정리하고, `PhysicsSystemModule`을 해제한 다음 Flecs World와 `PhysicsWorld`를 파괴한다. Flecs Entity의 제거 observer가 Physics Body도 삭제한다. `GuiModule` backend와 `ModelResource`·Entity가 공유하는 GPU Mesh 참조도 OpenGL Context를 정리하기 전에 해제한다.
 
-Collider는 하나의 Body 안에 Box/Cylinder/Sphere/Convex Hull을 여러 개 둘 수 있다. Collider mass properties와 center-of-mass 처리는 Jolt 내부 책임이며, 공개 API는 ECS Entity와 같은 Body 원점의 pose를 주고받는다. Collider 설정 변경은 pending Entity 목록으로 모아 다음 fixed step에서 한 번 반영한다. Dynamic Body의 조상에 Dynamic Body가 있으면 해당 물리 binding을 만들지 않는다.
+Collider는 하나의 Body 안에 Box/Cylinder/Sphere/Convex Hull을 여러 개 둘 수 있다. Collider mass properties와 center-of-mass 처리는 Jolt 내부 책임이며, 공개 API는 ECS Entity와 같은 Body 원점의 pose를 주고받는다. Collider 설정 변경은 pending Entity 목록으로 모아 다음 PrePhysicsSync에서 한 번 반영한다. 모든 Body의 Dynamic 조상은 금지하며 Dynamic 자체의 비항등 조상도 지원하지 않는다. 실행 중 scale·부모 계약이 깨지면 연결 Body를 제거하고, 계약이 복구되면 현재 Scene World 자세로 재생성한다.
 
 ## 다음 구현 단계
 
 1. 충돌 wireframe과 접촉 결과를 보며 asset 기반 hull을 검증한다.
 2. 접촉 결과를 읽고 그리퍼 정지·grasp 상태를 판정한다. 현재 자유공간 개폐는 접촉과 무관하게 목표까지 진행한다.
 3. 필요성이 확인되면 joint constraint와 관절 동역학을 추가한다.
+4. 물리 proxy를 SceneRoot 아래 평평한 계층으로 두는 구조는 장기 검토 사항이며 아직 구현하지 않았다. 현재 팔·그리퍼 proxy의 부모 계층과 API는 유지한다.
