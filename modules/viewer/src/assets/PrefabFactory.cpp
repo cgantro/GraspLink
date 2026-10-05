@@ -17,20 +17,12 @@
 
 namespace
 {
-/**
- * @brief SubMesh 재질 조회
- * @param model MaterialData를 가진 CPU 모델
- * @param assets GPU Material 저장소
- * @param materialIndex 재질 번호. -1이면 기본 재질
- * @return SubMesh에 연결할 Material
- * @throws std::runtime_error 번호가 범위를 벗어나거나 GPU 업로드가 안 된 경우
- */
+// 재질이 없으면 기본 Material. 잘못된 index나 미업로드 재질은 오류로 처리한다.
 std::shared_ptr<Material> ResolveMaterial(
     const ModelResource& model,
     const AssetManager& assets,
     int materialIndex)
 {
-    // glTF 재질 없음 (-1): 기본 Material 사용
     if (materialIndex < 0) return assets.GetDefaultMaterial();
 
     if (materialIndex >= static_cast<int>(model.materials.size()))
@@ -46,13 +38,8 @@ std::shared_ptr<Material> ResolveMaterial(
     return material;
 }
 
-/**
- * @brief Node 아래에 Render Entity 연결
- *
- * Mesh 하나에 여러 Primitive·Material 가능
- * MeshRenderer는 Material 하나만 사용 → Primitive마다 Render Entity 생성
- * 생성한 Entity는 Node의 자식 → 부모 Transform 상속
- */
+// Primitive 하나면 Node에 직접 렌더 Component를 붙인다.
+// 여러 Primitive면 재질별로 자식 Entity를 만들어 같은 Node 변환과 GPU Mesh를 공유한다.
 void CreateRenderEntities(
     Scene& scene,
     const ModelResource& model,
@@ -62,7 +49,6 @@ void CreateRenderEntities(
     std::size_t nodeIndex,
     Entity& nodeEntity)
 {
-    // Mesh 없는 Node도 유지: 로봇 Joint pivot 보존
     if (node.meshIndex < 0) return;
 
     if (node.meshIndex >= static_cast<int>(model.meshes.size()))
@@ -95,6 +81,7 @@ void CreateRenderEntities(
             std::to_string(nodeIndex) + "_" +
             std::to_string(primitiveIndex);
 
+        // 자식의 Local TRS는 기본값이다. Node의 pivot과 변환을 그대로 이어받는다.
         Entity renderEntity = scene.CreateEntity(renderEntityName);
         renderEntity.SetParent(nodeEntity);
 
@@ -132,10 +119,10 @@ Entity PrefabFactory::CreateModel(
         throw std::runtime_error("Model has invalid root node");
     }
 
-    /* Node와 Entity의 같은 index 사용: parentIndex로 부모 복원 */
+    // 먼저 모든 Node를 만들어 부모가 배열에서 뒤에 있어도 연결할 수 있게 한다.
     std::vector<Entity> entities(model.nodes.size());
 
-    // 1. 모든 Node 생성 + GLB Local 위치·회전·크기 복원
+    // GLB Local 값을 저장한다. 부모 연결 뒤 TransformSystem이 Scene 기준 World 행렬을 계산한다.
     for (std::size_t i = 0; i < model.nodes.size(); ++i)
     {
         const NodeData& node = model.nodes[i];
@@ -148,7 +135,6 @@ Entity PrefabFactory::CreateModel(
         entities[i] = entity;
     }
 
-    // 2. parentIndex로 부모·자식 연결
     for (std::size_t i = 0; i < model.nodes.size(); ++i)
     {
         const NodeData& node = model.nodes[i];
@@ -163,7 +149,6 @@ Entity PrefabFactory::CreateModel(
             entities[static_cast<std::size_t>(node.parentIndex)]);
     }
 
-    // 3. Mesh가 있는 Node에 Primitive별 Render Component 연결
     for (std::size_t i = 0; i < model.nodes.size(); ++i)
     {
         CreateRenderEntities(
