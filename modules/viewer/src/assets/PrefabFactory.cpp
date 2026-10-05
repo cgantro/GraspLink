@@ -135,14 +135,14 @@ Entity PrefabFactory::CreateModel(
     // 1차 생성: 부모 Entity가 배열에서 뒤에 있어도 연결 가능하도록 모든 Node handle을 확보한다.
     std::vector<Entity> entities(model.nodes.size());
 
-    // 1차 변환 복사: GLB 값은 부모 기준 Local이다. 위치 [m], Euler 회전 [rad], 크기 배율을 보존한다.
+    // 1차 변환 복사: GLB 값은 부모 기준 Local이다. 위치 [m], 단위 quaternion, 크기 배율을 보존한다.
     for (std::size_t i = 0; i < model.nodes.size(); ++i)
     {
         const NodeData& node = model.nodes[i];
         Entity entity = scene.CreateEntity(node.name);
 
         entity.SetLocalPosition(node.translation);
-        entity.SetLocalRotation(glm::quat{node.rotation});
+        entity.SetLocalRotation(node.rotation);
         entity.SetLocalScale(node.scale);
 
         entities[i] = entity;

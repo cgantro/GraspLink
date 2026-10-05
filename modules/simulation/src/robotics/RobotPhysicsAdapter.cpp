@@ -27,7 +27,7 @@ namespace
 glm::mat4 NodeLocalTransform(const NodeData& node)
 {
     return glm::translate(glm::mat4(1.0F), node.translation) *
-        glm::mat4_cast(glm::quat(node.rotation)) * glm::scale(glm::mat4(1.0F), node.scale);
+        glm::mat4_cast(glm::normalize(node.rotation)) * glm::scale(glm::mat4(1.0F), node.scale);
 }
 
 std::vector<glm::mat4> BuildNodeWorldTransforms(const ModelResource& model)

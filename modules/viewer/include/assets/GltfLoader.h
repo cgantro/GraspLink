@@ -33,9 +33,10 @@ public:
      * 서로 다른 Primitive는 Mesh 배열에 이어 붙이고 로컬 index에 새 정점 시작 위치를 더한다.
      * index가 생략되면
      * 정점 순서 0..N-1을 사용한다. 재질 index는 Primitive 범위 정보에 보존된다.
-     * glTF matrix는 Local translation/scale/Euler radian으로 분해한다. shear와 perspective는
-     * 내부 TRS에 담을 수 없어 거부한다. Euler 출력은 원래 quaternion 값을 보존하지 않으며,
-     * 특정 각도 근처에서 회전 해석이 민감해질 수 있다. 반환 시 GPU 자원은 생성되지 않는다.
+     * glTF matrix는 Local translation/rotation/scale로 분해한다. shear와 perspective는
+     * 내부 TRS에 담을 수 없어 거부한다. 회전은 matrix 분해와 glTF TRS 입력 모두 단위 quaternion으로
+     * 보관한다. glTF 입력 순서 [x,y,z,w]를 GLM 생성자 순서 (w,x,y,z)에 맞춰 옮긴다.
+     * 반환 시 GPU 자원은 생성되지 않는다.
      */
     static ModelResource LoadGLB(const std::filesystem::path& path);
 

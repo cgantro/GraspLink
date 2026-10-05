@@ -61,7 +61,7 @@ struct Fixture
         Entity entity = scene->CreateEntity(node.name);
         entity.SetParent(parent);
         entity.SetLocalPosition(node.translation);
-        entity.SetLocalRotation(glm::quat{node.rotation});
+        entity.SetLocalRotation(node.rotation);
         entity.SetLocalScale(node.scale);
         for (int child : node.childrenIndices) CreateSubtree(child, entity);
         return entity;

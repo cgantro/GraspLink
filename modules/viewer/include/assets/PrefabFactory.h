@@ -41,7 +41,7 @@ public:
      * @throws std::runtime_error shader, Node 계층, Mesh 연결·업로드 또는 Material 참조가
      *         잘못되었거나 필요한 GPU 자원이 준비되지 않았을 때 발생한다. 실패 시 이미 생성된
      *         Entity는 Scene에 남을 수 있다.
-     * @details Node 위치는 부모 기준 [m], 회전은 Euler [rad], 크기는 배율이다. GPU 자원은
+     * @details Node 위치는 부모 기준 [m], 회전은 단위 quaternion, 크기는 배율이다. GPU 자원은
      *          ResourceID 캐시에서 찾아 공유한다. Material index가 -1인 Primitive만 기본
      *          Material을 사용하며, 유효하지 않은 index나 업로드되지 않은 Material은 오류다.
      *          Mesh가 여러 Primitive를 가지면 각 하위 Entity가 해당 Primitive의 index 범위를

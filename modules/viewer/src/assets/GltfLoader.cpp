@@ -480,7 +480,7 @@ MeshData ConvertMesh(
     return result;
 }
 
-// 부모 기준 matrix/TRS를 NodeData의 Local TRS로 바꾼다. 회전 출력 단위는 Euler radian이다.
+// 부모 기준 matrix/TRS를 NodeData의 Local TRS로 바꾼다. 회전은 단위 quaternion으로 보관한다.
 void ReadNodeTransform(
     const tinygltf::Node& source,
     NodeData& destination)
@@ -545,7 +545,7 @@ void ReadNodeTransform(
         RequireFinite(orientation);
         RequireFinite(skew);
         RequireFinite(perspective);
-        // Euler/TRS 결과에는 shear를 저장할 자리가 없으므로 분해 결과가 순수 TRS인지 확인한다.
+        // Local TRS에는 shear를 저장할 자리가 없으므로 분해 결과가 순수 TRS인지 확인한다.
         if (std::abs(scale.x) <= kTransformTolerance ||
             std::abs(scale.y) <= kTransformTolerance ||
             std::abs(scale.z) <= kTransformTolerance ||
@@ -560,8 +560,7 @@ void ReadNodeTransform(
         }
 
         destination.translation = translation;
-        // 결과 NodeData는 quaternion이 아니라 Euler radian을 저장한다. 회전 표현 정밀도는 이 변환을 따른다.
-        destination.rotation = glm::eulerAngles(glm::normalize(orientation));
+        destination.rotation = glm::normalize(orientation);
         destination.scale = scale;
         RequireFinite(destination.rotation);
         return;
@@ -636,8 +635,8 @@ void ReadNodeTransform(
             static_cast<float>(quaternion.x / quaternionLength),
             static_cast<float>(quaternion.y / quaternionLength),
             static_cast<float>(quaternion.z / quaternionLength)};
-        // 잘못된 길이의 quaternion은 먼저 거부하고 단위 quaternion으로 만든 뒤 Euler radian으로 보관한다.
-        destination.rotation = glm::eulerAngles(normalizedQuaternion);
+        // 영 quaternion은 먼저 거부하고, 회전 방향을 유지하는 단위 quaternion으로 보관한다.
+        destination.rotation = normalizedQuaternion;
     }
 
     RequireFinite(destination.translation);

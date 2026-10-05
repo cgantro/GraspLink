@@ -3,6 +3,7 @@
 #include "assets/ResourceID.h"
 
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include <cstdint>
 #include <memory>
@@ -156,7 +157,7 @@ struct MeshData
  * @brief glTF Node의 Local TRS와 Mesh 연결, 부모·자식 관계다.
  * @details
  * translation, rotation, scale은 모두 부모 Node 기준이다. translation은 glTF 장면의 길이 단위(m),
- * rotation은 glTF quaternion에서 변환한 Euler radian, scale은 배율이다.
+ * rotation은 단위 quaternion, scale은 배율이다. glTF 회전과 matrix 분해 결과를 같은 회전 표현으로 보관한다.
  * GltfLoader는 단일 root 아래의 트리만 허용하고, PrefabFactory가 이 관계를 Entity hierarchy로 옮긴다.
  * Mesh가 없는 Node도 관절 pivot과 자식 기준 변환을 유지하므로 삭제하지 않는다.
  */
@@ -170,9 +171,9 @@ struct NodeData
         0.0F
     };
 
-    /// 부모 Node 기준 Euler 회전, 단위: radian. glTF quaternion에서 변환한 값이다.
-    glm::vec3 rotation{
-        0.0F
+    /// 부모 Node 기준 단위 quaternion. GLM 생성자 순서는 (w,x,y,z), 기본값은 항등 회전이다.
+    glm::quat rotation{
+        1.0F, 0.0F, 0.0F, 0.0F
     };
 
     /// 부모 Node 기준 크기 배율.

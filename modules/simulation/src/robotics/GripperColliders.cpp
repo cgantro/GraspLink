@@ -44,6 +44,13 @@ bool Finite(const glm::vec3& value)
     return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
 }
 
+bool Finite(const glm::quat& value)
+{
+    const float lengthSquared = glm::dot(value, value);
+    return std::isfinite(value.w) && std::isfinite(value.x) && std::isfinite(value.y) &&
+        std::isfinite(value.z) && std::isfinite(lengthSquared) && lengthSquared > 0.0F;
+}
+
 bool IsUnitScale(const glm::vec3& scale)
 {
     return Finite(scale) && std::abs(scale.x - 1.0F) <= 1.0e-5F &&
@@ -59,7 +66,7 @@ bool HasName(const Entity& entity, const std::string& expected)
 glm::mat4 LocalMatrix(const NodeData& node)
 {
     return glm::translate(glm::mat4(1.0F), node.translation) *
-        glm::mat4_cast(glm::quat(node.rotation)) * glm::scale(glm::mat4(1.0F), node.scale);
+        glm::mat4_cast(glm::normalize(node.rotation)) * glm::scale(glm::mat4(1.0F), node.scale);
 }
 
 std::vector<glm::vec3> MeshPoints(const ModelResource& model, std::size_t meshNodeIndex,
@@ -143,7 +150,7 @@ void ConfigureTwoF85Colliders(Scene& scene, const Entity& robotRoot, const Model
         {
             const NodeData& node = model.nodes[index];
             if (!Finite(node.translation) || !Finite(node.rotation) || !Finite(node.scale))
-                throw std::invalid_argument("TwoF85 collider ancestry has non-finite TRS.");
+                throw std::invalid_argument("TwoF85 collider ancestry has invalid TRS.");
             if (!IsUnitScale(node.scale))
                 throw std::invalid_argument("TwoF85 collider ancestry has non-unit scale.");
             if (node.parentIndex < 0) break;

@@ -115,7 +115,7 @@ struct Fixture
         nodes[static_cast<std::size_t>(index)] = entity;
         entity.SetParent(parent);
         entity.SetLocalPosition(node.translation);
-        entity.SetLocalRotation(glm::quat{node.rotation});
+        entity.SetLocalRotation(node.rotation);
         entity.SetLocalScale(node.scale);
         for (int child : node.childrenIndices) CreateTree(child, entity);
         return entity;
