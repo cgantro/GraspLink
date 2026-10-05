@@ -36,6 +36,7 @@ void Renderer::Init(int framebufferWidth, int framebufferHeight)
 
     // 좌표: 작업공간 중심에서 광원 쪽으로 4m 이동한 가상 카메라가 중심을 바라봄.
     const glm::vec3 target{0.0F, 0.7F, 0.0F};
+    // 광원 카메라는 작업 공간 중심에서 m_LightDirection 방향으로 4 m 떨어진 곳에서 중심을 바라본다.
     const glm::vec3 lightPosition = target + m_LightDirection * 4.0F;
 
     const glm::mat4 lightView = glm::lookAt(
@@ -81,6 +82,7 @@ void Renderer::Draw(
     const glm::mat4& projection,
     const glm::vec3& cameraPosition)
 {
+    // 불완전한 ECS 렌더 항목은 GPU 상태를 바꾸기 전에 건너뛴다.
     if (!meshFilter.mesh || !meshRenderer.shader || !meshRenderer.material) return;
 
     meshRenderer.shader->Bind();

@@ -57,6 +57,7 @@ void RenderSystemModule::RegisterSystem(flecs::world& world)
                     {
                         if (!meshRenderers[i].visible) continue;
 
+                        // TransformMatrix의 World specialization이 가진 누적 행렬을 복사해 Local 모델 변환 대신 Renderer에 전달한다.
                         items.push_back({
                             meshFilters[i],
                             meshRenderers[i],
