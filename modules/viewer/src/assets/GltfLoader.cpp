@@ -18,7 +18,7 @@
 
 namespace
 {
-// Accessor -> BufferView -> Buffer에서 검증한 시작 주소와 원소 간격.
+// Accessor -> BufferView -> Buffer를 따라 범위를 확인한 뒤 읽기 시작 주소와 간격을 보관한다.
 struct AccessorView
 {
     const unsigned char* data = nullptr;
@@ -56,8 +56,10 @@ AccessorView GetAccessorView(
     const tinygltf::Buffer& buffer = model.buffers[bufferView.buffer];
 
     /*
-        ByteStride는 tightly packed attribute와 interleaved attribute를 같은 방식으로 순회하게 해준다.
-        예: [Pos][Normal][UV][Pos][Normal][UV]라면 다음 Pos까지의 간격은 Pos 크기보다 크다.
+        ByteStride는 tightly packed와 interleaved 배열 모두에서 다음 원소의 시작점을 준다.
+        예: [Pos][Normal][UV]가 반복되면 POSITION의 간격은 POSITION 자체 크기보다 크다.
+        아래 범위 계산은 마지막 원소의 끝까지 포함하므로 padding이 bufferView 밖으로
+        이어지는 malformed 데이터도 포인터를 만들기 전에 거부한다.
     */
     const int byteStride = accessor.ByteStride(bufferView);
     if (byteStride <= 0 || static_cast<std::size_t>(byteStride) < elementSize)
@@ -214,7 +216,8 @@ std::vector<glm::vec3> ReadTangentAccessor(
     return result;
 }
 
-// 정렬되지 않은 byte 주소에서도 scalar 값을 안전하게 복사한다.
+// glTF byte 주소가 T의 정렬 경계에 놓인다고 가정하지 않고 scalar를 복사한다.
+// 접근자의 파일 형식상 정렬 요구를 검사하는 코드는 별도 없다.
 template<typename T>
 T ReadScalar(const unsigned char* data)
 {
@@ -290,7 +293,7 @@ std::vector<std::uint32_t> ReadIndices(
     return result;
 }
 
-// TinyGLTF가 디코딩한 8-bit RGB/RGBA 픽셀을 CPU 데이터로 복사한다.
+// TinyGLTF 디코딩이 끝난 8-bit RGB/RGBA 픽셀을 CPU 데이터와 안정적인 Texture ID로 복사한다.
 TextureData ConvertTexture(
     const tinygltf::Model& model,
     const tinygltf::Texture& source,
@@ -477,7 +480,7 @@ MeshData ConvertMesh(
     return result;
 }
 
-// 부모 기준 matrix/TRS를 Local TRS로 읽는다. 회전 출력은 Euler radian이다.
+// 부모 기준 matrix/TRS를 NodeData의 Local TRS로 바꾼다. 회전 출력 단위는 Euler radian이다.
 void ReadNodeTransform(
     const tinygltf::Node& source,
     NodeData& destination)
@@ -496,7 +499,7 @@ void ReadNodeTransform(
 
         glm::mat4 matrix{1.0F};
 
-        // glTF와 GLM 모두 column-major이며, quaternion은 GLM 순서로 바꿔 쓴다.
+        // glTF matrix는 column-major다. GLM 행렬의 같은 [column][row] 위치에 복사한다.
         for (int column = 0; column < 4; ++column)
         {
             for (int row = 0; row < 4; ++row)
@@ -511,6 +514,7 @@ void ReadNodeTransform(
             }
         }
 
+        // 마지막 행이 원근 성분을 가지면 TRS로 표현할 수 없어 허용 오차 안의 affine만 받는다.
         if (std::abs(matrix[0][3]) > kTransformTolerance ||
             std::abs(matrix[1][3]) > kTransformTolerance ||
             std::abs(matrix[2][3]) > kTransformTolerance ||
@@ -541,6 +545,7 @@ void ReadNodeTransform(
         RequireFinite(orientation);
         RequireFinite(skew);
         RequireFinite(perspective);
+        // Euler/TRS 결과에는 shear를 저장할 자리가 없으므로 분해 결과가 순수 TRS인지 확인한다.
         if (std::abs(scale.x) <= kTransformTolerance ||
             std::abs(scale.y) <= kTransformTolerance ||
             std::abs(scale.z) <= kTransformTolerance ||
@@ -555,6 +560,7 @@ void ReadNodeTransform(
         }
 
         destination.translation = translation;
+        // 결과 NodeData는 quaternion이 아니라 Euler radian을 저장한다. 회전 표현 정밀도는 이 변환을 따른다.
         destination.rotation = glm::eulerAngles(glm::normalize(orientation));
         destination.scale = scale;
         RequireFinite(destination.rotation);
@@ -602,7 +608,7 @@ void ReadNodeTransform(
 
     if (source.rotation.size() == 4)
     {
-        // glTF 배열 [x,y,z,w]를 GLM 생성자 순서 (w,x,y,z)로 옮긴다.
+        // glTF wire 순서 [x,y,z,w]를 GLM 생성자 인자 순서 (w,x,y,z)로 옮긴다.
         for (const double value : source.rotation)
         {
             if (!std::isfinite(value) ||
@@ -630,6 +636,7 @@ void ReadNodeTransform(
             static_cast<float>(quaternion.x / quaternionLength),
             static_cast<float>(quaternion.y / quaternionLength),
             static_cast<float>(quaternion.z / quaternionLength)};
+        // 잘못된 길이의 quaternion은 먼저 거부하고 단위 quaternion으로 만든 뒤 Euler radian으로 보관한다.
         destination.rotation = glm::eulerAngles(normalizedQuaternion);
     }
 
@@ -734,6 +741,7 @@ ModelResource GltfLoader::LoadGLB(const std::filesystem::path& path)
     /*
         glTF Node는 children index만 저장하고 parent index는 직접 갖지 않는다.
         PrefabFactory가 parent를 빠르게 복원할 수 있도록 children 정보를 역으로 순회해 parentIndex를 채운다.
+        두 부모가 같은 Node를 참조하면 트리 변환이 모호하므로 즉시 거부한다.
     */
     for (std::size_t parentIndex = 0;
          parentIndex < result.nodes.size();
@@ -758,7 +766,7 @@ ModelResource GltfLoader::LoadGLB(const std::filesystem::path& path)
         }
     }
 
-    // 부모 index는 한 갈래이므로 세 상태를 따라가며 순환을 거부한다.
+    // 부모가 하나인 그래프를 세 상태로 방문해, 이미 진행 중인 경로로 돌아오는 순환을 거부한다.
     std::vector<std::uint8_t> nodeState(result.nodes.size(), 0U);
     for (std::size_t start = 0; start < result.nodes.size(); ++start)
     {
