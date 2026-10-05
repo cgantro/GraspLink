@@ -156,7 +156,7 @@ RobotKinematics
       q + joint pivot / local axis
       -> joint rotation + base-frame link poses
       ↓
-      ├─ RobotTransformAdapter -> current ECS Euler [rad]
+      ├─ RobotTransformAdapter -> current ECS unit quaternion
       └─ RobotPhysicsAdapter -> Kinematic link proxies
       ↓
 Flecs / GLB

@@ -12,8 +12,8 @@
 2. 관절 회전축은 Joint node에 미리 quaternion 보정을 넣는 대신 모델 specification의 local axis로 정의한다.
 3. Arm visual geometry는 기존 bind pose가 바뀌지 않도록 vertex에 transform을 bake한다.
 4. Gripper는 단순 좌/우 translation finger가 아니라 outer/inner knuckle와 fingertip joint로 분리한다.
-5. Runtime GLB에는 **그리퍼 open/close baked animation을 넣지 않는다.** 움직임은 이후 C++ controller가 만든다.
-6. 물체 접촉 이후 2F-85의 under-actuated adaptive motion은 GLB animation이 아니라 Physics 계층에서 처리한다.
+5. Runtime GLB에는 **그리퍼 open/close baked animation을 넣지 않는다.** 움직임은 C++ controller와 기구학 계산이 만든다.
+6. 물체 접촉 이후 2F-85의 under-actuated adaptive motion은 후속 Physics 작업이며 아직 구현하지 않았다.
 
 과거 문서의 `BindTransform * JointRotation` 전제와 `LeftFingerJoint/RightFingerJoint` 두 개만 사용하는 구조는 현재 자산 기준으로 폐기됐다.
 
@@ -105,7 +105,7 @@ joint pivot + local axis
 → RobotTransformAdapter / RobotPhysicsAdapter
 ```
 
-현재 `RobotTransformAdapter`도 이 asset contract를 검사한다. J1~J6 bind Euler가 identity가 아니면 controller-ready GLB가 아니라고 판단한다.
+현재 `RobotTransformAdapter`도 이 asset contract를 검사한다. J1~J6 bind quaternion이 identity 회전을 나타내지 않으면 controller-ready GLB가 아니라고 판단한다. `q`와 `-q`는 같은 회전으로 취급한다.
 
 ---
 
@@ -207,18 +207,22 @@ C++ Controller
 = command/state + joint rotation
 ```
 
-향후 자유 공간 제어 흐름은 다음을 목표로 한다.
+현재 자유 공간 제어 흐름은 다음과 같다.
 
 ```text
 rPR 0..255
    ↓
 SimGripperController
    ↓
+GripperState.closureFraction [0,1]
+   ↓ GripperKinematics
 master linkage q [rad]
    ↓
 mimic relation
    ↓
 6개 gripper Joint local rotation
+   ↓ GripperTransformAdapter
+GLB 관절 / 기존 7개 Kinematic proxy
 ```
 
 `rPR=0`은 fully open, `255`는 fully closed지만, `rPR` 자체는 radian이나 mm가 아니다.
@@ -258,7 +262,7 @@ RobotKinematics
   → joint rotation + link pose
         ↓
 RobotTransformAdapter
-  quaternion → ECS Euler
+  quaternion → ECS unit quaternion
         ↓
 Entity::SetLocalRotation
         ↓
@@ -270,6 +274,8 @@ Renderer
 ```
 
 Pivot translation은 GLB hierarchy에 이미 들어 있다. `RobotTransformAdapter`가 다시 더하지 않고, `RobotKinematics`가 동일한 bind pivot을 사용해 base-frame LinkPose를 계산한다.
+
+glTF `[x,y,z,w]`는 로더에서 GLM 생성자 `(w,x,y,z)`로 옮긴다. `NodeData`·Entity는 quaternion을 보관하고 행렬 합성 전에 검증·정규화한다. 영 quaternion·NaN 등 비유한 입력은 거부하며 Euler로 왕복 변환하지 않는다. 자세 저장과 행렬은 float, 관절각은 rad 스칼라를 유지한다. 현재 계약은 [Architecture](ARCHITECTURE.md)와 [그리퍼 런타임 설계](GRIPPER_RUNTIME_DESIGN.md)를 참고한다.
 
 ---
 
