@@ -1,5 +1,7 @@
 # 그리퍼 충돌 및 주석 보강
 
+이 문서는 자유공간 그리퍼 Controller 연결 전 충돌·주석 작업과 당시 테스트 결과의 기록이다. 이후 구현된 `SimGripperController`·`GripperKinematics`·`GripperTransformAdapter`와 4 ms pose/proxy 갱신 계약은 [현재 그리퍼 런타임 설계](GRIPPER_RUNTIME_DESIGN.md)를 참고한다. 아래 테스트 수와 당시 구현 상태는 과거 결과로 보존한다.
+
 ## 충돌 범위
 
 `ConfigureTwoF85Colliders`는 현재 `HCR12A_2F-85.glb`의 메시를 기준으로 본체와 6개 관절에 Kinematic 충돌 프록시 7개를 만든다.
@@ -12,7 +14,7 @@ Outer Knuckle과 Finger는 같은 관절을 따르되 각 메시의 볼록 외�
 - [접촉 회귀 테스트](../tests/GripperCollisionIntegrationTests.cpp)
 
 새 테스트는 본체·양쪽 손가락의 실제 접촉 높이, 열린 간격 85 mm, 빈 간격 통과, 부모 이동과 손가락 회전 후의 접촉, 잘못된 설정의 부분 생성 방지, Scene 삭제를 검증한다.
-Gripper 계층은 현재 ECS 관절 자세가 기준이다. Gripper controller, 접촉 기반 파지, 관절 토크·동역학은 구현하지 않았다.
+이 작업 시점에는 Gripper 계층의 ECS 관절 자세가 기준이었고 Gripper controller, 접촉 기반 파지, 관절 토크·동역학은 구현하지 않았다.
 볼록 외피는 각 메시의 오목한 공간을 메울 수 있으며, Robot/Gripper 자기 충돌은 기존 정책대로 제외한다.
 
 ## 로봇팔 충돌 단순화
