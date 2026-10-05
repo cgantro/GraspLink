@@ -28,6 +28,15 @@ SimRobotController::SimRobotController(const models::RobotSpecification& specifi
 {
     if (specification_->joints == nullptr || specification_->jointCount == 0)
         throw std::invalid_argument("SimRobotController: empty robot specification");
+    for (std::size_t i = 0; i < specification_->jointCount; ++i)
+    {
+        const auto& joint = specification_->joints[i];
+        // 초기 상태는 q=0. 이를 허용하지 않는 모델은 별도 초기화 계약이 필요하다.
+        if (!std::isfinite(joint.minPositionRadians) || !std::isfinite(joint.maxPositionRadians) ||
+            joint.minPositionRadians > 0.0 || joint.maxPositionRadians < 0.0 ||
+            !std::isfinite(joint.maxVelocityRadiansPerSecond) || joint.maxVelocityRadiansPerSecond <= 0.0)
+            throw std::invalid_argument("SimRobotController: invalid limits, zero pose or maximum velocity");
+    }
 }
 
 Result SimRobotController::Connect()
@@ -37,6 +46,7 @@ Result SimRobotController::Connect()
     state_.jointVelocityRadiansPerSecond.assign(specification_->jointCount, 0.0);
     state_.mode = RobotMode::Idle;
     state_.valid = true;
+    // TCP pose는 이 Controller가 채우지 않는다. RobotKinematics가 관절 상태에서 별도 FK 결과를 만든다.
     state_.tcpPoseValid = false;
 
     targetPositionRadians_ = state_.jointPositionRadians;
@@ -87,6 +97,7 @@ Result SimRobotController::MoveJoint(const JointMoveCommand& command)
         }
     }
 
+    // Moving 중 새 명령도 허용하며 진행 중이던 target을 교체한다.
     targetPositionRadians_ = command.targetPositionRadians;
     velocityScale_ = command.velocityScale;
     accelerationScale_ = command.accelerationScale;
@@ -112,7 +123,7 @@ Result SimRobotController::MoveLinear(const LinearMoveCommand&)
 
     return Failure(
         ErrorCode::Unsupported,
-        "SimRobotController: MoveLinear requires the FK/IK layer and is not wired yet");
+        "SimRobotController: MoveLinear requires an IK solver and trajectory execution");
 }
 
 Result SimRobotController::Stop()
@@ -156,6 +167,7 @@ void SimRobotController::Update(double dtSeconds)
             continue;
         }
 
+        // 속도 상한 안에서 target을 직접 따라간다. 가속도 제한이나 ramp는 적용하지 않는다.
         const double maxStep = joint.maxVelocityRadiansPerSecond * velocityScale_ * dtSeconds;
         if (maxStep <= 0.0)
         {
@@ -178,8 +190,7 @@ void SimRobotController::Update(double dtSeconds)
         }
     }
 
-    // accelerationScale_는 command contract에 보존한다. 실제 acceleration limit 값이
-    // specification에 확정되기 전에는 임의의 가속도 상수를 만들어 적용하지 않는다.
+    // accelerationScale_는 계약 보존용이다. Simulation은 가속도 제한을 계산하지 않는다.
     (void)accelerationScale_;
 
     if (allReached)

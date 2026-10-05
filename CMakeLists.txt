@@ -1,4 +1,4 @@
-﻿cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.20)
 
 project(GraspLink VERSION 0.1.0 LANGUAGES C CXX)
 
@@ -22,6 +22,7 @@ include(cmake/Dependencies.cmake)
 #
 add_library(grasplink_robotics STATIC
   modules/robotics/src/backends/simulation/SimRobotController.cpp
+  modules/robotics/src/kinematics/RobotKinematics.cpp
 )
 
 target_include_directories(grasplink_robotics PUBLIC
@@ -42,6 +43,7 @@ target_sources(grasplink_robotics PUBLIC
   modules/robotics/include/robotics/backends/simulation/SimRobotController.h
 
   modules/robotics/include/robotics/runtime/FixedControlLoop.h
+  modules/robotics/include/robotics/kinematics/RobotKinematics.h
 )
 
 
