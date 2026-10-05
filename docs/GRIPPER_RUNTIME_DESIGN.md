@@ -30,6 +30,8 @@ GUI 요청 -> IGripperController
 
 Robotics는 Flecs·GLM·Jolt를 참조하지 않는다. GUI는 Controller 인터페이스에 요청을 보내며
 Entity 자세를 직접 바꾸지 않는다. 앱이 Controller와 계산기의 수명, 고정 갱신 순서를 연결한다.
+`ViewerApp`은 `GuiModule::BeginFrame/EndFrame` 사이에 `GripperPanel`을 호출한다. 패널은 요청 입력·마지막 결과만
+보관하며 Controller는 Draw 동안만 빌린다. 물리 디버그 체크박스와 Collider 투영은 별도 패널·Overlay가 담당한다.
 
 ## 분기형 기구와 GLB bind
 
@@ -81,7 +83,7 @@ CPU 회귀는 연결·활성화·raw 범위·속도·dt·목표 교체·정지·
 실제 GLB 통합 회귀는 bind 유지, 좌우 mimic, 중첩 tip World 자세, 반복 적용, 장착부 이동,
 기존 7개 프록시의 수명과 움직임을 확인한다. 일반 Viewer와 물리 데모 숨김 실행도 유지한다.
 
-2026-10-05 검증: 쿼터니언 저장·전달 전환을 포함한 현재 코드로 아래 빌드와 CTest를 통과했다.
+2026-10-05 쿼터니언 저장·전달 전환 시점의 빌드·CTest 검증 결과다. 이후 GUI 분리·물리 동기화 변경의 최종 검증은 별도로 진행한다.
 
 | Graphics | Debug | Release |
 |---|---|---|
@@ -90,3 +92,8 @@ CPU 회귀는 연결·활성화·raw 범위·속도·dt·목표 교체·정지·
 
 `QuaternionTransforms`는 정규화·잘못된 입력 거부·q/-q·90도 부근 자세·계층 전파를 검증한다.
 `GltfLoader`는 TRS와 matrix 양쪽의 quaternion 방향과 Local 행렬 보존을 확인한다.
+
+같은 날 Physics 동기화와 GUI 분리 후 최종 검증은 Graphics ON Debug·Release 각각 16/16,
+OFF Debug·Release 각각 5/5다. 추가한 `GuiComposition`은 네 형상의 표시·숨김과 Scene 교체,
+패널 읽기 중 Controller 상태 보존을 확인한다. Physics 회귀는 Dynamic 부모 제한·복구,
+Static 이동 후 접촉과 Kinematic 정지 뒤 선속도·각속도의 잔류 이동을 검사한다.
