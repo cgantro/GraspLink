@@ -19,7 +19,6 @@ std::shared_ptr<Texture> AssetManager::GetTexture(ResourceID id) const
 
 AssetManager::AssetManager()
 {
-    // Material이 없는 Primitive도 보이도록 중성 회색 fallback을 준비한다.
     defaultMaterial_ = std::make_shared<Material>(
         glm::vec4{0.7F, 0.7F, 0.7F, 1.0F},
         0.0F,
@@ -28,20 +27,14 @@ AssetManager::AssetManager()
 
 void AssetManager::UploadModel(ModelResource& model)
 {
-    /*
-        CPU -> GPU 업로드 순서가 중요하다.
-        Material이 Texture를 참조하므로 Texture를 먼저 생성하고,
-        Material이 준비된 뒤 Mesh buffer를 생성한다.
-    */
+    // 각 단계는 뒤 단계의 ResourceID 참조를 해석할 수 있도록 순서대로 실행한다.
 
-    // TextureData의 decoded pixel을 GPU 2D texture로 올린다.
     for (const TextureData& textureData : model.textures)
     {
         if (textures_.find(textureData.uniqueID) != textures_.end()) continue;
         if (textureData.pixels.empty()) continue;
 
-        // 현재 model texture는 baseColor 용도로만 사용하므로 sRGB=true로 업로드한다.
-        // TODO(FUTURE): normal/metallicRoughness 같은 data texture가 들어오면 semantic별 color space를 분리한다.
+        // 현재 runtime에서 색상 입력으로 쓰는 baseColor texture이므로 sRGB로 저장한다.
         auto texture = Texture::Create2D(
             textureData.width,
             textureData.height,
@@ -52,7 +45,6 @@ void AssetManager::UploadModel(ModelResource& model)
         textures_.emplace(textureData.uniqueID, texture);
     }
 
-    // CPU Material factor와 Texture ResourceID를 runtime Material로 연결한다.
     for (const MaterialData& materialData : model.materials)
     {
         if (materials_.find(materialData.uniqueID) != materials_.end()) continue;
@@ -64,6 +56,8 @@ void AssetManager::UploadModel(ModelResource& model)
 
         if (materialData.baseColorTexture.IsValid())
         {
+            // 미지정 Material은 PrefabFactory가 기본 Material을 고른다. 지정 참조의 누락은
+            // 손상된 자산 연결이므로 기본 색으로 숨기지 않고 실패시킨다.
             const auto textureIterator = textures_.find(materialData.baseColorTexture);
             if (textureIterator == textures_.end())
                 throw std::runtime_error("Base color texture was not uploaded");
@@ -71,11 +65,9 @@ void AssetManager::UploadModel(ModelResource& model)
             material->SetBaseColorTexture(textureIterator->second);
         }
 
-        // TODO(FUTURE): remaining PBR texture ResourceID들도 여기에서 Material에 연결한다.
         materials_.emplace(materialData.uniqueID, std::move(material));
     }
 
-    // Vertex/Index CPU arrays를 OpenGL VBO/EBO/VAO로 업로드한다.
     for (MeshData& meshData : model.meshes)
     {
         const auto existing = meshes_.find(meshData.uniqueID);
@@ -102,7 +94,7 @@ void AssetManager::UploadModel(ModelResource& model)
             meshData.indices.data(),
             static_cast<std::uint32_t>(meshData.indices.size()));
 
-        // PrefabFactory도 바로 사용할 수 있도록 CPU IR에 weak cache 역할의 shared_ptr를 채운다.
+        // ModelResource도 Mesh를 공유해 PrefabFactory가 Entity로 복사한 뒤에도 자원 수명을 잇는다.
         meshData.gpuMesh = gpuMesh;
         meshes_.emplace(meshData.uniqueID, std::move(gpuMesh));
     }
@@ -129,7 +121,7 @@ std::shared_ptr<Material> AssetManager::GetDefaultMaterial() const
 
 void AssetManager::Clear()
 {
-    // shared_ptr reference count가 0이 되면 각 GPU wrapper의 destructor가 OpenGL resource를 정리한다.
+    // 캐시 소유권만 놓는다. ModelResource/Entity가 참조 중이면 GPU 객체는 그쪽 수명에 남는다.
     meshes_.clear();
     materials_.clear();
     textures_.clear();
