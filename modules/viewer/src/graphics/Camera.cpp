@@ -18,6 +18,7 @@ Camera::Camera(
       m_NearPlane(nearPlane),
       m_FarPlane(farPlane)
 {
+    // 화면 종횡비가 0이면 투영 폭을 계산할 수 없고, 잘라낼 깊이 구간이 아니면 원근 깊이를 정할 수 없다.
     if (aspectRatio <= 0.0F)
         throw std::runtime_error("Camera aspect ratio must be greater than 0");
 
@@ -27,20 +28,15 @@ Camera::Camera(
 
 glm::mat4 Camera::GetViewMatrix() const
 {
-    /*
-        View Matrix는 "카메라를 움직이는 행렬"이라기보다
-        World 전체를 카메라 기준 좌표계로 옮기는 역변환으로 이해하면 쉽다.
-        lookAt(position, target, up)이 camera basis를 만들어 이 변환을 계산한다.
-    */
+    // lookAt이 Target 방향을 -Z, Up에서 계산한 오른쪽을 +X로 삼아 camera pose의 역변환을 만든다.
     return glm::lookAt(m_Position, m_Target, m_Up);
 }
 
 glm::mat4 Camera::GetProjectionMatrix() const
 {
-    /*
-        Perspective projection은 멀리 있는 물체를 작게 보이게 한다.
-        FOV는 degree로 저장하지만 GLM perspective는 radian을 요구하므로 변환한다.
-    */
+
+    // OpenGL 원근 깊이는 비선형이다. near plane을 필요 이상으로 카메라에 붙이면 먼 거리 정밀도가 줄어든다.
+    // FOV는 세로 각도이며 aspect ratio가 가로 각도를 결정한다. GLM은 FOV를 라디안으로 받는다.
     return glm::perspective(
         glm::radians(m_Fov),
         m_AspectRatio,

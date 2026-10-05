@@ -3,39 +3,35 @@
 #include <glm/glm.hpp>
 
 /**
- * @brief View/Projection 계산에 필요한 카메라 pose와 projection 파라미터를 보관한다.
- *
+ * @brief World 공간의 시점과 원근 투영 설정을 보관한다.
  * @details
- * Camera는 입력 장치에 대해 알지 않는다. OrbitCameraController가 mouse 입력을 해석한 뒤
- * position/target을 이 객체에 전달하고, Camera는 그 결과로 View/Projection matrix를 만든다.
- * 이 분리는 "입력 처리"와 "카메라 수학"의 책임을 분리하기 위한 것이다.
- *
- * @todo [FUTURE] Y-up 외 좌표계가 필요해지면 up vector를 생성자/설정값으로 분리한다.
- */
-/*
- * [추가 그래픽스 용어 설명]
- * - Pose: 카메라의 위치와 바라보는 방향을 합친 상태.
- * - View Matrix: World 좌표를 "카메라가 원점에 있다고 가정한 좌표"로 바꾸는 행렬.
- * - Projection Matrix: 3D Camera 좌표를 원근감이 있는 화면 좌표로 투영하는 행렬.
- * - Perspective: 멀수록 작게 보이도록 만드는 원근 투영 방식.
- * - FOV(Field of View): 카메라가 한 화면에 볼 수 있는 시야각. 여기서는 세로 각도 [deg].
- * - Aspect Ratio: 화면 width/height 비율. 단위 없음.
- * - Near/Far Clipping Plane: 이 거리보다 너무 가깝거나 먼 geometry를 그리지 않는 경계.
- * - Y-up: World의 위쪽 방향을 +Y축으로 사용하는 좌표계 규칙.
- *
- * 현재 HCR scene이 meter 기준이므로 position/target/near/far도 같은 scene에서 [m]로 해석한다.
+ * 역할: 입력 처리와 분리된 값 객체. OrbitCameraController가 pose를 바꾸고 Renderer가 행렬을 읽는다.
+ * 좌표: position/target은 World 공간의 점, +Y가 위쪽. m_Position은 카메라의 World 위치(cameraWorld의
+ * 이동 성분)이며 별도의 cameraWorld 행렬을 저장하지 않는다. GLM lookAt이 position과 target에서
+ * view 행렬을 계산하므로 pose 변경은 다음 행렬 조회부터 반영된다.
+ * 흐름: 정점은 shader에서 `u_Projection * u_View * worldPosition` 순서로 변환된다. GLM은 열 벡터를
+ * 오른쪽에서 곱하므로 먼저 World → camera(view), 이어 camera → clip(projection)로 간다.
+ * 단위: World 거리와 clipping plane은 [m], 세로 FOV는 [deg]이며 GLM 호출 직전에 [rad]로 변환한다.
+ * 투영 후 clip 좌표를 w로 나눈 NDC에서 x/y는 [-1, 1], OpenGL 깊이 z도 [-1, 1] 범위에 대응한다.
  */
 class Camera
 {
 public:
+
     /**
-     * @brief Perspective camera를 생성한다.
-     * @param position World 공간 카메라 위치.
-     * @param target 카메라가 바라보는 World 공간 지점.
-     * @param aspectRatio viewport width / height.
-     * @param fov 세로 시야각(degree).
-     * @param nearPlane near clipping plane 거리.
-     * @param farPlane far clipping plane 거리.
+     * @brief 바라볼 방향과 원근 투영 범위를 설정한다.
+     * @param position World 공간 카메라 위치 [m]
+     * @param target World 공간에서 바라볼 점 [m]
+     * @param aspectRatio framebuffer 너비/높이 비율. 0보다 커야 함
+     * @param fov 세로 시야각 [deg]
+     * @param nearPlane 카메라 앞쪽 clipping plane까지 거리 [m]. 0보다 커야 함
+     * @param farPlane 카메라 앞쪽 clipping plane까지 거리 [m]. nearPlane보다 커야 함
+     * @throws std::runtime_error aspectRatio 또는 clipping plane 조건이 잘못된 경우
+     * @details
+     * glm::lookAt은 target - position 방향을 카메라의 전방(-Z)으로 두고 m_Up을 참고해 오른쪽(+X)과
+     * 위쪽(+Y) 축을 정한다. perspective는 세로 FOV와 가로/세로 비율에서 화면 경계를 만들고,
+     * nearPlane~farPlane 밖의 점은 clip 단계에서 화면에 나타나지 않는다. 종횡비와 plane의 대소 조건은
+     * 검사하지만 FOV 범위와 입력의 유한성은 검사하지 않으므로 호출자는 유효한 값을 전달해야 한다.
      */
     Camera(
         const glm::vec3& position,
@@ -45,46 +41,52 @@ public:
         float nearPlane = 0.1F,
         float farPlane = 100.0F);
 
-    /** @brief World 좌표를 Camera 좌표계로 변환하는 View Matrix를 반환한다. */
+    /**
+     * @brief World 점을 카메라 기준 좌표로 옮기는 view 행렬을 반환한다.
+     * @return GLM 열 벡터 기준 World → camera 행렬
+     * @details
+     * 카메라 위치를 원점으로 옮기고 바라보는 방향을 -Z에 맞추는 pose의 역변환이다.
+     * m_Position과 m_Target은 World 공간 점이며, m_Up은 방향을 정하는 World 기준 위쪽 벡터다.
+     */
     glm::mat4 GetViewMatrix() const;
 
-    /** @brief Perspective Projection Matrix를 반환한다. */
+    /**
+     * @brief 카메라 좌표를 원근 clip 좌표로 보내는 투영 행렬을 반환한다.
+     * @return Camera → clip 행렬. perspective 분할 뒤 NDC 깊이는 OpenGL 기준 [-1, 1]
+     * @details
+     * 세로 FOV와 aspect ratio가 화면의 가로·세로 시야를 정하고 near/far plane이 보이는 깊이 구간을
+     * 자른다. 원근 분할로 먼 물체는 작아진다. 깊이는 거리와 선형으로 배분되지 않아 nearPlane을
+     * 지나치게 작게 두면 표현 가능한 깊이 값이 가까운 구간에 집중돼 먼 표면끼리 구분하기 어려워진다.
+     */
     glm::mat4 GetProjectionMatrix() const;
 
-    /** @brief Window resize 후 projection 종횡비를 갱신한다. */
+    /** @brief framebuffer 크기에 맞게 화면 가로/세로 비율을 갱신한다. @param aspectRatio 너비/높이, 0보다 큰 값만 반영 */
     void SetAspectRatio(float aspectRatio);
 
-    /** @brief Camera World position을 변경한다. */
+    /** @brief World 공간 카메라 위치 [m]를 갱신한다. @param position 새 World 위치 */
     void SetPosition(const glm::vec3& position);
 
-    /** @brief Camera가 바라볼 target point를 변경한다. */
+    /** @brief World 공간에서 바라볼 점 [m]을 갱신한다. @param target 새 World 목표점 */
     void SetTarget(const glm::vec3& target);
 
-    /** @brief 현재 World position을 반환한다. */
+    /** @return World 공간 카메라 위치 [m] */
     glm::vec3 GetPosition() const;
 
-    /** @brief 현재 target point를 반환한다. */
+    /** @return World 공간에서 바라보는 목표점 [m] */
     glm::vec3 GetTarget() const;
 
 private:
-    // 카메라가 실제로 놓인 World 위치. 현재 scene에서는 meter 단위.
     glm::vec3 m_Position;
 
-    // 카메라가 바라보는 World 지점. m_Position과 같은 scene 단위.
     glm::vec3 m_Target;
 
-    /// 현재 Viewer 런타임은 Y-up 좌표계를 사용한다.
     glm::vec3 m_Up{0.0F, 1.0F, 0.0F};
 
-    // viewport width / height. 예: 1920/1080 ~= 1.777...
     float m_AspectRatio;
 
-    // 세로 FOV [deg]. Projection 계산 직전에 radian으로 변환한다.
     float m_Fov;
 
-    // 카메라보다 이 거리보다 가까운 geometry는 clipping된다. scene unit, 현재 HCR scene에서는 [m].
     float m_NearPlane;
 
-    // 카메라보다 이 거리보다 먼 geometry는 clipping된다. scene unit, 현재 HCR scene에서는 [m].
     float m_FarPlane;
 };
