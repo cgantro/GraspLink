@@ -192,12 +192,16 @@ if(GRASPLINK_BUILD_GRAPHICS)
 
   add_library(grasplink_simulation STATIC
     modules/simulation/src/SimulationSceneBuilder.cpp
+    modules/simulation/src/robotics/CollisionGeometry.cpp
+    modules/simulation/src/robotics/GripperColliders.cpp
     modules/simulation/src/robotics/RobotPhysicsAdapter.cpp
     modules/simulation/src/systems/PhysicsSystemModule.cpp
     modules/simulation/include/simulation/SimulationSceneBuilder.h
     modules/simulation/include/simulation/components/PhysicsComponents.h
     modules/simulation/include/simulation/components/RobotCollisionProxy.h
     modules/simulation/include/simulation/robotics/RobotPhysicsAdapter.h
+    modules/simulation/include/simulation/robotics/GripperColliders.h
+    modules/simulation/src/robotics/CollisionGeometry.h
     modules/simulation/include/simulation/systems/PhysicsSystemModule.h
   )
 
@@ -317,6 +321,12 @@ if(GRASPLINK_BUILD_GRAPHICS)
     add_executable(grasplink_collision_tests tests/RobotCollisionGeometryTests.cpp)
     target_link_libraries(grasplink_collision_tests PRIVATE grasplink_simulation)
     add_test(NAME RobotCollisionGeometry COMMAND grasplink_collision_tests)
+
+    add_executable(grasplink_gripper_collision_tests tests/GripperCollisionIntegrationTests.cpp)
+    target_link_libraries(grasplink_gripper_collision_tests PRIVATE grasplink_simulation)
+    add_test(NAME GripperCollisionIntegration COMMAND grasplink_gripper_collision_tests)
+    set_tests_properties(GripperCollisionIntegration PROPERTIES
+      WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" TIMEOUT 60)
 
     add_test(NAME ViewerSmoke COMMAND grasplink_simulator --smoke-test)
     add_test(NAME ViewerDemoSmoke COMMAND grasplink_simulator --smoke-test --physics-demo)

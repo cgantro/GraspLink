@@ -244,7 +244,7 @@ struct GuiModule::Impl
         ImGui::Begin("Configured colliders");
         ImGui::Checkbox("Show configured colliders", &visible);
         ImGui::TextUnformatted("ECS approximation; refresh: 100 ms");
-        ImGui::TextUnformatted("X-ray outlines: Robot orange, Dynamic cyan, Floor green");
+        ImGui::TextUnformatted("X-ray: Robot orange, Gripper purple, Dynamic cyan, Floor green");
         ImGui::End();
 
         if (visible)

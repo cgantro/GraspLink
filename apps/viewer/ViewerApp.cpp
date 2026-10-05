@@ -18,6 +18,7 @@
 #include "PhysicsWorld.h"
 #include "gui/GuiModule.h"
 #include "simulation/SimulationSceneBuilder.h"
+#include "simulation/robotics/GripperColliders.h"
 #include "simulation/robotics/RobotPhysicsAdapter.h"
 #include "simulation/systems/PhysicsSystemModule.h"
 
@@ -219,6 +220,13 @@ void ViewerApp::InitPhysics(const Entity& robotRoot, Entity& floorEntity)
     m_RobotPhysicsAdapter = std::make_unique<grasplink::simulation::RobotPhysicsAdapter>(
         *m_SceneManager->GetActiveScene(), robotRoot, grasplink::robotics::models::hanwha::kHcr12a,
         m_RobotModel);
+    // 화면 Mesh는 원본 GLB 형상을 렌더링하지만, Physics에는 정점의 방향별 극점으로 축약한 Convex Hull을 보낸다.
+    // outer knuckle과 finger처럼 한 rigid part에 묶인 메시만 compound로 합쳐 접촉 형상을 만든다.
+    // 각 proxy는 authored Gripper/joint Entity의 자식이다. Fixed Update의 FK가 arm 계층을 갱신한 뒤
+    // World 행렬 계산이 그 자세를 proxy에 전달하므로, collider용 별도 pose adapter나 Gripper controller는 없다.
+    // Physics GUI는 이 설정 shape를 Gripper layer의 보라색 X-ray 선으로 그린다. 이는 실제 렌더 메시나 Jolt hull의 시각화가 아니다.
+    grasplink::simulation::ConfigureTwoF85Colliders(
+        *m_SceneManager->GetActiveScene(), robotRoot, m_RobotModel);
     if (m_Options.physicsDemo)
         viewer_debug::CreatePhysicsBoxes(
             *m_SceneManager->GetActiveScene(), m_RobotShader);
