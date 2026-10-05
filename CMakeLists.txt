@@ -1,4 +1,4 @@
-﻿cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.20)
 
 project(GraspLink VERSION 0.1.0 LANGUAGES C CXX)
 
@@ -24,7 +24,9 @@ include(CTest)
 #
 add_library(grasplink_robotics STATIC
   modules/robotics/src/backends/simulation/SimRobotController.cpp
+  modules/robotics/src/backends/simulation/SimGripperController.cpp
   modules/robotics/src/kinematics/RobotKinematics.cpp
+  modules/robotics/src/kinematics/GripperKinematics.cpp
 )
 
 target_include_directories(grasplink_robotics PUBLIC
@@ -43,9 +45,11 @@ target_sources(grasplink_robotics PUBLIC
   modules/robotics/include/robotics/models/robotiq/TwoF85.h
 
   modules/robotics/include/robotics/backends/simulation/SimRobotController.h
+  modules/robotics/include/robotics/backends/simulation/SimGripperController.h
 
   modules/robotics/include/robotics/runtime/FixedControlLoop.h
   modules/robotics/include/robotics/kinematics/RobotKinematics.h
+  modules/robotics/include/robotics/kinematics/GripperKinematics.h
 )
 
 
@@ -97,6 +101,14 @@ if(BUILD_TESTING)
   add_executable(grasplink_kinematics_tests tests/RobotKinematicsTests.cpp)
   target_link_libraries(grasplink_kinematics_tests PRIVATE grasplink_robotics)
   add_test(NAME RobotKinematics COMMAND grasplink_kinematics_tests)
+
+  add_executable(grasplink_gripper_runtime_tests tests/GripperRuntimeTests.cpp)
+  target_link_libraries(grasplink_gripper_runtime_tests PRIVATE grasplink_robotics)
+  add_test(NAME GripperRuntime COMMAND grasplink_gripper_runtime_tests)
+
+  add_executable(grasplink_gripper_kinematics_tests tests/GripperKinematicsTests.cpp)
+  target_link_libraries(grasplink_gripper_kinematics_tests PRIVATE grasplink_robotics)
+  add_test(NAME GripperKinematics COMMAND grasplink_gripper_kinematics_tests)
 endif()
 
 # ============================================================
@@ -139,6 +151,7 @@ if(GRASPLINK_BUILD_GRAPHICS)
     modules/viewer/src/assets/PrefabFactory.cpp
 
     modules/viewer/src/robotics/RobotTransformAdapter.cpp
+    modules/viewer/src/robotics/GripperTransformAdapter.cpp
   )
 
   set(GRASPLINK_VIEWER_HEADERS
@@ -161,6 +174,7 @@ if(GRASPLINK_BUILD_GRAPHICS)
     modules/viewer/include/assets/PrefabFactory.h
 
     modules/viewer/include/viewer/robotics/RobotTransformAdapter.h
+    modules/viewer/include/viewer/robotics/GripperTransformAdapter.h
   )
 
 
@@ -229,6 +243,7 @@ if(GRASPLINK_BUILD_GRAPHICS)
   )
 
   target_link_libraries(grasplink_gui PUBLIC
+    grasplink_robotics
     grasplink_simulation
     grasplink_imgui_backend
   )
@@ -327,6 +342,12 @@ if(GRASPLINK_BUILD_GRAPHICS)
     target_link_libraries(grasplink_gripper_collision_tests PRIVATE grasplink_simulation)
     add_test(NAME GripperCollisionIntegration COMMAND grasplink_gripper_collision_tests)
     set_tests_properties(GripperCollisionIntegration PROPERTIES
+      WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" TIMEOUT 60)
+
+    add_executable(grasplink_gripper_pose_tests tests/GripperPoseIntegrationTests.cpp)
+    target_link_libraries(grasplink_gripper_pose_tests PRIVATE grasplink_simulation)
+    add_test(NAME GripperPoseIntegration COMMAND grasplink_gripper_pose_tests)
+    set_tests_properties(GripperPoseIntegration PROPERTIES
       WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" TIMEOUT 60)
 
     add_test(NAME ViewerSmoke COMMAND grasplink_simulator --smoke-test)
