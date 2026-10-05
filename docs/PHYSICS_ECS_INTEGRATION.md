@@ -25,6 +25,8 @@ entity.set<RigidBody>(RigidBody{BodyMotionType::Dynamic})
 
 `TransformSystemModule::UpdateWorldTransforms()`가 Entity 계층의 Local/World 행렬을 계산하는 단일 경로다. Physics는 이 결과를 읽어 Jolt에 보낸다. Dynamic Body의 Jolt pose는 Entity 부모의 cached World 행렬 역행렬을 적용해 Local Transform으로 되돌린다.
 
+Entity의 `Rotation, Local`은 단위 `glm::quat`이다. FK quaternion은 정규화해 Kinematic Entity에 직접 저장하며, Dynamic 결과도 Local 행렬에서 분해한 quaternion을 직접 저장한다. Euler 왕복 변환은 없다. `Rotation`과 `ComposeLocalMatrix`는 영 quaternion·NaN 등 비유한 회전을 거부하고 단위 정규화한다. `q`와 `-q`는 같은 자세다. GLB 회전 배열 `[x,y,z,w]`는 로더에서 GLM 생성자 `(w,x,y,z)`로 변환한다. Entity pose와 행렬의 float 정밀도는 유지하며, 제어 관절각은 rad 스칼라로 전달한다.
+
 Physics가 있는 Entity와 모든 조상 Entity는 unit scale이어야 한다. 단, Static Environment collider는 Entity 자신의 시각 scale을 허용한다. Floor Mesh의 authored scale은 Render 표현에만 쓰고, collider 크기와 offset은 meter 단위로 직접 지정한다. Jolt rigid body pose에는 scale이 포함되지 않는다.
 
 4 ms 고정 스텝 흐름은 다음과 같다.

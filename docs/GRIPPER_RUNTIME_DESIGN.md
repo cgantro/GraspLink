@@ -45,6 +45,12 @@ nominal closed 값과 raw 위치의 선형 관계는 자유공간 시뮬레이�
 오른쪽으로 곱한다: `bindRotation * deltaRotation`. 매번 저장된 bind에서 시작해 반복 적용의 누적 오차를 막는다.
 Gripper root와 ToolFrame의 장착 변환도 그대로 둔다. root 기준 pivot을 중첩 관절의 Local 위치로 덮어쓰지 않는다.
 
+bind와 delta를 정규화·결합한 quaternion을 `Entity::SetLocalRotation`으로 직접 저장한다.
+`Rotation, Local`, `NodeData.rotation`, `ComposeLocalMatrix`는 quaternion을 사용하며 Euler 왕복 변환은 없다.
+glTF `[x,y,z,w]`는 로더에서 GLM 생성자 `(w,x,y,z)`로 옮긴다. 영 quaternion·NaN 등 비유한 회전은 거부한다.
+`q`와 `-q`는 같은 회전이므로 비교할 때 부호 차이를 허용한다. 모델 계산은 double, Entity pose와 행렬은 float다.
+master/mimic 관절각은 rad 스칼라를 유지한다. Orbit 카메라의 마우스 입력용 yaw/pitch 각도는 별도 입력 계산이다.
+
 실제 `assets/HCR12A_2F-85.glb`의 Gripper 노드에는 비항등 `matrix`가 있다. TRS 필드가 없다는 이유로
 항등이라고 판단하면 안 된다. Tip 관절은 OuterKnuckle과 Finger 아래 중첩되어 있으며 부모 회전은
 기존 TransformSystem의 계층 전파로 적용한다.
@@ -74,3 +80,13 @@ CPU 회귀는 연결·활성화·raw 범위·속도·dt·목표 교체·정지·
 모델 축·계수·한계와 회전 계산, invalid snapshot의 원자적 거부를 검증한다.
 실제 GLB 통합 회귀는 bind 유지, 좌우 mimic, 중첩 tip World 자세, 반복 적용, 장착부 이동,
 기존 7개 프록시의 수명과 움직임을 확인한다. 일반 Viewer와 물리 데모 숨김 실행도 유지한다.
+
+2026-10-05 검증: 쿼터니언 저장·전달 전환을 포함한 현재 코드로 아래 빌드와 CTest를 통과했다.
+
+| Graphics | Debug | Release |
+|---|---|---|
+| ON | 15/15 | 15/15 |
+| OFF | 5/5 | 5/5 |
+
+`QuaternionTransforms`는 정규화·잘못된 입력 거부·q/-q·90도 부근 자세·계층 전파를 검증한다.
+`GltfLoader`는 TRS와 matrix 양쪽의 quaternion 방향과 Local 행렬 보존을 확인한다.
