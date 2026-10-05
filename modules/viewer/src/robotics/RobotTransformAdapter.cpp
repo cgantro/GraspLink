@@ -58,14 +58,14 @@ RobotTransformAdapter::RobotTransformAdapter(
                 "RobotTransformAdapter: joint not found: " + std::string(jointSpec.name));
         const Entity& joint = found->second;
 
-        // 좌표: 관절 중심을 모델 root 기준으로 복원. Scene 배치용 root 변환은 제외.
+        // 좌표: 관절 중심을 모델 base 기준으로 복원한다. Scene에 배치할 robot root 변환은 bind 비교에서 제외한다.
         glm::mat4 bindInBase = TransformSystemModule::ComposeLocalMatrix(
             joint.GetLocalPosition(), joint.GetLocalRotation(), joint.GetLocalScale());
         Entity parent = joint.GetParent();
         bool followsPreviousJoint = i == 0;
         while (parent && parent != robotRoot)
         {
-            // 제한: 관절은 직전 관절의 자손이어야 함. 사이의 link node는 허용.
+            // 계층: 첫 joint는 root 아래에, 이후 joint는 직전 joint의 자손이어야 하며 중간 link node는 허용한다.
             if (i > 0 && parent == joints_[i - 1].entity)
                 followsPreviousJoint = true;
             bindInBase = TransformSystemModule::ComposeLocalMatrix(
@@ -75,7 +75,7 @@ RobotTransformAdapter::RobotTransformAdapter(
         const glm::vec3 expectedPivot{static_cast<float>(jointSpec.bindPivotMeters.x),
             static_cast<float>(jointSpec.bindPivotMeters.y), static_cast<float>(jointSpec.bindPivotMeters.z)};
         const glm::mat4 expectedBind = glm::translate(glm::mat4{1.0F}, expectedPivot);
-        // root를 제외한 bind matrix가 base-frame pivot과 identity orientation/scale에 맞는지 확인한다.
+        // GLB bind는 지정 pivot의 translation과 항등 orientation/scale이어야 FK의 보존된 위치와 일치한다.
         bool matchesBind = parent == robotRoot && followsPreviousJoint;
         for (int column = 0; column < 4; ++column)
             matchesBind = matchesBind && glm::all(glm::lessThanEqual(
@@ -106,7 +106,8 @@ void RobotTransformAdapter::Apply(const ::grasplink::robotics::kinematics::Robot
     {
         // 반영: Local 회전만 바꿔 GLB 계층에 저장된 초기 관절 위치를 유지.
         const auto& pose = state.jointLocalRotations[i];
-        // 정밀도: 90도 부근 Euler 변환까지 double을 유지해 float 반올림 오차를 줄임.
+        // 순서/정밀도: 모델 quaternion [w,x,y,z]를 GLM 생성자 순서에 맞춰 읽고,
+        // Euler 변환이 끝날 때까지 double을 유지해 90도 부근의 float 반올림 오차를 줄인다.
         const glm::dquat rotation{pose.w, pose.x, pose.y, pose.z};
         auto& binding = joints_[i];
         if (!binding.entity)

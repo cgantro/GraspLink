@@ -121,12 +121,12 @@ const RobotKinematicState& RobotKinematics::Update(const RobotState& state)
         if (!std::isfinite(angle))
             throw std::invalid_argument("RobotKinematics: non-finite joint angle");
 
-        // 계산: base 기준 관절 중심의 차이를 부모의 누적 회전으로 이동.
+        // 계산: 연속한 base-frame bind pivot 차이를 부모 누적 회전으로 옮겨 현재 관절 중심을 구한다.
         const Vec3 bindOffset = i == 0
             ? joint.bindPivotMeters
             : Subtract(joint.bindPivotMeters, previousBindPivot);
         const Vec3 jointPosition = Add(parentPosition, Rotate(parentRotation, bindOffset));
-        // 좌표: 각 회전축은 초기 관절의 Local 기준.
+        // 회전: axis-angle은 관절 Local 회전이며 parent * local로 누적한다. Local 점에는 관절 회전 후 부모 회전이 적용된다.
         const QuaternionWxyz localRotation = AxisRotation(joint.axis, angle);
         const QuaternionWxyz worldRotation = Multiply(parentRotation, localRotation);
 
@@ -140,7 +140,7 @@ const RobotKinematicState& RobotKinematics::Update(const RobotState& state)
     state_.toolFrameValid = specification_.hasToolFrame;
     if (state_.toolFrameValid)
     {
-        // ToolFrame offset은 마지막 joint 기준이다. Controller tcpPose feedback은 바꾸지 않는다.
+        // ToolFrame의 고정 강체 변환을 마지막 joint에 합성한다. Controller tcpPose feedback과 독립된 예측값이다.
         const auto& tool = specification_.toolFrameInLastJoint;
         state_.toolFrameInBaseFrame = {
             Add(parentPosition, Rotate(parentRotation, tool.positionMeters)),
