@@ -7,29 +7,30 @@
 namespace grasplink::robotics::models::robotiq
 {
 
-/*
- * [추가 용어 설명]
- * - Knuckle: 손가락 링크가 연결되는 마디/힌지 부분.
- * - Fingertip joint: 손가락 끝쪽 링크가 회전하는 관절.
- * - Master angle q: 여러 linkage joint를 계산할 때 기준으로 삼는 대표 관절각.
- * - Mimic linkage: 각 관절을 따로 명령하지 않고 master q를 +1/-1 같은 계수로 따라 움직이게 하는 관계.
- * - Under-actuated: 관절 수보다 구동기 수가 적어서 물체 접촉 후 일부 관절이 수동적으로 적응하는 구조.
- * - Free-space: 물체 접촉 없이 공중에서 여닫는 상태. 아래 고정 mimic 관계는 이 상태를 기준으로 한다.
+/**
+ * @brief 공개 2F-85 kinematic reference의 자유공간 nominal closed master angle [rad].
+ * @details linkage 기준 master 관절각이며 Robotiq 장치의 내부 motor shaft 각도가 아니다. 물체 접촉 뒤 손가락의 under-actuated 적응을 기술하지 않는다.
  */
-
-// Free-space에서 nominal fully-closed 자세를 표현하는 master linkage 각도 [rad].
-// 0.7929 rad ~= 45.43 deg. 실제 내부 motor shaft angle이 아니다.
 inline constexpr double kTwoF85NominalClosedMasterRadians = 0.7929;
 
-// 현재 controller-ready GLB에서 모든 moving gripper joint가 사용하는 local 회전축.
-// {0,0,-1}은 각 Joint 자신의 local -Z축을 중심으로 회전한다는 뜻이다.
+/**
+ * @brief 현재 controller-ready GLB에서 사용되는 asset-derived joint-local 회전축.
+ * @details 단위 방향값이며 Joint Node의 local frame 기준이다. 다른 모델 asset의 축으로 일반화하지 않는다.
+ */
 inline constexpr Axis3 kTwoF85JointAxis{0.0, 0.0, -1.0};
 
-// 현재 GLB의 Gripper-local 좌표계에서 linkage hinge들이 놓인 공통 Z 위치 [m].
-// 약 0.09343 m = 93.43 mm이며 제조사 모터 사양이 아니라 현재 asset에 맞춘 좌표값이다.
+/**
+ * @brief 아래 pivot들과 함께 쓰는 현재 GLB의 asset-derived joint plane Z [m].
+ * @details 좌표는 GLB의 Gripper specification root 기준이며 아래 joint node 자체의 local 원점은 아니다.
+ * 현재 Gripper root에는 비항등 bind transform이 있고, 중첩된 joint node들의 bind 위치도 이 root 기준값과 다를 수 있다.
+ * 따라서 이 상수는 현재 GLB에만 적용되며 다른 GLB에 그대로 사용할 수 없다.
+ */
 inline constexpr double kTwoF85JointPlaneZ = 0.0934257339;
 
-// 각 값은 Gripper root 기준 [x,y,z] 회전 중심 [m].
+/**
+ * @brief 현재 GLB의 Gripper specification root 기준 회전 중심 [m].
+ * @details pivot은 asset-derived 참조값이다. GLB root의 비항등 bind transform 때문에 실제 node별 nested bind translation과 같다고 볼 수 없다.
+ */
 inline constexpr Vec3 kTwoF85LeftOuterPivot {-0.03060114, 0.05490452, kTwoF85JointPlaneZ};
 inline constexpr Vec3 kTwoF85RightOuterPivot{+0.03060114, 0.05490452, kTwoF85JointPlaneZ};
 inline constexpr Vec3 kTwoF85LeftInnerPivot {-0.01270000, 0.06142000, kTwoF85JointPlaneZ};
@@ -38,45 +39,39 @@ inline constexpr Vec3 kTwoF85LeftTipPivot   {-0.06775864, 0.09832620, kTwoF85Joi
 inline constexpr Vec3 kTwoF85RightTipPivot  {+0.06775864, 0.09832620, kTwoF85JointPlaneZ};
 
 /**
- * @brief 2F-85 free-space mimic linkage.
- * @note 접촉 이후 under-actuated 적응 동작은 Physics 계층의 책임이다.
- */
-/*
- * [추가 값 해설]
- * 각 항목 순서:
- * {name, pivot[m], localAxis, masterMultiplier, minAngle[rad], maxAngle[rad], actuatorMaster}
- *
- * master q가 0.4 rad라면:
- * - multiplier +1.0 -> +0.4 rad
- * - multiplier -1.0 -> -0.4 rad
- *
- * 좌/우가 거울 구조이기 때문에 일부 Joint는 부호가 반대다.
- * 이 배열에 Joint가 6개 있다고 해서 모터가 6개라는 뜻은 아니다.
- * 하나의 대표 actuator/master 움직임을 여러 링크가 기구학적으로 따라가는 관계를 표현한다.
+ * @brief 자유공간에서 master angle로 계산하는 여섯 linkage 관절의 고정 mimic 관계.
+ * @details
+ * pivot은 현재 GLB의 Gripper specification root 기준 [m], axis는 각 Joint Node의 local 방향이다.
+ * 이 관계는 열린 공간에서 기구학을 구동하기 위한 참조다. 물체 접촉 뒤 under-actuated 적응과 접촉력 계산은 이 배열의 책임이 아니다.
+ * 각 원소: 이름, root 기준 pivot [m], local axis, master 계수, 허용각 [rad], 기준 관절 여부.
  */
 inline constexpr std::array<GripperJointSpecification, 6> kTwoF85Joints{{
-    // Left outer knuckle: master q와 같은 방향. 0~0.8 rad. 자유공간 master 기준 관절.
+    // Left outer knuckle: 기준 관절, master와 같은 방향.
     {"LeftOuterKnuckleJoint",  kTwoF85LeftOuterPivot,  kTwoF85JointAxis, +1.0,  0.0,  0.8, true},
 
-    // Right outer knuckle: 좌우 대칭 때문에 master q와 반대 방향. -0.8~0 rad.
+    // Right outer knuckle: 좌우 대칭으로 master와 반대 방향.
     {"RightOuterKnuckleJoint", kTwoF85RightOuterPivot, kTwoF85JointAxis, -1.0, -0.8,  0.0, false},
 
-    // Left inner knuckle: master q와 같은 방향으로 연동.
+    // Left inner knuckle: master와 같은 방향.
     {"LeftInnerKnuckleJoint",  kTwoF85LeftInnerPivot,  kTwoF85JointAxis, +1.0,  0.0,  0.8, false},
 
-    // Right inner knuckle: master q와 반대 방향으로 연동.
+    // Right inner knuckle: master와 반대 방향.
     {"RightInnerKnuckleJoint", kTwoF85RightInnerPivot, kTwoF85JointAxis, -1.0, -0.8,  0.0, false},
 
-    // Left fingertip linkage: outer knuckle과 반대 부호로 회전해 손가락 링크 자세를 맞춘다.
+    // Left fingertip: outer knuckle과 반대 방향.
     {"LeftFingerTipJoint",     kTwoF85LeftTipPivot,    kTwoF85JointAxis, -1.0, -0.8,  0.0, false},
 
-    // Right fingertip linkage: 오른쪽 outer와 반대 부호(+q)로 회전한다.
+    // Right fingertip: outer knuckle과 반대 방향.
     {"RightFingerTipJoint",    kTwoF85RightTipPivot,   kTwoF85JointAxis, +1.0,  0.0,  0.8, false},
 }};
 
-// 2F-85 모델 전체 규격을 하나로 묶는다.
-// 뒤의 0,255 쌍은 순서대로 position, speed, force raw request의 최소/최대 범위다.
-// position 0=open, 255=closed이며, 이 값 자체가 opening width[mm] 또는 joint angle[rad]은 아니다.
+/**
+ * @brief Robotiq 2F-85 식별자, 장치 request 범위와 자유공간 linkage 상수를 묶는다.
+ * @details
+ * rPR 0..255는 제조사 프로토콜 값이며 0은 open, 255는 closed 요청이다. 값 자체는 [m]이나 [rad]가 아니다.
+ * rSP와 rFR도 장치 프로토콜 범위이며 실제 [mm/s], [N]를 뜻하지 않는다. 이 specification은 장치 register 변환이나
+ * 접촉 후 grasp 적응을 수행하지 않는다.
+ */
 inline constexpr GripperSpecification kTwoF85{
     "Robotiq",
     "2F-85",

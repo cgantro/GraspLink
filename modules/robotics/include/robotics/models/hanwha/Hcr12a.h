@@ -7,11 +7,15 @@
 namespace grasplink::robotics::models::hanwha
 {
 
-// HCR-12A runtime 상수.
-// Pivot: STEP 체결 형상에서 구한 CAD 값, robot-base bind pose [m] (CAD mm / 1000).
-// Axis: controller-ready GLB의 Joint-local 단위축. Bind rotation이 identity라 CAD 방향과 일치한다.
-// Limit·속도: HCR-A (2G) 제조사 값, deg와 deg/s를 각각 rad와 rad/s로 변환.
-// 각 항목: {이름, pivot[m], local axis, 최소각[rad], 최대각[rad], 최대속도[rad/s]}.
+/**
+ * @brief Hanwha HCR-12A의 FK 및 제어 제한 참조 상수.
+ * @details
+ * 출처: 관절 pivot은 STEP 체결 형상에서 읽은 CAD 값(mm)을 1000으로 나눈 robot-base bind pose [m];
+ * 축은 controller-ready GLB의 Joint-local 단위축이며 이 GLB에서 moving node의 bind rotation은 identity다.
+ * 위치 제한과 최대 속도는 Hanwha HCR-A (2G) 제조사 값을 각각 deg→rad, deg/s→rad/s로 바꿨다.
+ * 이는 FK와 command 제한의 모델 참조값이며, 모든 HCR 제품 변형에 공통인 값이라고 가정하지 않는다.
+ * 각 원소: 이름, base bind pivot [m], local axis, 최소·최대각 [rad], 최대 각속도 [rad/s].
+ */
 inline constexpr std::array<JointSpecification, 6> kHcr12aJoints{{
     // J1: base yaw.
     {"J1", { 0.0000, 0.1985, 0.00000}, {0.0, 1.0, 0.0}, -3.141593,  3.141593, 2.268928},
@@ -41,10 +45,18 @@ inline const std::array<LinkSpecification, 6> kHcr12aLinks{{
     {"Link6", 5},
 }};
 
-// Bind pose에서 측정한 ToolFrame의 robot-base 위치 [m]. FK 검증 기준점.
+/**
+ * @brief 이 controller-ready GLB의 bind pose에서 측정한 ToolFrame robot-base 위치 [m].
+ * @details 모델 원점 기준 FK 참조점이다. Scene에 배치된 로봇 root의 world 변환은 포함하지 않는다.
+ */
 inline constexpr Vec3 kHcr12aToolFrameBindWorldMeters{0.0, 1.0150, 0.9145};
 
-// ToolFrame 변환은 J6에서 고정이며, 장착 공구 TCP는 포함하지 않는다.
+/**
+ * @brief HCR-12A 모델 식별자, 관절 순서, Link 대응과 ToolFrame 변환.
+ * @details
+ * ToolFrame은 J6에서 고정된 frame이며 공구 장착면의 참조다. 말단에 장착하는 공구의 TCP pose는 여기에 포함되지 않는다.
+ * 내부 배열은 정적 상수 배열을 가리키므로 RobotSpecification view가 사용되는 동안 유효하다.
+ */
 inline const RobotSpecification kHcr12a{
     "Hanwha Robotics",
     "HCR-12A",
