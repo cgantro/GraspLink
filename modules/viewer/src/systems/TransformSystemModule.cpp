@@ -23,20 +23,20 @@ glm::mat4 UpdateEntityWorldTransform(flecs::entity entity, WorldTransformCache& 
 
     const bool hasTransform = entity.has<Position, Local>() &&
         entity.has<Rotation, Local>() && entity.has<Scale, Local>();
-    // 완전한 Local TRS가 없는 부모는 항등 Local로 조상 변환을 전달한다. 일부 TRS만 있어도 같은 처리다.
+    // 완전한 TRS가 없으면 해당 노드의 Local 기여는 항등 행렬이다. 부분 TRS도 골라 쓰지 않는다.
     const glm::mat4 local = hasTransform ? TransformSystemModule::ComposeLocalMatrix(
         entity.get<Position, Local>(), entity.get<Rotation, Local>(), entity.get<Scale, Local>())
         : glm::mat4(1.0F);
     if (hasTransform)
         entity.set<TransformMatrix, Local>(TransformMatrix{local});
 
-    // 배열/생성 순서와 무관하게 부모부터 계산해 자식의 Local 좌표를 Scene 기준으로 옮긴다.
+    // GLM 열 벡터에서 부모 World를 왼쪽에 곱해 자식 Local 점을 Scene 좌표로 보낸다.
     const flecs::entity parent = entity.parent();
     const glm::mat4 parentWorld = parent.id() != 0 && parent.is_alive() && parent != entity
         ? UpdateEntityWorldTransform(parent, cache)
         : glm::mat4(1.0F);
     const glm::mat4 world = parentWorld * local;
-    // grouping node에도 파생 World 행렬을 저장한다. 물리가 자식의 World pose를 Local로 되돌릴 때 필요하다.
+    // TRS 없는 grouping 부모도 누적 World를 보관해야 물리가 자식 pose를 부모 Local로 되돌릴 수 있다.
     entity.set<TransformMatrix, World>(TransformMatrix{world});
     cache.emplace(id, world);
     return world;
@@ -48,6 +48,7 @@ glm::mat4 TransformSystemModule::ComposeLocalMatrix(
     const glm::vec3& rotationRadians,
     const glm::vec3& scale)
 {
+    // 열 벡터에 Scale → 회전 → 위치를 적용한다. GLM은 입력 Euler [rad]를 quaternion으로 해석한다.
     return glm::translate(glm::mat4(1.0F), position) *
         glm::mat4_cast(glm::quat(rotationRadians)) *
         glm::scale(glm::mat4(1.0F), scale);
@@ -60,7 +61,8 @@ TransformSystemModule::TransformSystemModule(flecs::world& world)
 
 void TransformSystemModule::UpdateWorldTransforms(flecs::world& world)
 {
-    // 먼저 handle을 모은 뒤 갱신한다. grouping 부모에 Component를 추가하며 query 순회 구조가 바뀔 수 있다.
+    // 시작 대상은 완전한 TRS와 두 행렬 pair를 가진 Entity다. 부모로만 방문한 grouping node는 여기서 제외된다.
+    // 먼저 handle을 모은 뒤 갱신한다. 재귀 중 grouping 부모에 World 행렬을 추가하면 query 구성이 바뀔 수 있다.
     std::vector<flecs::entity> transformedEntities;
     world.each([&](flecs::entity entity)
     {
@@ -74,7 +76,7 @@ void TransformSystemModule::UpdateWorldTransforms(flecs::world& world)
 
     WorldTransformCache cache;
     cache.reserve(transformedEntities.size());
-    // 한 번의 갱신 안에서만 공유 부모를 재사용한다. 다음 호출은 변경된 Local TRS를 다시 읽는다.
+    // 이 호출 안에서 공유 부모를 한 번만 계산한다. 다음 fixed step/render 전 호출은 Local 변경을 다시 읽는다.
     for (flecs::entity entity : transformedEntities)
         UpdateEntityWorldTransform(entity, cache);
 }
