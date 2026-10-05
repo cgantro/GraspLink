@@ -36,6 +36,9 @@ class GripperTransformAdapter;
 namespace grasplink::gui
 {
 class GuiModule;
+class GripperPanel;
+class PhysicsDebugPanel;
+class ColliderOverlay;
 }
 
 namespace grasplink::simulation
@@ -148,6 +151,9 @@ private:
     // Flecs 물리 설정과 Jolt 연결·고정 Step 실행
     std::unique_ptr<grasplink::simulation::PhysicsSystemModule> m_PhysicsSystemModule;
 
-    // GUI lifecycle과 디버그 panel
+    // ImGui 수명과 독립 UI/Overlay를 앱에서 명시적으로 조립한다.
     std::unique_ptr<grasplink::gui::GuiModule> m_GuiModule;
+    std::unique_ptr<grasplink::gui::GripperPanel> m_GripperPanel;
+    std::unique_ptr<grasplink::gui::PhysicsDebugPanel> m_PhysicsDebugPanel;
+    std::unique_ptr<grasplink::gui::ColliderOverlay> m_ColliderOverlay;
 };

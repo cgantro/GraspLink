@@ -236,6 +236,12 @@ if(GRASPLINK_BUILD_GRAPHICS)
   add_library(grasplink_gui STATIC
     modules/gui/src/GuiModule.cpp
     modules/gui/include/gui/GuiModule.h
+    modules/gui/src/panels/GripperPanel.cpp
+    modules/gui/include/gui/panels/GripperPanel.h
+    modules/gui/src/panels/PhysicsDebugPanel.cpp
+    modules/gui/include/gui/panels/PhysicsDebugPanel.h
+    modules/gui/src/overlays/ColliderOverlay.cpp
+    modules/gui/include/gui/overlays/ColliderOverlay.h
   )
 
   target_include_directories(grasplink_gui PUBLIC
@@ -314,6 +320,9 @@ if(GRASPLINK_BUILD_GRAPHICS)
   )
 
   if(BUILD_TESTING)
+    add_executable(grasplink_gui_composition_tests tests/GuiCompositionTests.cpp)
+    target_link_libraries(grasplink_gui_composition_tests PRIVATE grasplink_gui)
+    add_test(NAME GuiComposition COMMAND grasplink_gui_composition_tests)
     add_executable(grasplink_quaternion_transform_tests tests/QuaternionTransformTests.cpp)
     target_link_libraries(grasplink_quaternion_transform_tests PRIVATE grasplink_viewer)
     add_test(NAME QuaternionTransforms COMMAND grasplink_quaternion_transform_tests)

@@ -1,44 +1,47 @@
 #pragma once
 
-#include <flecs.h>
-
 #include <memory>
 
-class Camera;
 class Window;
-namespace grasplink::robotics { class IGripperController; }
 
 namespace grasplink::gui
 {
 
 /**
- * @brief Collider 설정을 시각화하고 Gripper 조작·상태와 ImGui 입력을 제공한다.
- * @details
- * flecs::world, Window, Camera는 ViewerApp에서 빌린 참조이며 이 모듈이 소유하지 않는다. 따라서 query와
- * ImGui/OpenGL backend를 정리할 때 세 객체가 살아 있어야 한다. 선은 ECS Colliders 설정을 투영한 근사
- * 표시다. Jolt Body/Shape를 조회하지 않으며 실제 충돌 형상과 다를 수 있다.
+ * @brief ImGui context와 GLFW/OpenGL backend의 수명 및 프레임을 관리한다.
+ * @details Window와 OpenGL context는 ViewerApp 소유다. 이 모듈이 backend를 정리할 때까지
+ * Window가 살아 있어야 한다. 패널·화면 선의 구성은 호출자에게 맡기며, BeginFrame과 EndFrame
+ * 사이에 그린 ImGui 내용을 EndFrame에서 현재 OpenGL framebuffer로 출력한다.
  */
 class GuiModule
 {
 public:
-    GuiModule(flecs::world& world, Window& window, Camera& camera);
+    /** @brief 살아 있는 Window의 입력과 OpenGL context에 ImGui backend를 연결한다. */
+    explicit GuiModule(Window& window);
+
+    /** @brief OpenGL/GLFW backend를 먼저 정리한 뒤 ImGui context를 해제한다. */
     ~GuiModule();
 
     GuiModule(const GuiModule&) = delete;
     GuiModule& operator=(const GuiModule&) = delete;
 
     /**
-     * @brief ImGui 패널과 설정 Collider 선을 현재 프레임에 그린다.
-     * @details Collider 선과 투영 결과는 약 100 ms 간격으로 다시 계산해 캐시한다. Screen 좌표 캐시이므로
-     * 그 사이 Camera가 움직여도 다음 갱신 전까지 선이 이전 위치에 남을 수 있고, 깊이 검사 없이 전경에 그린다.
-     * 선택적 Gripper 패널은 전달된 Controller에만 명령을 요청하고 상태를 표시한다. 포인터는 이 호출 동안만 빌리며 저장하지 않는다.
-     * 인자를 생략하면 기존 Collider 패널만 그린다.
-     * @param gripper 이번 프레임에 사용할 선택적 Gripper Controller. nullptr이면 Gripper 패널을 표시하지 않는다.
+     * @brief backend 입력을 갱신하고 ImGui 프레임을 시작한다.
+     * @details 호출 뒤 패널과 화면 선을 구성한다. 각 프레임은 EndFrame으로 끝내야 한다.
      */
-    void Draw(::grasplink::robotics::IGripperController* gripper = nullptr);
+    void BeginFrame();
 
-    /** @brief ImGui가 마우스를 잡고 있어 Camera 입력을 막아야 하는지 알려준다. */
+    /**
+     * @brief 현재 ImGui 프레임을 끝내고 OpenGL draw 명령을 실행한다.
+     * @details BeginFrame 뒤에 호출하며, 화면 교환은 Window의 소유자가 수행한다.
+     */
+    void EndFrame();
+
+    /** @brief ImGui가 마우스를 잡고 있어 Scene 입력을 막아야 하는지 알려준다. */
     bool WantsMouse() const;
+
+    /** @brief ImGui가 키보드를 잡고 있어 Scene 입력을 막아야 하는지 알려준다. */
+    bool WantsKeyboard() const;
 
 private:
     struct Impl;

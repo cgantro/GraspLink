@@ -17,6 +17,9 @@
 
 #include "PhysicsWorld.h"
 #include "gui/GuiModule.h"
+#include "gui/panels/GripperPanel.h"
+#include "gui/panels/PhysicsDebugPanel.h"
+#include "gui/overlays/ColliderOverlay.h"
 #include "simulation/SimulationSceneBuilder.h"
 #include "simulation/robotics/GripperColliders.h"
 #include "simulation/robotics/RobotPhysicsAdapter.h"
@@ -130,8 +133,10 @@ bool ViewerApp::InitViewer()
 
     const float aspectRatio = static_cast<float>(kWindowWidth) / static_cast<float>(kWindowHeight);
     m_Camera = std::make_unique<Camera>(kCameraPosition, kCameraTarget, aspectRatio);
-    m_GuiModule = std::make_unique<grasplink::gui::GuiModule>(
-        m_World, *m_Window, *m_Camera);
+    m_GuiModule = std::make_unique<grasplink::gui::GuiModule>(*m_Window);
+    m_GripperPanel = std::make_unique<grasplink::gui::GripperPanel>();
+    m_PhysicsDebugPanel = std::make_unique<grasplink::gui::PhysicsDebugPanel>();
+    m_ColliderOverlay = std::make_unique<grasplink::gui::ColliderOverlay>(m_World);
 
     m_CameraController = std::make_unique<OrbitCameraController>(*m_Camera, *m_Window);
 
@@ -345,7 +350,11 @@ void ViewerApp::MainLoop()
         m_SceneManager->OnUpdate(renderDeltaSeconds);
         TransformSystemModule::UpdateWorldTransforms(m_World);
         m_World.progress(renderDeltaSeconds);
-        m_GuiModule->Draw(m_GripperController.get());
+        m_GuiModule->BeginFrame();
+        m_GripperPanel->Draw(*m_GripperController);
+        m_PhysicsDebugPanel->Draw();
+        m_ColliderOverlay->Draw(*m_Camera, m_PhysicsDebugPanel->IsColliderVisible());
+        m_GuiModule->EndFrame();
 
         m_Renderer->EndFrame();
         m_Window->SwapBuffers();
@@ -357,6 +366,10 @@ void ViewerApp::MainLoop()
 
 void ViewerApp::Shutdown()
 {
+    // ECS query를 World보다 먼저 해제한다. 패널의 입력 상태는 Controller 수명을 연장하지 않는다.
+    m_ColliderOverlay.reset();
+    m_PhysicsDebugPanel.reset();
+    m_GripperPanel.reset();
     // Entity handle을 빌리는 Adapter를 Scene보다 먼저 정리한다. 그렇지 않으면 소멸 과정에서 stale handle이 된다.
     m_RobotTransformAdapter.reset();
     m_GripperTransformAdapter.reset();
