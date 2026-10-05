@@ -11,7 +11,8 @@ std::vector<glm::vec3> BuildConvexSupportPoints(const std::vector<glm::vec3>& ve
     std::vector<glm::vec3> result;
     if (vertices.size() < 4) return result;
 
-    // GLB 메시의 조밀한 정점을 구면 방향별 극점으로 줄여 Jolt hull 입력으로 사용
+    // 구면의 162개 방향과 6개 축 방향에서 가장 먼 정점을 골라 Jolt Convex Hull 입력을 제한한다.
+    // 이 근사는 오목한 메시 내부를 보존하지 않고 바깥 점을 잇는 볼록 외피로 채울 수 있다.
     constexpr int DirectionCount = 162;
     constexpr float GoldenAngle = 2.39996323F;
     auto addExtreme = [&](const glm::vec3& direction)
@@ -45,7 +46,7 @@ std::vector<glm::vec3> BuildConvexSupportPoints(const std::vector<glm::vec3>& ve
 
 bool HasHullVolume(const std::vector<glm::vec3>& points, float coordinateScaleMeters)
 {
-    // 점·선·평면은 입체 hull이 될 수 없으므로 Jolt에 보내지 않는다.
+    // 점 4개 미만은 부피가 불가능하다. 이후에는 정규화 좌표에서 한 평면에 놓이는지도 검사한다.
     if (points.size() < 4) return false;
     glm::vec3 minimum = points.front();
     glm::vec3 maximum = points.front();
@@ -54,6 +55,7 @@ bool HasHullVolume(const std::vector<glm::vec3>& points, float coordinateScaleMe
         minimum = glm::min(minimum, point);
         maximum = glm::max(maximum, point);
     }
+    // 0은 부품 크기별 기준, 양수는 고정 meter 기준이다. Arm의 1.0과 Gripper의 기본값은 허용 오차가 다르다.
     const float extent = coordinateScaleMeters > 0.0F ? coordinateScaleMeters : glm::length(maximum - minimum);
     if (!std::isfinite(extent) || extent <= 0.0F) return false;
     std::vector<glm::vec3> normalized;

@@ -32,7 +32,7 @@ glm::mat4 NodeLocalTransform(const NodeData& node)
 
 std::vector<glm::mat4> BuildNodeWorldTransforms(const ModelResource& model)
 {
-    // GLB 모델 내부의 누적 변환. Scene World 변환은 robotRoot에서 나중에 적용한다.
+    // GLB 내부 node 변환만 누적한다. Scene 배치 변환은 runtime에서 robotRoot가 전달한다.
     std::vector<glm::mat4> transforms(model.nodes.size(), glm::mat4(1.0F));
     std::vector<bool> ready(model.nodes.size(), false);
     std::vector<bool> visiting(model.nodes.size(), false);
@@ -83,7 +83,7 @@ struct PositionKeyHash
 
 PositionKey MakePositionKey(const glm::vec3& position)
 {
-    // 약 0.01 mm 단위로 같은 위치를 묶어 Mesh의 중복 정점도 연결한다.
+    // 정점 위치를 약 0.01 mm 격자로 양자화해 index가 달라도 같은 seam 위치를 찾는다.
     constexpr double Precision = 100000.0;
     return {
         static_cast<std::int64_t>(std::llround(position.x * Precision)),
@@ -146,7 +146,7 @@ std::vector<grasplink::physics::CollisionShapeDescription> BuildLinkShapes(
 
     const std::size_t jointIndex = static_cast<std::size_t>(jointIterator - model.nodes.begin());
     const std::size_t linkIndex = static_cast<std::size_t>(linkIterator - model.nodes.begin());
-    // Collider 정점은 이 link를 움직이는 관절 원점 기준으로 저장한다.
+    // 형상 좌표를 이 link의 구동 joint 원점으로 바꾼다. 런타임 FK pose는 별도 proxy에 적용한다.
     const glm::mat4 jointInverse = glm::inverse(nodeTransforms[jointIndex]);
 
     for (std::size_t nodeIndex = 0; nodeIndex < model.nodes.size(); ++nodeIndex)
@@ -196,7 +196,7 @@ std::vector<grasplink::physics::CollisionShapeDescription> BuildLinkShapes(
                 if (!inserted) Join(parents, vertexIndex, iterator->second);
             }
 
-            // 겹친 정점과 삼각형 연결로 부품을 나눠 떨어진 부품 사이를 hull로 잇지 않는다.
+            // 동일 위치의 seam 정점과 삼각형의 index 연결을 합쳐 component를 만들고 분리 부품을 구분한다.
             for (std::size_t index = subMesh.indexStart; index + 2 < end; index += 3)
             {
                 Join(parents, mesh.indices[index], mesh.indices[index + 1]);
@@ -212,7 +212,7 @@ std::vector<grasplink::physics::CollisionShapeDescription> BuildLinkShapes(
 
             std::unordered_map<std::size_t,
                 std::unordered_map<PositionKey, std::vector<glm::vec3>, PositionKeyHash>> collisionCells;
-            // 삼각형 중심을 16 cm 셀로 묶는다. 삼각형을 자르지는 않으며 셀별 hull로 근사한다.
+            // component 안에서 삼각형 중심이 속한 16 cm 셀로 묶는다. 삼각형 면을 셀 경계에서 자르지는 않는다.
             for (std::size_t index = subMesh.indexStart; index + 2 < end; index += 3)
             {
                 const std::uint32_t first = mesh.indices[index];
@@ -227,7 +227,7 @@ std::vector<grasplink::physics::CollisionShapeDescription> BuildLinkShapes(
 
             for (const auto& [component, cells] : collisionCells)
             {
-                // 작은 장식 부품(<4 cm)과 셀(<1 cm)은 제외한다. 시각 Mesh와 충돌 형상은 다를 수 있다.
+                // component 최대 폭 4 cm 미만과 셀 최대 폭 1 cm 미만은 제외한다. Mesh와 충돌 외피는 다를 수 있다.
                 if (!HasExtent(components[component], 0.04F)) continue;
                 for (const auto& [cell, vertices] : cells)
                 {
@@ -245,7 +245,7 @@ std::vector<grasplink::physics::CollisionShapeDescription> BuildLinkShapes(
                     Shape shape;
                     shape.type = grasplink::physics::CollisionShapeType::ConvexHull;
                     shape.pointsMeters = detail::BuildConvexSupportPoints(uniqueVertices);
-                    // 극점을 추린 뒤에도 두께가 남은 셀만 충돌 형상에 넣는다.
+                    // 방향별 극점을 모은 근사 hull이 1 m 기준 부피 검사를 통과한 셀만 보존한다.
                     if (detail::HasHullVolume(shape.pointsMeters, 1.0F)) shapes.push_back(std::move(shape));
                 }
             }
@@ -290,7 +290,7 @@ RobotPhysicsAdapter::RobotPhysicsAdapter(
         if (shapes.empty()) throw std::invalid_argument("RobotPhysicsAdapter: link has no GLB collision geometry");
 
         Entity entity = scene.CreateEntity(std::string(link.name) + "_CollisionProxy");
-        // robotRoot를 부모로 두어 Base 기준 FK 자세가 Scene 배치와 함께 움직이게 한다.
+        // FK pose는 robot base 기준 Local 값이며 부모인 robotRoot가 Scene 배치를 더한다.
         entity.SetParent(robotRoot);
         entity.Add<RobotCollisionProxy>()
             .set<RigidBody>(RigidBody{
@@ -315,7 +315,7 @@ void RobotPhysicsAdapter::Apply(
             static_cast<float>(pose.positionMeters.x),
             static_cast<float>(pose.positionMeters.y),
             static_cast<float>(pose.positionMeters.z)});
-        // FK의 double 정밀도로 Euler를 구한 뒤 저장한다. 먼저 float로 줄이면 90°에서 오차가 커진다.
+        // joint frame quaternion의 double 정밀도로 Euler를 구한 뒤 float 성분에 저장한다.
         link.entity.SetLocalRotation(glm::vec3{glm::eulerAngles(glm::normalize(glm::dquat{
             pose.rotation.w, pose.rotation.x, pose.rotation.y, pose.rotation.z}))});
     }

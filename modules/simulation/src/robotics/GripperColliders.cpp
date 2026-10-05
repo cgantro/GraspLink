@@ -29,7 +29,7 @@ struct ProxySpec
     std::size_t meshCount;
 };
 
-// 7개 rigid part를 authored joint 프레임별로 나눈다. 손가락 양쪽이나 다음 관절의 형상은 합치지 않는다.
+// 7개 rigid part를 authored body/joint frame에 나눈다. 현재 9개 mesh는 mesh마다 hull 하나로 유지한다.
 constexpr std::array<ProxySpec, 7> ProxySpecs{{
     {"Gripper", {"GripperMesh", nullptr}, 1},
     {"LeftOuterKnuckleJoint", {"LeftOuterKnuckleMesh", "LeftFingerMesh"}, 2},
@@ -68,7 +68,8 @@ std::vector<glm::vec3> MeshPoints(const ModelResource& model, std::size_t meshNo
     const NodeData& node = model.nodes[meshNodeIndex];
     if (node.meshIndex < 0 || static_cast<std::size_t>(node.meshIndex) >= model.meshes.size())
         throw std::invalid_argument("TwoF85 collider mesh node has no valid mesh.");
-    // 정점 [m]을 owning joint/body frame으로 옮긴다. root 자세는 runtime hierarchy가 적용한다.
+    // mesh node의 GLB 변환만 합성해 정점 [m]을 owning joint/body frame으로 옮긴다.
+    // owning root의 authored 변환은 proxy 부모가 되어 runtime Scene 계층에서 한 번 적용한다.
     glm::mat4 meshToRoot(1.0F);
     std::size_t current = meshNodeIndex;
     while (current != rootIndex)
@@ -116,8 +117,7 @@ void ConfigureTwoF85Colliders(Scene& scene, const Entity& robotRoot, const Model
         if (expectedNodes.count(model.nodes[i].name) != 0 && !modelIndices.emplace(model.nodes[i].name, i).second)
             throw std::invalid_argument("TwoF85 model contains duplicate node names.");
 
-    // Local T * quat(Euler) * S를 기준으로 parent index와 cycle을 모델 전체에서 검사한다.
-    // 단위 scale 제한은 아래에서 실제 collider ancestry에만 적용한다.
+    // GLB 전체의 parent index와 cycle을 먼저 확인한다. 단위 scale 조건은 실제 collider ancestry에만 적용한다.
     std::vector<unsigned char> state(model.nodes.size());
     auto build = [&](auto&& self, std::size_t i) -> void
     {
@@ -203,7 +203,7 @@ void ConfigureTwoF85Colliders(Scene& scene, const Entity& robotRoot, const Model
             if (ancestor != rootIndex) throw std::invalid_argument("TwoF85 mesh is outside its owning joint hierarchy.");
             Entity meshEntity = robotRoot.FindChildByNameRecursive(spec.meshes[m]);
             if (!meshEntity) throw std::invalid_argument("TwoF85 required scene mesh entity is missing.");
-            // Prefab의 부모 체인도 GLB NodeData와 일치해야 다른 관절 형상을 잘못 가져오지 않는다.
+            // Prefab의 mesh-to-owning-joint 경로가 GLB 경로와 일치하는지 확인해 다른 part의 mesh를 막는다.
             Entity sceneAncestor = meshEntity;
             std::size_t modelMeshAncestor = meshIndex;
             while (true)
@@ -225,9 +225,9 @@ void ConfigureTwoF85Colliders(Scene& scene, const Entity& robotRoot, const Model
         }
     }
 
-    // proxy는 authored joint의 자식이며 local pose identity로 둔다. 관절 Local 변경이 proxy에 전파된다.
-    // gripper backend가 연결되기 전까지 원본 ECS joint hierarchy가 7 rigid part의 자세를 제공한다.
-    // Fixed Update가 World transform을 갱신한 뒤 PhysicsSystemModule이 Kinematic 목표 자세를 동기화한다.
+    // proxy를 authored body/joint 자식으로 두고 local pose를 항등으로 둔다. 관절 Local 변경이 계층에 전파된다.
+    // 현재는 원본 ECS joint hierarchy가 7개 part의 pose source다. Gripper backend나 별도 FK 계산은 연결되지 않았다.
+    // Fixed Update가 World transform을 갱신한 다음 PhysicsSystemModule이 Kinematic 목표 자세를 동기화한다.
     for (Prepared& item : prepared)
     {
         Entity proxy = scene.CreateEntity(item.name);
