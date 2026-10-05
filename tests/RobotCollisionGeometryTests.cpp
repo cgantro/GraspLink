@@ -12,6 +12,7 @@
 
 namespace
 {
+// Physics proxy 추출의 CPU fixture. 정점은 Link Local 기준이며 한 변 0.1 m인 닫힌 입방체다.
 MeshData Cube()
 {
     MeshData mesh;
@@ -29,6 +30,12 @@ MeshData Cube()
 }
 }
 
+/**
+ * @brief 링크별 충돌 형상의 소유 범위와 FK 자세 추종을 확인한다.
+ * @details 작은 합성 계층으로 하위 관절/Gripper geometry 제외, proxy의 joint pivot 추종, 잘못된 계층과
+ * 제거된 Scene handle을 검사한 뒤 실제 HCR12A GLB에서도 arm 6개 링크의 hull 수를 확인한다.
+ * 이 검사는 GLB CPU 데이터에서 collider 설정을 만드는 경계를 다루며 GPU 업로드나 Jolt 접촉 계산은 수행하지 않는다.
+ */
 int main()
 {
     try
@@ -88,6 +95,7 @@ int main()
         scenes.LoadScene<Scene>();
         scenes.OnUpdate(0.0F);
         ExpectThrows<std::runtime_error>([&] { adapter.Apply(fk.Update(state)); }, "removed Scene invalidates physics proxy bindings");
+        // 실제 GLB에는 121개 hull이 만들어진다. 상한 150은 링크별 근사를 유지하면서 runtime 형상 수가 불어나지 않게 한다.
         const auto actualModel = GltfLoader::LoadGLB(std::filesystem::path("assets") / "HCR12A_2F-85.glb");
         Entity actualRoot = scenes.GetActiveScene()->CreateEntity("ActualRobot");
         grasplink::simulation::RobotPhysicsAdapter actualAdapter(

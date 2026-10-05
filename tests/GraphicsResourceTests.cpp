@@ -16,6 +16,11 @@ namespace
 struct GlHooks;
 GlHooks* activeHooks = nullptr;
 
+/**
+ * @brief OpenGL 객체 생성/실패 지점을 감시하는 테스트용 GLAD 함수 집합.
+ * @details 실제 OpenGL 동작은 저장된 GLAD 함수를 호출하고 생성 ID를 기록한다. 일부 검사는 반환 상태나
+ * shader 입력만 제어해 생성자 실패 경로와 부분 생성 자원의 정리를 검사한다.
+ */
 struct GlHooks
 {
     PFNGLGENFRAMEBUFFERSPROC genFramebuffers = glad_glGenFramebuffers;
@@ -170,6 +175,7 @@ void RequireFailure(Function&& function, const std::string& expectedMessage)
 
 void TestShadowMap(GlHooks& hooks)
 {
+    // 잘못된 크기와 불완전 framebuffer의 정리, Begin/End의 framebuffer·viewport 복원 계약을 확인한다.
     for (int size : {0, -1})
         ExpectThrows<std::invalid_argument>([&] { ShadowMap invalid(size); }, "invalid shadow size rejected");
     Require(hooks.framebuffers.empty() && hooks.textures.empty(), "invalid shadow size allocates nothing");
@@ -208,6 +214,7 @@ void TestShadowMap(GlHooks& hooks)
 
 void TestMultisampleFramebuffer(GlHooks& hooks)
 {
+    // GPU 표본 한도 clamp, Resize의 보존/재생성, 실패한 생성·resize의 모든 attachment 정리를 검사한다.
     GLint maxSamples = 0;
     glGetIntegerv(GL_MAX_SAMPLES, &maxSamples);
     Require(maxSamples >= 2, "test context supports MSAA");
@@ -271,6 +278,7 @@ void TestMultisampleFramebuffer(GlHooks& hooks)
 
 void TestShader(GlHooks& hooks)
 {
+    // Program/stage 생성 실패와 실제 compile/link 실패에서 임시 GL object가 남지 않는지 확인한다.
     const std::string vertex = "#version 330 core\nout vec3 value; void main(){value=vec3(1);gl_Position=vec4(0,0,0,1);}";
     const std::string fragment = "#version 330 core\nin vec3 value; out vec4 color; void main(){color=vec4(value,1);}";
     {
@@ -314,11 +322,16 @@ void TestShader(GlHooks& hooks)
 }
 }
 
+/**
+ * @brief ShadowMap, MSAA framebuffer, Shader의 OpenGL 자원 수명과 실패 복구를 확인한다.
+ * @details 숨긴 Window가 GL context를 소유한다. 테스트 객체가 만드는 GL 자원과 GlHooks가 바꾼 GLAD 함수 포인터를
+ * 먼저 정리하고 Window가 마지막에 파괴되어야 한다. 불완전 상태는 hook으로 재현하고 객체 삭제 여부를 GL에서 조회한다.
+ */
 int main()
 {
     try
     {
-        // 수명: GPU 객체와 GLAD hook이 먼저 해제된 뒤 숨긴 GL context를 닫음.
+        // 수명: 함수 지역 GPU 객체와 GlHooks가 먼저 정리되고, Window가 GL context를 마지막에 닫는다.
         Window window(Window::Properties{128, 128, "GraphicsResourceTests", false, false});
         GlHooks hooks;
         TestShadowMap(hooks);

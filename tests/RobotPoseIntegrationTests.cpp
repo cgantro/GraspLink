@@ -28,6 +28,7 @@ namespace
 {
 void RequirePositionNear(const glm::vec3& actual, const glm::vec3& expected, const std::string& label)
 {
+    // World 위치 [m]를 축별 0.2 mm 허용오차로 비교한다. GLB float 행렬과 FK double 결과 정밀도 차이를 허용한다.
     const auto coordinateLabel = [&](const char* axis, float actualValue, float expectedValue)
     {
         return label + " " + axis + ": actual=" + std::to_string(actualValue) +
@@ -48,6 +49,7 @@ void ApplyAndCompare(
     const glm::vec3& rootRotation,
     const std::string& label)
 {
+    // FK 관절 입력 [rad]에서 나온 ToolFrame Base pose에 Scene root Local TRS를 적용하고 GLB Entity World pose와 비교한다.
     RobotState state;
     state.valid = true;
     state.jointPositionRadians.assign(jointRadians.begin(), jointRadians.end());
@@ -76,16 +78,23 @@ void ApplyAndCompare(
     const glm::quat expectedOrientation = glm::quat_cast(glm::mat3(rootWorld)) * glm::quat{
         static_cast<float>(expectedRotation.w), static_cast<float>(expectedRotation.x),
         static_cast<float>(expectedRotation.y), static_cast<float>(expectedRotation.z)};
+    // Quaternion 부호가 반대여도 같은 회전을 뜻하므로 정규화 quaternion 내적의 절댓값으로 방향을 비교한다.
     Require(std::abs(glm::dot(glm::normalize(actualOrientation), glm::normalize(expectedOrientation))) > 0.9999F,
         label + ": ToolFrame world orientation");
 }
 }
 
+/**
+ * @brief CPU FK와 GLB에서 만든 Flecs 관절 계층이 같은 ToolFrame World 자세를 내는지 확인한다.
+ * @details 영 자세, 각 관절 단독 회전, 혼합 자세와 Scene root 이동/회전을 비교하고 bind pivot 및 부모 계층
+ * 손상 시 RobotTransformAdapter가 거부하는지 확인한다. 숨긴 OpenGL Context는 GLB Mesh 업로드 자원보다 먼저
+ * 만들어지고, 이 범위의 AssetManager/Shader GPU 자원이 정리된 뒤 Window 소멸로 마지막에 닫힌다.
+ */
 int main()
 {
     try
     {
-        // 수명: 숨긴 Window의 GL context는 모든 GPU 리소스가 해제될 때까지 유지.
+        // 수명: 숨긴 Window의 GL context는 AssetManager/Shader가 만든 GPU 리소스보다 오래 살아 있어야 한다.
         Window window(Window::Properties{320, 240, "RobotPoseIntegrationTests", false, false});
         AssetManager assets;
         ModelResource model = GltfLoader::LoadGLB(

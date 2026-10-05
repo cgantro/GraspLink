@@ -24,13 +24,14 @@ void AppendUInt32(Bytes& bytes, std::uint32_t value)
 
 Bytes TriangleBytes()
 {
+    // 최소 POSITION fixture: 3개 FLOAT VEC3(36 bytes) 뒤에 여유 바이트를 둬 view 경계를 따로 시험한다.
     Bytes bytes(64, 0U);
     const float positions[]{0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F};
     std::memcpy(bytes.data(), positions, sizeof(positions));
     return bytes;
 }
 
-// 입력: JSON과 BIN을 별도로 구성해 TinyGLTF 파싱부터 실제 loader 경로를 확인한다.
+// 입력: JSON과 BIN을 분리 구성해 TinyGLTF 파싱을 포함한 실제 loader 경로를 확인한다. POSITION 값은 모델 공간 좌표다.
 std::string TriangleJson(
     const std::string& accessor = R"({"bufferView":0,"componentType":5126,"count":3,"type":"VEC3"})",
     const std::string& views = R"({"buffer":0,"byteOffset":0,"byteLength":36})",
@@ -41,6 +42,11 @@ std::string TriangleJson(
         nodes + R"(],"scenes":[{"nodes":[0]}],"scene":0})";
 }
 
+/**
+ * @brief 임시 경로에 직접 만든 최소 GLB와 잘못된 GLB 입력을 제공하는 fixture.
+ * @details JSON/BIN chunk의 4-byte 정렬과 GLB 헤더 길이를 구성한다. 각 거부 사례는 loader가 실패 이유를
+ * 진단에 남기는지 확인하며, fixture 파일은 객체 수명이 끝날 때 임시 디렉터리와 함께 제거된다.
+ */
 class Fixtures
 {
 public:
@@ -59,6 +65,7 @@ public:
 
     std::filesystem::path Write(const std::string& name, std::string json, Bytes binary = TriangleBytes())
     {
+        // JSON은 공백, BIN은 0으로 chunk 경계를 4 bytes에 맞춘 뒤 little-endian GLB header를 기록한다.
         while (json.size() % 4U != 0U) json.push_back(' ');
         while (binary.size() % 4U != 0U) binary.push_back(0U);
         Bytes bytes;
@@ -81,6 +88,7 @@ public:
     void Reject(const std::string& name, const std::string& json, const std::string& diagnostic,
         Bytes binary = TriangleBytes())
     {
+        // 로더가 해당 입력을 거부하고 예상한 진단을 냈을 때만 malformed fixture로 센다.
         const auto path = Write(name, json, std::move(binary));
         try { GltfLoader::LoadGLB(path); }
         catch (const std::runtime_error& error)
@@ -102,6 +110,7 @@ private:
 
 void CheckRepositoryAssets()
 {
+    // 저장소의 실제 로봇/바닥 GLB가 mesh와 단일 rooted node tree로 읽히는지 확인한다.
     for (const char* filename : {"HCR12A_R00.glb", "HCR12A_2F-85.glb", "plane.glb"})
     {
         const auto resource = GltfLoader::LoadGLB(std::filesystem::path(GRASPLINK_TEST_ASSET_DIR) / filename);
@@ -123,6 +132,7 @@ void CheckRepositoryAssets()
 
 void CheckAccessors(Fixtures& fixtures)
 {
+    // Packed/interleaved FLOAT accessor의 stride/offset 계산과 buffer 범위·overflow·sparse·0개·NaN 거부를 확인한다.
     const auto valid = GltfLoader::LoadGLB(fixtures.Write("triangle", TriangleJson()));
     Require(valid.meshes.front().vertices.size() == 3 && valid.meshes.front().indices ==
         std::vector<std::uint32_t>{0U, 1U, 2U}, "packed FLOAT positions and generated indices");
@@ -169,6 +179,7 @@ void CheckAccessors(Fixtures& fixtures)
 
 void CheckTransformsAndHierarchy(Fixtures& fixtures)
 {
+    // 노드 matrix는 비퇴화 TRS로 분해되고, 잘못된 원근/기울기/스케일/quaternion과 순환·다중 부모 입력은 거부돼야 한다.
     const std::string accessor = R"({"bufferView":0,"componentType":5126,"count":3,"type":"VEC3"})";
     const std::string view = R"({"buffer":0,"byteLength":36})";
     const auto translated = GltfLoader::LoadGLB(fixtures.Write("valid-matrix", TriangleJson(accessor, view,
@@ -204,6 +215,11 @@ void CheckTransformsAndHierarchy(Fixtures& fixtures)
 }
 }
 
+/**
+ * @brief 실제 저장소 모델과 직접 만든 malformed GLB fixture에서 loader 계약을 확인한다.
+ * @details 입력은 임시 파일로 구성해 accessor 메모리 범위와 노드 계층 검증을 회귀 검사한다. Mesh vertex 위치는
+ * 원래 GLB 좌표값을 보존하며, 이 테스트 자체는 OpenGL 업로드나 렌더링을 수행하지 않는다.
+ */
 int main()
 {
     try

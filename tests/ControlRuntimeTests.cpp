@@ -8,10 +8,16 @@
 
 using namespace grasplink::robotics;
 
+/**
+ * @brief FixedControlLoop와 시뮬레이션 Controller의 시간·명령 계약을 확인한다.
+ * @details 고정 간격 누적/초과 시간 제한, 잘못된 경과 시간 무시, 관절 속도 제한과 범위 거부를 검사한다.
+ * 또한 정지·재목표 동작과 미구현 TCP feedback/linear trajectory 경계를 고정한다.
+ */
 int main()
 {
     try
     {
+        // 시간 단위 [s]: 250 Hz의 4 ms step, 긴 정지 뒤에는 100 ms까지만 누적한다.
         runtime::FixedControlLoop loop(0.004, 0.1);
         std::size_t ticks = 0;
         auto tick = [&](double dt) { RequireNear(dt, 0.004, 1e-12, "fixed dt"); ++ticks; };
@@ -34,6 +40,7 @@ int main()
         command.targetPositionRadians[0] = 0.5;
         Require(static_cast<bool>(controller.MoveJoint(command)), "move");
         controller.Update(0.004);
+        // 회전 단위 [rad], 속도 [rad/s]. 작은 dt 한 번 동안 최대 속도로 이동하는 값을 확인한다.
         RequireNear(controller.GetState().jointPositionRadians[0], 2.268928 * 0.004, 1e-12, "model velocity limit");
         const auto unchanged = controller.GetState().jointPositionRadians;
         command.targetPositionRadians[0] = 10.0;

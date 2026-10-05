@@ -19,6 +19,7 @@ void RequireToolPosition(
     const std::array<double, 3>& expectedMeters,
     const std::string& label)
 {
+    // jointRadians는 rad, expectedMeters는 로봇 Base 기준 m. 단일 관절 회전으로 축 부호와 링크 누적 순서를 확인한다.
     state.jointPositionRadians.assign(jointRadians.begin(), jointRadians.end());
     const auto& result = kinematics.Update(state);
     Require(result.toolFrameValid, label + ": ToolFrame should be valid");
@@ -37,6 +38,11 @@ void RequireInvalidModel(const models::RobotSpecification& specification, const 
 }
 }
 
+/**
+ * @brief HCR-12A 순기구학의 기준 자세와 입력 검증을 확인한다.
+ * @details 영 자세와 각 관절의 90° 단독 회전, 혼합 회전을 별도 축 회전 계산으로 얻은 Base 기준 위치와 비교한다.
+ * 자세값은 모델 링크 피벗/ToolFrame을 따라 누적한 결과이며, 잘못된 사양·상태는 계산 전에 거부되어야 한다.
+ */
 int main()
 {
     try
@@ -60,12 +66,13 @@ int main()
             {0.0, 0.7915, 0.691}, "J5 positive quarter turn");
         RequireToolPosition(kinematics, state, {0, 0, 0, 0, 0, quarterTurn},
             {0.0, 1.015, 0.9145}, "J6 positive quarter turn");
-        // 기준값: 별도 3x3 축 회전 행렬 계산으로 구한 base 위치 [m].
+        // 기준값: 별도 3×3 축 회전 행렬로 구한 Base 기준 위치 [m]. 1e-9 m 비교는 이 계산 경로의 double 결과를 점검한다.
         RequireToolPosition(kinematics, state, {0.45, -0.4, 0.3, 0.5, -0.2, 0.7},
             {0.26702766609490924, 1.0867538528236094, 0.60173049560973602}, "mixed pose");
 
         state.jointPositionRadians.assign(6, 0.0);
         const auto& zeroResult = kinematics.Update(state);
+        // 관절 피벗도 Base 기준 [m]. 1e-12는 같은 사양 상수를 쓰는 계산에서 피벗 누적 변경을 감지한다.
         RequireNear(zeroResult.linkPosesInBaseFrame.front().positionMeters.y, 0.1985, 1e-12,
             "first joint base-frame pivot");
         RequireNear(zeroResult.linkPosesInBaseFrame.back().positionMeters.z, 0.85475, 1e-12,
