@@ -12,7 +12,13 @@
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayer.h>
 #include <Jolt/Physics/Collision/ObjectLayer.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
+#include <Jolt/Physics/Collision/Shape/CylinderShape.h>
+#include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
+#include <Jolt/Physics/Collision/Shape/MutableCompoundShape.h>
+#include <Jolt/Physics/Collision/Shape/SphereShape.h>
 
+#include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <mutex>
 #include <stdexcept>
@@ -24,37 +30,39 @@ namespace grasplink::physics
 namespace
 {
 
-/*
- * Jolt의 Factory와 Type 등록은 전역 자원이다.
- *
- * PhysicsWorld가 여러 개 생성되어도 최초 1회만 초기화하고,
- * 마지막 PhysicsWorld가 제거될 때 정리한다.
- */
+// Jolt 전역 자원은 첫 World에서 만들고 마지막 World가 사라질 때 해제한다.
 std::mutex g_JoltRuntimeMutex;
 std::size_t g_JoltRuntimeUsers = 0;
+std::atomic<std::uint64_t> g_NextWorldToken{1};
 
 void AcquireJoltRuntime()
 {
     std::lock_guard<std::mutex> lock(g_JoltRuntimeMutex);
 
-    // 이미 다른 PhysicsWorld가 Jolt를 사용 중이면 다시 초기화하지 않는다.
     if (g_JoltRuntimeUsers > 0)
     {
         ++g_JoltRuntimeUsers;
         return;
     }
 
-    // 1. Jolt 기본 메모리 allocator 등록.
     JPH::RegisterDefaultAllocator();
 
-    // 2. Jolt 내부 객체 생성에 사용하는 Factory 생성.
     if (JPH::Factory::sInstance != nullptr)
         throw std::runtime_error("Jolt Factory is already initialized.");
 
-    JPH::Factory::sInstance = new JPH::Factory();
-
-    // 3. Box, Constraint 등 Jolt 기본 타입 등록.
-    JPH::RegisterTypes();
+    auto factory = std::make_unique<JPH::Factory>();
+    JPH::Factory::sInstance = factory.get();
+    try
+    {
+        JPH::RegisterTypes();
+    }
+    catch (...)
+    {
+        JPH::UnregisterTypes();
+        JPH::Factory::sInstance = nullptr;
+        throw;
+    }
+    factory.release();
 
     g_JoltRuntimeUsers = 1;
 }
@@ -68,7 +76,6 @@ void ReleaseJoltRuntime()
 
     --g_JoltRuntimeUsers;
 
-    // 아직 다른 PhysicsWorld가 사용 중이면 Jolt를 종료하지 않는다.
     if (g_JoltRuntimeUsers > 0)
         return;
 
@@ -79,32 +86,34 @@ void ReleaseJoltRuntime()
 }
 
 
-/*
- * Collision Layer
- *
- * NonMoving:
- * - Floor
- * - Wall
- * - Static Body
- *
- * Moving:
- * - Dynamic Body
- * - Kinematic Body
- */
+// Object Layer: 충돌 상대 분류 4개에 Static/이동 여부를 조합한다.
 namespace ObjectLayers
 {
 
-constexpr JPH::ObjectLayer NonMoving = 0;
-constexpr JPH::ObjectLayer Moving = 1;
-constexpr JPH::ObjectLayer Count = 2;
+constexpr JPH::ObjectLayer CategoryCount = 4;
+constexpr JPH::ObjectLayer MovingOffset = CategoryCount;
+constexpr JPH::ObjectLayer Count = CategoryCount * 2;
+
+JPH::ObjectLayer Make(bool moving, CollisionLayer category)
+{
+    const JPH::ObjectLayer offset = moving ? MovingOffset : 0;
+    return static_cast<JPH::ObjectLayer>(offset + static_cast<JPH::ObjectLayer>(category));
+}
+
+bool IsMoving(JPH::ObjectLayer layer)
+{
+    return layer >= MovingOffset;
+}
+
+CollisionLayer Category(JPH::ObjectLayer layer)
+{
+    return static_cast<CollisionLayer>(layer % CategoryCount);
+}
 
 } // namespace ObjectLayers
 
 
-/*
- * Broad Phase는 실제 충돌 검사를 하기 전에
- * 충돌 가능성이 있는 Body 후보를 빠르게 찾는 단계다.
- */
+// Broad Phase: 자세한 충돌 계산 전 후보를 고르는 단계. Static과 이동 Body를 나눈다.
 namespace BroadPhaseLayers
 {
 
@@ -115,20 +124,17 @@ constexpr JPH::uint Count = 2;
 } // namespace BroadPhaseLayers
 
 
-/*
- * Object Layer를 Broad Phase Layer로 연결한다.
- *
- * NonMoving -> NonMoving
- * Moving    -> Moving
- */
 class BroadPhaseLayerInterfaceImpl final
     : public JPH::BroadPhaseLayerInterface
 {
 public:
     BroadPhaseLayerInterfaceImpl()
     {
-        objectToBroadPhase_[ObjectLayers::NonMoving] = BroadPhaseLayers::NonMoving;
-        objectToBroadPhase_[ObjectLayers::Moving] = BroadPhaseLayers::Moving;
+        for (JPH::ObjectLayer category = 0; category < ObjectLayers::CategoryCount; ++category)
+        {
+            objectToBroadPhase_[category] = BroadPhaseLayers::NonMoving;
+            objectToBroadPhase_[ObjectLayers::MovingOffset + category] = BroadPhaseLayers::Moving;
+        }
     }
 
     JPH::uint GetNumBroadPhaseLayers() const override
@@ -162,14 +168,8 @@ private:
 };
 
 
-/*
- * 실제 Body 종류끼리 충돌 가능한지 정한다.
- *
- * Static vs Static -> X
- * Static vs Moving -> O
- * Moving vs Static -> O
- * Moving vs Moving -> O
- */
+// Robot/Gripper 자기 충돌과 Environment끼리 충돌은 제외한다.
+// Robot/Gripper는 Environment와 DynamicObject에만 닿는다.
 class ObjectLayerPairFilterImpl final
     : public JPH::ObjectLayerPairFilter
 {
@@ -178,12 +178,17 @@ public:
         JPH::ObjectLayer object1,
         JPH::ObjectLayer object2) const override
     {
-        switch (object1)
+        const CollisionLayer category1 = ObjectLayers::Category(object1);
+        const CollisionLayer category2 = ObjectLayers::Category(object2);
+        switch (category1)
         {
-        case ObjectLayers::NonMoving:
-            return object2 == ObjectLayers::Moving;
-
-        case ObjectLayers::Moving:
+        case CollisionLayer::Environment:
+            return category2 != CollisionLayer::Environment;
+        case CollisionLayer::Robot:
+        case CollisionLayer::Gripper:
+            return category2 == CollisionLayer::Environment ||
+                category2 == CollisionLayer::DynamicObject;
+        case CollisionLayer::DynamicObject:
             return true;
 
         default:
@@ -194,9 +199,7 @@ public:
 };
 
 
-/*
- * Broad Phase 단계에서 검사할 Layer를 정한다.
- */
+// Static끼리는 움직이지 않으므로 충돌 후보 검사에서 제외한다.
 class ObjectVsBroadPhaseLayerFilterImpl final
     : public JPH::ObjectVsBroadPhaseLayerFilter
 {
@@ -205,25 +208,12 @@ public:
         JPH::ObjectLayer objectLayer,
         JPH::BroadPhaseLayer broadPhaseLayer) const override
     {
-        switch (objectLayer)
-        {
-        case ObjectLayers::NonMoving:
-            return broadPhaseLayer == BroadPhaseLayers::Moving;
-
-        case ObjectLayers::Moving:
-            return true;
-
-        default:
-            JPH_ASSERT(false);
-            return false;
-        }
+        return ObjectLayers::IsMoving(objectLayer) ||
+            broadPhaseLayer == BroadPhaseLayers::Moving;
     }
 };
 
 
-/*
- * GLM <-> Jolt 변환
- */
 
 JPH::RVec3 ToJoltPosition(const glm::vec3& value)
 {
@@ -232,8 +222,7 @@ JPH::RVec3 ToJoltPosition(const glm::vec3& value)
 
 JPH::Quat ToJoltRotation(const glm::quat& value)
 {
-    // GLM 생성자 순서:  (w, x, y, z)
-    // Jolt 생성자 순서: (x, y, z, w)
+    // Quaternion 생성자 순서: GLM (w,x,y,z) -> Jolt (x,y,z,w).
     return JPH::Quat(value.x, value.y, value.z, value.w);
 }
 
@@ -257,9 +246,6 @@ glm::quat ToGlmRotation(const JPH::Quat& value)
 }
 
 
-/*
- * GraspLink BodyMotionType -> Jolt MotionType
- */
 JPH::EMotionType ToJoltMotionType(BodyMotionType motionType)
 {
     switch (motionType)
@@ -278,55 +264,21 @@ JPH::EMotionType ToJoltMotionType(BodyMotionType motionType)
 }
 
 
-/*
- * Static Body와 움직이는 Body는 다른 Collision Layer를 사용한다.
- */
-JPH::ObjectLayer ToObjectLayer(BodyMotionType motionType)
+JPH::ObjectLayer ToObjectLayer(BodyMotionType motionType, CollisionLayer collisionLayer)
 {
-    if (motionType == BodyMotionType::Static)
-        return ObjectLayers::NonMoving;
-
-    return ObjectLayers::Moving;
+    return ObjectLayers::Make(motionType != BodyMotionType::Static, collisionLayer);
 }
 
 
-/*
- * PhysicsBodyHandle -> Jolt BodyID
- */
 JPH::BodyID ToBodyID(PhysicsBodyHandle handle)
 {
     return JPH::BodyID{handle.value};
 }
 
 
-/*
- * Box의 half extent가 정상적인지 검사한다.
- */
-void ValidateBoxDescription(const BoxBodyDescription& description)
-{
-    const glm::vec3& size = description.halfExtentsMeters;
-
-    if (!std::isfinite(size.x) ||
-        !std::isfinite(size.y) ||
-        !std::isfinite(size.z) ||
-        size.x <= 0.0F ||
-        size.y <= 0.0F ||
-        size.z <= 0.0F)
-    {
-        throw std::invalid_argument(
-            "Box half extents must be finite and > 0.");
-    }
-}
-
 } // namespace
 
 
-/*
- * PhysicsWorld 내부 구현.
- *
- * Jolt 타입을 PhysicsWorld.h 밖으로 노출하지 않기 위해
- * PImpl 구조를 사용한다.
- */
 struct PhysicsWorld::Impl
 {
     // PhysicsSystem이 이 객체들을 참조하므로 PhysicsSystem보다 오래 살아 있어야 한다.
@@ -334,44 +286,37 @@ struct PhysicsWorld::Impl
     ObjectVsBroadPhaseLayerFilterImpl objectVsBroadPhaseLayerFilter;
     ObjectLayerPairFilterImpl objectLayerPairFilter;
 
-    // 실제 Jolt Physics World.
     JPH::PhysicsSystem physicsSystem;
 
-    // Physics 계산 중 사용하는 임시 메모리.
     std::unique_ptr<JPH::TempAllocatorImpl> tempAllocator;
 
-    // Physics 작업을 병렬로 실행하는 Job System.
     std::unique_ptr<JPH::JobSystemThreadPool> jobSystem;
+    const std::uint64_t worldToken = g_NextWorldToken.fetch_add(1, std::memory_order_relaxed);
 
     Impl()
     {
-        // 1. Physics 계산용 임시 메모리.
         constexpr JPH::uint TempMemorySize = 10U * 1024U * 1024U;
 
         tempAllocator =
             std::make_unique<JPH::TempAllocatorImpl>(TempMemorySize);
 
-        // 2. CPU thread 수를 기준으로 worker 수를 정한다.
         const unsigned int hardwareThreads =
             std::thread::hardware_concurrency();
 
-        const int workerThreads =
-            hardwareThreads > 1
-                ? static_cast<int>(hardwareThreads - 1)
-                : 1;
+        const int workerThreads = hardwareThreads > 1
+            ? static_cast<int>(std::min(hardwareThreads - 1, 4U))
+            : 1;
 
         jobSystem = std::make_unique<JPH::JobSystemThreadPool>(
             JPH::cMaxPhysicsJobs,
             JPH::cMaxPhysicsBarriers,
             workerThreads);
 
-        // 3. 초기 Physics World 최대 용량.
         constexpr JPH::uint MaxBodies = 4096;
         constexpr JPH::uint NumBodyMutexes = 0;
         constexpr JPH::uint MaxBodyPairs = 65536;
         constexpr JPH::uint MaxContactConstraints = 10240;
 
-        // 4. PhysicsSystem 초기화.
         physicsSystem.Init(
             MaxBodies,
             NumBodyMutexes,
@@ -381,8 +326,12 @@ struct PhysicsWorld::Impl
             objectVsBroadPhaseLayerFilter,
             objectLayerPairFilter);
 
-        // 5. Y-Up 기준 중력 설정.
+        // 좌표: World Y가 위쪽. 중력 단위는 m/s².
         physicsSystem.SetGravity(JPH::Vec3(0.0F, -9.81F, 0.0F));
+
+        JPH::PhysicsSettings settings = physicsSystem.GetPhysicsSettings();
+        settings.mPenetrationSlop = 0.002F;
+        physicsSystem.SetPhysicsSettings(settings);
     }
 };
 
@@ -412,15 +361,13 @@ PhysicsWorld::~PhysicsWorld()
 
 void PhysicsWorld::Step(double fixedDeltaSeconds)
 {
-    // 0, 음수, NaN, Inf는 정상적인 timestep이 아니다.
     if (!std::isfinite(fixedDeltaSeconds) ||
         fixedDeltaSeconds <= 0.0)
     {
         return;
     }
 
-    // FixedControlLoop에서 이미 작은 고정 dt로 호출하므로
-    // 현재는 collision step을 1로 둔다.
+    // FixedControlLoop의 짧은 고정 간격을 추가 분할 없이 한 번 계산한다.
     constexpr int CollisionSteps = 1;
 
     impl_->physicsSystem.Update(
@@ -431,63 +378,126 @@ void PhysicsWorld::Step(double fixedDeltaSeconds)
 }
 
 
-PhysicsBodyHandle PhysicsWorld::CreateBox(
-    const BoxBodyDescription& description)
+PhysicsBodyHandle PhysicsWorld::CreateBox(const BoxBodyDescription& description)
 {
-    ValidateBoxDescription(description);
+    CollisionShapeDescription shape;
+    shape.halfExtentsMeters = description.halfExtentsMeters;
 
-    // 1. BoxShape는 전체 크기가 아니라 half extent를 사용한다.
-    JPH::RefConst<JPH::Shape> shape = new JPH::BoxShape(
-        JPH::Vec3(
-            description.halfExtentsMeters.x,
-            description.halfExtentsMeters.y,
-            description.halfExtentsMeters.z));
+    BodyDescription body;
+    body.shapes.push_back(shape);
+    body.transform = description.transform;
+    body.motionType = description.motionType;
+    body.collisionLayer = description.collisionLayer;
+    return CreateBody(body);
+}
 
-    // 2. GraspLink 타입을 Jolt 타입으로 변환한다.
-    const JPH::EMotionType motionType =
-        ToJoltMotionType(description.motionType);
+void ValidateTransform(const Transform& transform)
+{
+    const float rotationLengthSquared = glm::dot(transform.rotation, transform.rotation);
+    if (!std::isfinite(transform.position.x) || !std::isfinite(transform.position.y) ||
+        !std::isfinite(transform.position.z) || !std::isfinite(rotationLengthSquared) ||
+        rotationLengthSquared <= 1.0e-12F)
+        throw std::invalid_argument("Physics Transform requires finite position and nonzero finite rotation");
+}
 
-    const JPH::ObjectLayer objectLayer =
-        ToObjectLayer(description.motionType);
+PhysicsBodyHandle PhysicsWorld::CreateBody(const BodyDescription& description)
+{
+    if (description.shapes.empty())
+        throw std::invalid_argument("Physics Body requires at least one collision shape.");
+    ValidateTransform(description.transform);
+    if (static_cast<unsigned>(description.collisionLayer) > static_cast<unsigned>(CollisionLayer::DynamicObject))
+        throw std::invalid_argument("Unsupported CollisionLayer");
 
-    // 3. Body 생성 설정.
-    JPH::BodyCreationSettings settings(
-        shape,
-        ToJoltPosition(description.transform.position),
-        ToJoltRotation(description.transform.rotation),
-        motionType,
-        objectLayer);
+    JPH::MutableCompoundShapeSettings compoundSettings;
+    for (const CollisionShapeDescription& part : description.shapes)
+    {
+        ValidateTransform(part.localTransform);
+        JPH::RefConst<JPH::Shape> shape;
+        switch (part.type)
+        {
+        case CollisionShapeType::Box:
+        {
+            if (!std::isfinite(part.halfExtentsMeters.x) || !std::isfinite(part.halfExtentsMeters.y) ||
+                !std::isfinite(part.halfExtentsMeters.z) || part.halfExtentsMeters.x <= 0.0F ||
+                part.halfExtentsMeters.y <= 0.0F || part.halfExtentsMeters.z <= 0.0F)
+                throw std::invalid_argument("Box half extents must be finite and > 0.");
+            const float convexRadius = std::min(0.002F,
+                std::min(part.halfExtentsMeters.x, std::min(part.halfExtentsMeters.y,
+                    part.halfExtentsMeters.z)) * 0.1F);
+            shape = new JPH::BoxShape(JPH::Vec3(part.halfExtentsMeters.x,
+                part.halfExtentsMeters.y, part.halfExtentsMeters.z), convexRadius);
+            break;
+        }
+        case CollisionShapeType::Cylinder:
+            if (!std::isfinite(part.radiusMeters) || !std::isfinite(part.halfHeightMeters) ||
+                part.radiusMeters <= 0.0F || part.halfHeightMeters <= 0.0F)
+                throw std::invalid_argument("Cylinder radius and half height must be finite and > 0.");
+            shape = new JPH::CylinderShape(part.halfHeightMeters, part.radiusMeters,
+                std::min(0.002F, std::min(part.halfHeightMeters, part.radiusMeters) * 0.1F));
+            break;
+        case CollisionShapeType::Sphere:
+            if (!std::isfinite(part.radiusMeters) || part.radiusMeters <= 0.0F)
+                throw std::invalid_argument("Sphere radius must be finite and > 0.");
+            shape = new JPH::SphereShape(part.radiusMeters);
+            break;
+        case CollisionShapeType::ConvexHull:
+        {
+            if (part.pointsMeters.size() < 4)
+                throw std::invalid_argument("Convex hull requires at least four points.");
+            JPH::Array<JPH::Vec3> points;
+            points.reserve(part.pointsMeters.size());
+            for (const glm::vec3& point : part.pointsMeters)
+            {
+                if (!std::isfinite(point.x) || !std::isfinite(point.y) || !std::isfinite(point.z))
+                    throw std::invalid_argument("Convex hull points must be finite.");
+                points.emplace_back(point.x, point.y, point.z);
+            }
+            JPH::ConvexHullShapeSettings hullSettings(points, 0.0F);
+            const auto hullResult = hullSettings.Create();
+            if (hullResult.HasError())
+                throw std::runtime_error(hullResult.GetError().c_str());
+            shape = hullResult.Get();
+            break;
+        }
+        default:
+            throw std::invalid_argument("Unsupported CollisionShapeType");
+        }
 
-    JPH::BodyInterface& bodyInterface =
-        impl_->physicsSystem.GetBodyInterface();
+        compoundSettings.AddShape(ToJoltPosition(part.localTransform.position),
+            ToJoltRotation(glm::normalize(part.localTransform.rotation)), shape.GetPtr());
+    }
 
-    // Static은 깨울 필요가 없고 Dynamic/Kinematic은 바로 활성화한다.
-    const JPH::EActivation activation =
-        description.motionType == BodyMotionType::Static
-            ? JPH::EActivation::DontActivate
-            : JPH::EActivation::Activate;
+    const auto shapeResult = compoundSettings.Create();
+    if (shapeResult.HasError())
+        throw std::runtime_error(shapeResult.GetError().c_str());
 
-    const JPH::BodyID bodyID =
-        bodyInterface.CreateAndAddBody(settings, activation);
-
+    const JPH::EMotionType motionType = ToJoltMotionType(description.motionType);
+    const JPH::ObjectLayer objectLayer = ToObjectLayer(description.motionType, description.collisionLayer);
+    const glm::quat rotation = glm::normalize(description.transform.rotation);
+    // 입력은 모델의 Body 원점. Compound 형상 COM으로 옮기는 계산은 Jolt 내부 담당.
+    JPH::BodyCreationSettings settings(shapeResult.Get(),
+        ToJoltPosition(description.transform.position), ToJoltRotation(rotation),
+        motionType, objectLayer);
+    JPH::BodyInterface& bodyInterface = impl_->physicsSystem.GetBodyInterface();
+    const JPH::EActivation activation = description.motionType == BodyMotionType::Static
+        ? JPH::EActivation::DontActivate
+        : JPH::EActivation::Activate;
+    const JPH::BodyID bodyID = bodyInterface.CreateAndAddBody(settings, activation);
     if (bodyID.IsInvalid())
         throw std::runtime_error("Failed to create physics body.");
 
-    // Jolt BodyID 자체 대신 uint32 기반 Handle을 반환한다.
-    return PhysicsBodyHandle{
-        bodyID.GetIndexAndSequenceNumber()
-    };
+    return {bodyID.GetIndexAndSequenceNumber(), impl_->worldToken};
 }
 
 
 bool PhysicsWorld::IsBodyValid(PhysicsBodyHandle handle) const
 {
-    if (!handle.IsValid())
+    if (!handle.IsValid() || handle.worldToken != impl_->worldToken)
         return false;
 
     const JPH::BodyID bodyID = ToBodyID(handle);
 
-    // sequence number도 포함하므로 삭제 후 재사용된 Body와 구분할 수 있다.
+    // ID의 sequence number로 삭제 후 같은 슬롯에 생성된 새 Body를 구분한다.
     return impl_->physicsSystem
         .GetBodyInterface()
         .IsAdded(bodyID);
@@ -505,6 +515,7 @@ Transform PhysicsWorld::GetBodyTransform(
     JPH::RVec3 position;
     JPH::Quat rotation;
 
+    // GetPositionAndRotation은 COM이 아닌 Body 원점의 World 자세를 돌려준다.
     impl_->physicsSystem
         .GetBodyInterface()
         .GetPositionAndRotation(bodyID, position, rotation);
@@ -523,14 +534,15 @@ void PhysicsWorld::SetBodyTransform(
 {
     if (!IsBodyValid(handle))
         throw std::invalid_argument("Invalid PhysicsBodyHandle.");
+    ValidateTransform(transform);
 
-    // 이동 과정을 계산하지 않고 Body를 즉시 해당 Transform으로 옮긴다.
+    // World 좌표의 Body 원점을 전달한다. COM offset을 별도로 더하지 않는다.
     impl_->physicsSystem
         .GetBodyInterface()
         .SetPositionAndRotation(
             ToBodyID(handle),
             ToJoltPosition(transform.position),
-            ToJoltRotation(transform.rotation),
+            ToJoltRotation(glm::normalize(transform.rotation)),
             JPH::EActivation::Activate);
 }
 
@@ -542,6 +554,7 @@ void PhysicsWorld::MoveKinematic(
 {
     if (!IsBodyValid(handle))
         throw std::invalid_argument("Invalid PhysicsBodyHandle.");
+    ValidateTransform(targetTransform);
 
     if (!std::isfinite(fixedDeltaSeconds) ||
         fixedDeltaSeconds <= 0.0)
@@ -552,7 +565,6 @@ void PhysicsWorld::MoveKinematic(
 
     const JPH::BodyID bodyID = ToBodyID(handle);
 
-    // Kinematic Body가 아닌 경우 잘못된 API 사용이므로 차단한다.
     const JPH::EMotionType motionType =
         impl_->physicsSystem
             .GetBodyInterface()
@@ -564,13 +576,13 @@ void PhysicsWorld::MoveKinematic(
             "MoveKinematic requires a kinematic body.");
     }
 
-    // fixedDeltaSeconds 동안 목표 Transform으로 이동할 속도를 Jolt가 계산한다.
+    // 목표도 Body 원점 기준. COM 이동과 속도 계산은 Jolt가 처리한다.
     impl_->physicsSystem
         .GetBodyInterface()
         .MoveKinematic(
             bodyID,
             ToJoltPosition(targetTransform.position),
-            ToJoltRotation(targetTransform.rotation),
+            ToJoltRotation(glm::normalize(targetTransform.rotation)),
             static_cast<float>(fixedDeltaSeconds));
 }
 
@@ -585,10 +597,9 @@ void PhysicsWorld::DestroyBody(PhysicsBodyHandle handle)
     JPH::BodyInterface& bodyInterface =
         impl_->physicsSystem.GetBodyInterface();
 
-    // 1. Simulation에서 Body 제거.
+    // 계산 목록에서 먼저 빼야 해당 Body의 ID와 메모리를 해제할 수 있다.
     bodyInterface.RemoveBody(bodyID);
 
-    // 2. Body ID와 메모리 해제.
     bodyInterface.DestroyBody(bodyID);
 }
 
