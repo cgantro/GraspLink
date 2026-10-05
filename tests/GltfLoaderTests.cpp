@@ -1,13 +1,19 @@
-﻿#include "assets/GltfLoader.h"
+#include "assets/GltfLoader.h"
 #include "TestSupport.h"
 
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/quaternion.hpp>
+
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <limits>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -213,12 +219,110 @@ void CheckTransformsAndHierarchy(Fixtures& fixtures)
     fixtures.Reject("node-disconnected-from-scene", TriangleJson(accessor, view,
         R"({"mesh":0},{"mesh":0})"), "single tree under the scene root");
 }
+
+/**
+ * @brief glTF의 xyzw 순서로 Local TRS quaternion fixture를 만든다.
+ * @details GLM 생성자 순서인 wxyz와 구분해 기록한다. float 정밀도를 보존하므로 JSON 출력 오차가
+ * pitch 90도 부근의 회전 보존 검사를 가리지 않는다.
+ */
+std::string QuaternionTrsNode(const glm::vec3& position, const glm::quat& rotation, const glm::vec3& scale)
+{
+    std::ostringstream json;
+    json << std::setprecision(std::numeric_limits<float>::max_digits10)
+         << "{\"mesh\":0,\"translation\":[" << position.x << ',' << position.y << ',' << position.z
+         << "],\"rotation\":[" << rotation.x << ',' << rotation.y << ',' << rotation.z << ',' << rotation.w
+         << "],\"scale\":[" << scale.x << ',' << scale.y << ',' << scale.z << "]}";
+    return json.str();
+}
+
+/** @brief GLM 열 벡터 행렬을 glTF의 column-major matrix 배열로 기록한다. */
+std::string MatrixNode(const glm::mat4& matrix)
+{
+    std::ostringstream json;
+    json << std::setprecision(std::numeric_limits<float>::max_digits10) << "{\"mesh\":0,\"matrix\":[";
+    for (int column = 0; column < 4; ++column)
+        for (int row = 0; row < 4; ++row)
+        {
+            if (column != 0 || row != 0) json << ',';
+            json << matrix[column][row];
+        }
+    json << "]}";
+    return json.str();
+}
+
+void RequireNodeQuaternion(const NodeData& node, const glm::quat& expected, const std::string& label)
+{
+    RequireNear(glm::length(node.rotation), 1.0, 1e-5, label + " unit quaternion");
+    // quaternion은 부호가 반대여도 같은 방향이다. matrix 분해가 선택하는 부호에 의존하지 않는다.
+    RequireNear(std::abs(glm::dot(node.rotation, glm::normalize(expected))), 1.0, 1e-5,
+        label + " quaternion direction");
+}
+
+void RequireNodeMatrix(const NodeData& node, const glm::mat4& expected, const std::string& label)
+{
+    const glm::mat4 actual = glm::translate(glm::mat4(1.0F), node.translation) *
+        glm::mat4_cast(node.rotation) * glm::scale(glm::mat4(1.0F), node.scale);
+    for (int column = 0; column < 4; ++column)
+        for (int row = 0; row < 4; ++row)
+            RequireNear(actual[column][row], expected[column][row], 1e-5,
+                label + " [" + std::to_string(column) + "][" + std::to_string(row) + "]");
+}
+
+/**
+ * @brief GLB TRS와 matrix 입력이 quaternion 방향과 Local 행렬을 보존하는지 확인한다.
+ * @details 기대 회전은 축 회전 quaternion을 직접 곱해 만든다. Euler 각으로 되돌리는 과정 없이
+ * pitch 90도 양쪽의 복합 회전, glTF xyzw 순서, 반대 부호와 비단위 입력을 비교한다.
+ */
+void CheckQuaternionTransforms(Fixtures& fixtures)
+{
+    const std::string accessor = R"({"bufferView":0,"componentType":5126,"count":3,"type":"VEC3"})";
+    const std::string view = R"({"buffer":0,"byteLength":36})";
+    const glm::vec3 position{0.8F, -1.2F, 0.4F};
+    const glm::vec3 scale{1.5F, 0.7F, 2.0F};
+    const glm::quat ordered = glm::normalize(glm::quat{0.9F, 0.1F, -0.2F, 0.3F});
+    const auto orderedResource = GltfLoader::LoadGLB(fixtures.Write("quaternion-xyzw",
+        TriangleJson(accessor, view, QuaternionTrsNode(position, ordered, scale))));
+    const glm::quat actualOrdered = orderedResource.nodes.front().rotation;
+    RequireNear(actualOrdered.w, ordered.w, 1e-6, "glTF xyzw maps w to quaternion scalar");
+    RequireNear(actualOrdered.x, ordered.x, 1e-6, "glTF xyzw maps x");
+    RequireNear(actualOrdered.y, ordered.y, 1e-6, "glTF xyzw maps y");
+    RequireNear(actualOrdered.z, ordered.z, 1e-6, "glTF xyzw maps z");
+
+    const auto defaults = GltfLoader::LoadGLB(fixtures.Write("quaternion-default", TriangleJson()));
+    RequireNodeQuaternion(defaults.nodes.front(), glm::quat{1.0F, 0.0F, 0.0F, 0.0F}, "default rotation");
+
+    const float halfPi = std::acos(-1.0F) * 0.5F;
+    int fixtureIndex = 0;
+    for (const float pitch : {halfPi - 1.0e-5F, halfPi, halfPi + 1.0e-5F})
+    {
+        const glm::quat expectedRotation = glm::normalize(
+            glm::angleAxis(-0.8F, glm::vec3{0.0F, 0.0F, 1.0F}) *
+            glm::angleAxis(pitch, glm::vec3{0.0F, 1.0F, 0.0F}) *
+            glm::angleAxis(0.4F, glm::vec3{1.0F, 0.0F, 0.0F}));
+        const glm::mat4 expectedMatrix = glm::translate(glm::mat4(1.0F), position) *
+            glm::mat4_cast(expectedRotation) * glm::scale(glm::mat4(1.0F), scale);
+        for (const float multiplier : {1.0F, -1.0F, 7.0F})
+        {
+            const std::string name = "quaternion-trs-" + std::to_string(fixtureIndex++);
+            const auto resource = GltfLoader::LoadGLB(fixtures.Write(name, TriangleJson(accessor, view,
+                QuaternionTrsNode(position, expectedRotation * multiplier, scale))));
+            RequireNodeQuaternion(resource.nodes.front(), expectedRotation, name);
+            RequireNodeMatrix(resource.nodes.front(), expectedMatrix, name + " Local TRS");
+        }
+        const std::string name = "quaternion-matrix-" + std::to_string(fixtureIndex++);
+        const auto resource = GltfLoader::LoadGLB(fixtures.Write(name,
+            TriangleJson(accessor, view, MatrixNode(expectedMatrix))));
+        RequireNodeQuaternion(resource.nodes.front(), expectedRotation, name);
+        RequireNodeMatrix(resource.nodes.front(), expectedMatrix, name + " decomposed Local TRS");
+    }
+}
 }
 
 /**
  * @brief 실제 저장소 모델과 직접 만든 malformed GLB fixture에서 loader 계약을 확인한다.
- * @details 입력은 임시 파일로 구성해 accessor 메모리 범위와 노드 계층 검증을 회귀 검사한다. Mesh vertex 위치는
- * 원래 GLB 좌표값을 보존하며, 이 테스트 자체는 OpenGL 업로드나 렌더링을 수행하지 않는다.
+ * @details 입력은 임시 파일로 구성해 accessor 메모리 범위와 노드 계층 검증을 회귀 검사한다. TRS와 matrix의
+ * quaternion 방향 및 특이 자세 부근의 Local 행렬을 비교한다. Mesh vertex 위치는 원래 GLB 좌표값을
+ * 보존하며, 이 테스트 자체는 OpenGL 업로드나 렌더링을 수행하지 않는다.
  */
 int main()
 {
@@ -228,7 +332,8 @@ int main()
         Fixtures fixtures;
         CheckAccessors(fixtures);
         CheckTransformsAndHierarchy(fixtures);
-        std::cout << "GLB packed/interleaved/matrix checks and " << fixtures.RejectedCount()
+        CheckQuaternionTransforms(fixtures);
+        std::cout << "GLB packed/interleaved/quaternion/matrix checks and " << fixtures.RejectedCount()
                   << " malformed fixtures passed\n";
         return 0;
     }
