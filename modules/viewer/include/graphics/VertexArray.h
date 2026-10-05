@@ -3,42 +3,35 @@
 #include <cstdint>
 
 /**
- * @brief OpenGL VAO(Vertex Array Object)를 RAII로 관리한다.
- *
+ * @brief 정점 데이터를 읽는 형식과 index buffer 연결을 draw에 제공한다.
  * @details
- * VBO는 byte 배열일 뿐이므로 GPU는 각 byte가 position인지 normal인지 알 수 없다.
- * VAO는 `location 0 = vec3 position`처럼 vertex attribute 해석 규칙과 연결된 buffer 상태를 기억한다.
- * Mesh를 그릴 때 VAO를 바인딩하면 해당 vertex input 구성이 복원된다.
- */
-/*
- * [추가 그래픽스 용어 설명]
- * - VAO(Vertex Array Object): 어떤 VBO를 어떤 vertex attribute 형식으로 읽을지 기억하는 OpenGL 상태 객체.
- * - Attribute Location: Shader의 vertex input 번호. 예: location 0=position, 1=normal.
- * - Vertex input layout: Vertex 구조체의 byte 배치를 Shader input과 연결하는 규칙.
- * - Bind: 이후 draw가 이 VAO의 vertex input 설정을 사용하도록 현재 OpenGL 상태에 선택하는 것.
+ * VAO(Vertex Array Object)는 정점이나 index의 byte 데이터를 보관하지 않는다. Mesh 생성 중 설정한
+ * attribute의 형식·stride·정점 안의 byte offset과 EBO 연결을 기억한다. 실제 데이터는 VertexBuffer와
+ * IndexBuffer가 GPU 메모리에 보관한다.
  *
- * VAO 자체가 실제 Vertex 데이터를 저장하는 것은 아니다.
- * 데이터는 VBO/EBO에 있고 VAO는 "어떻게 읽을지"에 대한 연결 상태를 기억한다.
+ * OpenGL은 VAO가 연결된 상태에서 attribute와 GL_ELEMENT_ARRAY_BUFFER 연결을 설정하면 그 상태를
+ * 해당 VAO에 기록한다. VAO가 선택된 채 EBO를 0에 바인딩하면 저장된 연결도 끊긴다. draw할 때 이 VAO를
+ * 선택하면 기억한 정점 형식과 EBO를 함께 사용할 수 있다.
  */
 class VertexArray
 {
 public:
-    /** @brief 새로운 OpenGL VAO를 생성한다. */
+    /** @brief VAO를 만든다. 유효한 현재 OpenGL context가 필요하다. */
     VertexArray();
 
-    /** @brief 소유한 VAO를 삭제한다. */
+    /** @brief OpenGL context가 현재 유효한 동안 VAO를 해제한다. */
     ~VertexArray();
 
     VertexArray(const VertexArray&) = delete;
     VertexArray& operator=(const VertexArray&) = delete;
 
-    /** @brief 이 VAO를 현재 vertex array state로 바인딩한다. */
+    /** @brief 이 VAO의 정점 형식과 EBO 연결을 현재 OpenGL 상태로 선택한다. */
     void Bind() const;
 
-    /** @brief VAO binding을 해제한다. */
+    /** @brief 현재 VAO 선택을 해제한다. 저장된 설정과 GPU 데이터는 지워지지 않는다. */
     void UnBind() const;
 
 private:
-    // OpenGL이 발급한 VAO handle. 0은 OpenGL의 default/no-user-VAO 상태를 의미한다.
+    // OpenGL VAO 이름(ID).
     uint32_t m_RendererID = 0;
 };
