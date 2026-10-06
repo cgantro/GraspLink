@@ -3,35 +3,34 @@
 #include <cstdint>
 
 /**
- * @brief 정점 데이터를 읽는 형식과 index buffer 연결을 draw에 제공한다.
+ * @brief VertexArray Object(VAO)는 GPU 정점 자료의 읽는 방법과 꼭짓점 연결 배열을 기억한다.
  * @details
- * VAO(Vertex Array Object)는 정점이나 index의 byte 데이터를 보관하지 않는다. Mesh 생성 중 설정한
- * attribute의 형식·stride·정점 안의 byte offset과 EBO 연결을 기억한다. 실제 데이터는 VertexBuffer와
- * IndexBuffer가 GPU 메모리에 보관한다.
+ * 정점(vertex)은 삼각형의 꼭짓점 위치와 법선·이미지 좌표 같은 속성 자료다. VAO는 이 값이나 연결 번호 자체를 보관하지 않고 각 속성의 자료형·다음 정점까지의 byte 간격·정점 안에서 속성이 시작하는 위치를 기억한다.
+ * VertexBuffer Object(VBO)는 위치·법선·이미지 좌표가 들어 있는 실제 정점 byte 자료를 GPU에 보관한다.
+ * Element Buffer Object(EBO)는 삼각형마다 어느 정점 번호를 이을지 보관한다. 실제 정점 자료는 VertexBuffer, 연결 번호는 IndexBuffer에 있다.
  *
- * OpenGL은 VAO가 연결된 상태에서 attribute와 GL_ELEMENT_ARRAY_BUFFER 연결을 설정하면 그 상태를
- * 해당 VAO에 기록한다. VAO가 선택된 채 EBO를 0에 바인딩하면 저장된 연결도 끊긴다. draw할 때 이 VAO를
- * 선택하면 기억한 정점 형식과 EBO를 함께 사용할 수 있다.
+ * VAO를 선택한 상태에서 정점 속성과 연결 번호 배열을 지정하면 그 설정을 VAO가 기억한다. 선택된 상태에서 연결 번호 배열을 0으로 바꾸면 이 VAO가 기억한 연결도 끊긴다.
+ * 그릴 때 같은 VAO를 선택하면 정점 자료를 읽는 방법과 삼각형 연결 번호를 함께 사용한다.
  */
 class VertexArray
 {
 public:
-    /** @brief VAO를 만든다. 유효한 현재 OpenGL context가 필요하다. */
+    /** @brief GPU 정점 읽기 설정을 기억할 VAO를 만든다. 현재 스레드에 OpenGL 명령을 실행할 context가 활성화되어야 한다. */
     VertexArray();
 
-    /** @brief OpenGL context가 현재 유효한 동안 VAO를 해제한다. */
+    /** @brief 저장한 GPU 정점 읽기 설정을 해제한다. 현재 스레드에서 OpenGL 실행 환경(context)이 활성화되어야 한다. */
     ~VertexArray();
 
     VertexArray(const VertexArray&) = delete;
     VertexArray& operator=(const VertexArray&) = delete;
 
-    /** @brief 이 VAO의 정점 형식과 EBO 연결을 현재 OpenGL 상태로 선택한다. */
+    /** @brief 이 객체가 기억한 정점 자료 읽기 방법과 연결 번호 배열을 선택한다. */
     void Bind() const;
 
-    /** @brief 현재 VAO 선택을 해제한다. 저장된 설정과 GPU 데이터는 지워지지 않는다. */
+    /** @brief 정점 읽기 설정의 현재 선택을 해제한다. 저장한 읽기 방법과 GPU 자료는 남는다. */
     void UnBind() const;
 
 private:
-    // OpenGL VAO 이름(ID).
+    // GPU가 부여한 정점 읽기 설정의 이름.
     uint32_t m_RendererID = 0;
 };

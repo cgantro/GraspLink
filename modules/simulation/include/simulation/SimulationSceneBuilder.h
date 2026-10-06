@@ -6,20 +6,23 @@ namespace grasplink::simulation
 {
 
 /**
- * @brief Scene의 렌더 바닥에 대응하는 Static Environment 설정을 만든다.
- * @details 이 Builder는 ECS 설정만 기록한다. 실제 Jolt Body 생성·갱신·해제는
- * PhysicsSystemModule이 담당한다. 시각 GLB와 충돌 Box는 별도 형상이며, Box는 Entity 기준
- * 치수 [m]로 고정된다. Static Environment 자신의 시각 scale은 허용되어도 Box 치수는 변하지 않는다.
+ * @brief 화면 바닥 아래에 고정된 Environment 충돌 Body 설정을 만든다.
+ * @details 이 함수는 Entity에 RigidBody와 Colliders 설정만 넣는다.
+ * PhysicsSystemModule이 이 설정을 읽어 Jolt Body를 생성하고 갱신하며 해제한다.
+ * GLB 바닥은 화면에 그리는 Mesh이고 Box는 접촉 판정에 쓰는 별도 Collider다.
+ * Box 크기는 Entity scale과 무관하게 미터 단위로 고정된다.
+ * 따라서 화면 Mesh 크기를 바꿔도 충돌 Box 크기는 바뀌지 않는다.
  */
 class SimulationSceneBuilder final
 {
 public:
     /**
-     * @brief 바닥 Entity에 고정 환경 Body와 Box 형상을 설정한다.
-     * @param floor GLB 바닥 Mesh를 가진 Scene Entity. 부모 scale은 단위여야 한다.
-     * @details plane.glb는 X/Z ±3 m, 표면 Y=0이며 렌더 형상의 두께는 1 mm다.
-     * 충돌 Box는 반크기 (3, 0.02, 3) m, 중심은 Entity 원점에서 Y=-0.015 m라서
-     * 상면이 표면보다 5 mm 높다. 얇은 시각 Mesh 대신 40 mm Box를 써 접촉 두께를 확보한다.
+     * @brief 바닥 Entity에 움직이지 않는 Environment Body와 Box Collider 설정을 붙인다.
+     * @param floor GLB 바닥 Mesh를 가진 Entity다. 부모 scale은 단위여야 한다.
+     * @details plane.glb는 X와 Z축으로 원점에서 3 m까지 뻗고 표면은 Y=0이며 두께는 1 mm다.
+     * 충돌 Box 중심은 Entity 원점에서 Y=-0.015 m이고 반쪽 크기는 (3, 0.02, 3) m다.
+     * 따라서 Box 윗면은 Y=0.005 m로 렌더 바닥보다 5 mm 높다.
+     * 40 mm 두께의 Box를 아래로 내리면 화면 Mesh보다 두꺼운 충돌면이 물체가 바닥을 통과하지 않게 받친다.
      */
     static void ConfigureFloor(Entity& floor);
 

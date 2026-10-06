@@ -3,40 +3,38 @@
 #include <cstdint>
 
 /**
- * @brief 정점의 연속된 byte 데이터를 GPU에 복사해 draw에서 재사용한다.
+ * @brief VertexBuffer Object(VBO)는 꼭짓점의 위치·법선·이미지 좌표 byte를 GPU에 보관한다.
  * @details
- * 이 buffer는 CPU 배열을 소유하지 않고 생성 시 내용을 GL_ARRAY_BUFFER로 업로드한다. 업로드가 끝난 뒤
- * 원본 CPU 배열을 보관할 필요는 없다. UnBind는 현재 buffer 선택만 해제하며 GPU 사본은 유지한다.
- * GPU 자원은 소멸자에서 삭제된다.
+ * Vertex(정점)는 삼각형을 이루는 한 꼭짓점의 위치와 표면 방향, 이미지에서 색을 읽을 위치를 담는다. 생성자는 이 CPU byte를 GPU 메모리에 복사한다.
+ * 복사 뒤 CPU 원본은 보관하지 않는다. UnBind는 현재 선택만 해제하고 GPU byte는 유지하며, 객체 파괴 때 GPU 사본을 삭제한다.
  *
- * Mesh는 전체 Vertex 배열의 byte 수를 전달하고 GL_STATIC_DRAW 사용 힌트를 준다. 위치·법선·UV를 읽는
- * 형식은 VAO에 설정한다. stride는 Vertex 사이 byte 간격이고 offset은 한 Vertex 안 속성의 시작 위치다.
+ * VAO(VertexArray Object)는 정점 자료를 해석하는 설정을 기억한다. stride는 다음 Vertex까지의 byte 간격이고 offset은 한 Vertex 안에서 속성이 시작하는 위치다.
  */
 class VertexBuffer
 {
 public:
     /**
-     * @brief 정점 데이터를 GPU buffer에 복사한다.
-     * @param data 복사할 원본 주소. 업로드 후 호출자가 원본을 보관할 필요는 없다.
-     * @param size 복사할 전체 크기 [byte]. 정점 원소 개수가 아니다.
-     * @details GL_STATIC_DRAW는 초기 업로드 뒤 드물게 변경하는 사용 패턴 힌트다. data와 size의 유효성은
-     * 별도로 검사하지 않으므로 호출자가 올바른 범위를 전달해야 한다. 유효한 현재 OpenGL context가 필요하다.
+     * @brief 연속된 꼭짓점 데이터를 GPU 메모리에 복사한다.
+     * @param data 복사할 원본 byte 배열 주소. 업로드가 끝나면 원본을 보관할 필요가 없다.
+     * @param size 복사할 전체 크기 [byte]. 정점 개수가 아니다.
+     * @details GPU에 처음 올린 뒤 드물게 바꿀 데이터라는 힌트를 전달한다. 주소와 크기는 검사하지 않으므로 호출자가 유효한 범위를 준다.
+     * GPU 작업을 실행하는 OpenGL context가 현재 스레드에서 활성화되어야 한다.
      */
     VertexBuffer(const void* data, uint32_t size);
 
-    /** @brief 현재 유효한 OpenGL context에서 GPU buffer를 해제한다. */
+    /** @brief GPU에 보관한 꼭짓점 데이터를 해제한다. 현재 스레드에서 OpenGL 실행 환경(context)이 활성화되어야 한다. */
     ~VertexBuffer();
 
     VertexBuffer(const VertexBuffer&) = delete;
     VertexBuffer& operator=(const VertexBuffer&) = delete;
 
-    /** @brief 이 buffer를 GL_ARRAY_BUFFER의 현재 대상으로 선택한다. */
+    /** @brief GPU의 현재 정점 자료 대상으로 이 VBO를 선택한다. 실제로 어떤 속성이 있는지는 VAO가 따로 기억한다. */
     void Bind() const;
 
-    /** @brief GL_ARRAY_BUFFER의 현재 선택을 해제한다. GPU 데이터는 유지된다. */
+    /** @brief 현재 꼭짓점 배열 선택을 해제한다. 복사한 데이터는 유지된다. */
     void UnBind() const;
 
 private:
-    // OpenGL buffer 이름(ID).
+    // GPU가 부여한 꼭짓점 배열의 이름.
     uint32_t m_RendererID = 0;
 };

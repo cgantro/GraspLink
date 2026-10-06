@@ -30,14 +30,15 @@ void AppendUInt32(Bytes& bytes, std::uint32_t value)
 
 Bytes TriangleBytes()
 {
-    // 최소 POSITION fixture: 3개 FLOAT VEC3(36 bytes) 뒤에 여유 바이트를 둬 view 경계를 따로 시험한다.
+    // 가장 작은 POSITION 자료로 float 3개짜리 3D 점 세 개(총 36 bytes)를 만든다.
+    // 뒤의 여유 공간으로 점 데이터 끝과 glTF buffer view 끝을 따로 검사한다.
     Bytes bytes(64, 0U);
     const float positions[]{0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F};
     std::memcpy(bytes.data(), positions, sizeof(positions));
     return bytes;
 }
 
-// 입력: JSON과 BIN을 분리 구성해 TinyGLTF 파싱을 포함한 실제 loader 경로를 확인한다. POSITION 값은 모델 공간 좌표다.
+// JSON 설명과 바이너리(BIN) 데이터를 따로 만들어 TinyGLTF 파싱부터 실제 로더 처리까지 확인한다. POSITION 정점값은 모델 자체의 기준 좌표다.
 std::string TriangleJson(
     const std::string& accessor = R"({"bufferView":0,"componentType":5126,"count":3,"type":"VEC3"})",
     const std::string& views = R"({"buffer":0,"byteOffset":0,"byteLength":36})",
@@ -50,8 +51,8 @@ std::string TriangleJson(
 
 /**
  * @brief 임시 경로에 직접 만든 최소 GLB와 잘못된 GLB 입력을 제공하는 fixture.
- * @details JSON/BIN chunk의 4-byte 정렬과 GLB 헤더 길이를 구성한다. 각 거부 사례는 loader가 실패 이유를
- * 진단에 남기는지 확인하며, fixture 파일은 객체 수명이 끝날 때 임시 디렉터리와 함께 제거된다.
+ * @details JSON과 BIN chunk는 GLB 파일 안에서 JSON 설명과 정점 자료를 담는 두 구역이다. Fixture는 각 구역을 4-byte 경계에 맞추고 전체 파일 길이를 헤더에 기록한다.
+ * 잘못된 입력이 예상한 이유로 거부되는지 확인하고, 임시 파일과 디렉터리는 시험 객체가 끝날 때 제거한다.
  */
 class Fixtures
 {
@@ -71,7 +72,7 @@ public:
 
     std::filesystem::path Write(const std::string& name, std::string json, Bytes binary = TriangleBytes())
     {
-        // JSON은 공백, BIN은 0으로 chunk 경계를 4 bytes에 맞춘 뒤 little-endian GLB header를 기록한다.
+        // GLB chunk 시작 주소가 4 bytes 경계에 오도록 JSON에는 공백을, BIN에는 0을 채우고, 그 다음 little-endian 형식의 GLB header를 기록한다.
         while (json.size() % 4U != 0U) json.push_back(' ');
         while (binary.size() % 4U != 0U) binary.push_back(0U);
         Bytes bytes;
@@ -94,7 +95,7 @@ public:
     void Reject(const std::string& name, const std::string& json, const std::string& diagnostic,
         Bytes binary = TriangleBytes())
     {
-        // 로더가 해당 입력을 거부하고 예상한 진단을 냈을 때만 malformed fixture로 센다.
+        // 잘못된 시험 자료는 로더가 거부하고 예상한 오류 설명까지 반환한 경우에만 의도한 실패 사례로 인정한다.
         const auto path = Write(name, json, std::move(binary));
         try { GltfLoader::LoadGLB(path); }
         catch (const std::runtime_error& error)
@@ -116,7 +117,7 @@ private:
 
 void CheckRepositoryAssets()
 {
-    // 저장소의 실제 로봇/바닥 GLB가 mesh와 단일 rooted node tree로 읽히는지 확인한다.
+    // 저장소에 있는 로봇과 바닥 GLB 파일이 Mesh를 읽고 하나의 최상위 node에서 시작하는 계층으로 구성되는지 확인한다.
     for (const char* filename : {"HCR12A_R00.glb", "HCR12A_2F-85.glb", "plane.glb"})
     {
         const auto resource = GltfLoader::LoadGLB(std::filesystem::path(GRASPLINK_TEST_ASSET_DIR) / filename);
@@ -138,7 +139,8 @@ void CheckRepositoryAssets()
 
 void CheckAccessors(Fixtures& fixtures)
 {
-    // Packed/interleaved FLOAT accessor의 stride/offset 계산과 buffer 범위·overflow·sparse·0개·NaN 거부를 확인한다.
+    // 정점 좌표가 연달아 저장되거나 다른 정점 속성과 섞여 저장되어도 각 FLOAT 위치를 정확히 읽는지 확인한다.
+    // 자료 구역 밖 접근, 크기 overflow, 지원하지 않는 sparse 자료, 정점 0개, NaN 좌표는 오류로 거부해야 한다.
     const auto valid = GltfLoader::LoadGLB(fixtures.Write("triangle", TriangleJson()));
     Require(valid.meshes.front().vertices.size() == 3 && valid.meshes.front().indices ==
         std::vector<std::uint32_t>{0U, 1U, 2U}, "packed FLOAT positions and generated indices");
@@ -173,7 +175,7 @@ void CheckAccessors(Fixtures& fixtures)
     fixtures.Reject("stride-smaller-than-element", TriangleJson(
         R"({"bufferView":0,"componentType":5126,"count":3,"type":"VEC3"})",
         R"({"buffer":0,"byteLength":36,"byteStride":8})"), "Invalid glTF accessor stride");
-    // count가 0이면 buffer 끝 주소에서 읽지 않고 빈 mesh로 거부한다.
+    // 요소 개수가 0이면 buffer 끝을 읽어 보지 않고 Mesh가 비어 있다는 오류로 입력을 거부해야 한다.
     fixtures.Reject("zero-count-at-buffer-end", TriangleJson(
         R"({"bufferView":0,"componentType":5126,"count":0,"type":"VEC3"})",
         R"({"buffer":0,"byteOffset":64,"byteLength":0})"), "zero vertices");
@@ -185,7 +187,7 @@ void CheckAccessors(Fixtures& fixtures)
 
 void CheckTransformsAndHierarchy(Fixtures& fixtures)
 {
-    // 노드 matrix는 비퇴화 TRS로 분해되고, 잘못된 원근/기울기/스케일/quaternion과 순환·다중 부모 입력은 거부돼야 한다.
+    // 각 모델 node의 matrix는 위치·회전·크기로 분해할 수 있어야 한다. 원근 변환, 회전과 크기로 나눌 수 없는 기울어진 행렬, 잘못된 크기나 quaternion, 부모 순환, 부모가 둘인 연결은 로더가 거부해야 한다.
     const std::string accessor = R"({"bufferView":0,"componentType":5126,"count":3,"type":"VEC3"})";
     const std::string view = R"({"buffer":0,"byteLength":36})";
     const auto translated = GltfLoader::LoadGLB(fixtures.Write("valid-matrix", TriangleJson(accessor, view,
@@ -222,8 +224,8 @@ void CheckTransformsAndHierarchy(Fixtures& fixtures)
 
 /**
  * @brief glTF의 xyzw 순서로 Local TRS quaternion fixture를 만든다.
- * @details GLM 생성자 순서인 wxyz와 구분해 기록한다. float 정밀도를 보존하므로 JSON 출력 오차가
- * pitch 90도 부근의 회전 보존 검사를 가리지 않는다.
+ * @details glTF는 quaternion을 (x,y,z,w) 순서로 기록하지만 GLM 생성자는 (w,x,y,z)를 받는다. 이 helper는 GLB 입력 형식의 순서로 직접 기록한다.
+ * float 정밀도를 보존하므로 JSON 출력 과정의 오차가 위아래 기울기가 90도에 가까운 회전 검사를 가리지 않는다.
  */
 std::string QuaternionTrsNode(const glm::vec3& position, const glm::quat& rotation, const glm::vec3& scale)
 {
@@ -235,7 +237,7 @@ std::string QuaternionTrsNode(const glm::vec3& position, const glm::quat& rotati
     return json.str();
 }
 
-/** @brief GLM 열 벡터 행렬을 glTF의 column-major matrix 배열로 기록한다. */
+/** @brief GLM의 열 벡터 행렬을 glTF가 요구하는 열 우선 배열 순서로 시험 자료에 기록한다. */
 std::string MatrixNode(const glm::mat4& matrix)
 {
     std::ostringstream json;
@@ -253,7 +255,7 @@ std::string MatrixNode(const glm::mat4& matrix)
 void RequireNodeQuaternion(const NodeData& node, const glm::quat& expected, const std::string& label)
 {
     RequireNear(glm::length(node.rotation), 1.0, 1e-5, label + " unit quaternion");
-    // quaternion은 부호가 반대여도 같은 방향이다. matrix 분해가 선택하는 부호에 의존하지 않는다.
+    // quaternion의 부호를 뒤집어도 같은 회전이다. 행렬을 quaternion으로 분해할 때 라이브러리가 어느 부호를 고르는지에 시험이 좌우되지 않게 한다.
     RequireNear(std::abs(glm::dot(node.rotation, glm::normalize(expected))), 1.0, 1e-5,
         label + " quaternion direction");
 }
@@ -270,8 +272,8 @@ void RequireNodeMatrix(const NodeData& node, const glm::mat4& expected, const st
 
 /**
  * @brief GLB TRS와 matrix 입력이 quaternion 방향과 Local 행렬을 보존하는지 확인한다.
- * @details 기대 회전은 축 회전 quaternion을 직접 곱해 만든다. Euler 각으로 되돌리는 과정 없이
- * pitch 90도 양쪽의 복합 회전, glTF xyzw 순서, 반대 부호와 비단위 입력을 비교한다.
+ * @details 기대 회전은 각 축의 회전을 quaternion끼리 직접 곱해 만든다. 세 개의 각도로 되돌리지 않고 기울기가 90도보다 조금 작거나 큰 복합 회전도 방향이 유지되는지 확인한다.
+ * GLB의 xyzw 순서, 성분 부호만 반대인 같은 방향, 길이가 1이 아닌 입력도 함께 검사한다.
  */
 void CheckQuaternionTransforms(Fixtures& fixtures)
 {
@@ -320,9 +322,9 @@ void CheckQuaternionTransforms(Fixtures& fixtures)
 
 /**
  * @brief 실제 저장소 모델과 직접 만든 malformed GLB fixture에서 loader 계약을 확인한다.
- * @details 입력은 임시 파일로 구성해 accessor 메모리 범위와 노드 계층 검증을 회귀 검사한다. TRS와 matrix의
- * quaternion 방향 및 특이 자세 부근의 Local 행렬을 비교한다. Mesh vertex 위치는 원래 GLB 좌표값을
- * 보존하며, 이 테스트 자체는 OpenGL 업로드나 렌더링을 수행하지 않는다.
+ * @details Accessor는 GLB에서 정점 자료가 어디에 있고 몇 개를 어떤 간격으로 읽을지 설명하는 항목이다. 임시 파일로 범위 오류와 부모-자식 node 검사를 확인한다.
+ * TRS 입력과 행렬 입력이 같은 회전 방향을 보존하는지, 기울기가 90도에 가까운 Local 변환도 정확한지 비교한다. 정점 위치는 원본 GLB 좌표를 유지해야 한다.
+ * 이 시험은 CPU에서 파일을 읽는 단계만 확인하며 OpenGL에 올리거나 화면에 그리지는 않는다.
  */
 int main()
 {

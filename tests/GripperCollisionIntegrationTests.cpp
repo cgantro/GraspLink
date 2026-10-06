@@ -36,7 +36,7 @@ struct Fixture
 
     Fixture()
     {
-        // 실제 GLB와 같은 authored Gripper 하위 계층을 구성한다. Proxy pose 입력은 이 ECS 관절들에서 온다.
+        // 실제 GLB에 저장된 것과 같은 그리퍼 자식 계층을 구성한다. 충돌용 단순 형상의 자세는 이 ECS 관절들의 변환을 따라야 한다.
         scenes.LoadScene<Scene>();
         scenes.OnUpdate(0.0F);
         scene = scenes.GetActiveScene();
@@ -77,8 +77,9 @@ struct Fixture
 
     void Step(int count = 1)
     {
-        // authored Local→World 갱신 뒤 Kinematic 목표를 Jolt에 보내고, Dynamic 결과를 다시 World로 계산한다.
-        // Controller 없는 그리퍼 fixture라 proxy가 이 hierarchy의 관절 자세를 그대로 따라야 한다.
+        // GLB 관절의 Local 값을 Scene 기준 World 행렬로 누적한 뒤 Kinematic 목표를 Jolt에 전달한다.
+        // Dynamic Body 결과는 ECS의 부모 기준 값으로 되돌리고, 새 World 행렬을 계산한다.
+        // Controller가 없는 시험용 그리퍼이므로 충돌용 단순 형상이 이 관절 계층의 자세를 정확히 따라야 한다.
         TransformSystemModule::UpdateWorldTransforms(world);
         for (int i = 0; i < count; ++i)
         {
@@ -97,8 +98,8 @@ glm::vec3 WorldPoint(const Entity& entity, const glm::vec3& local)
 
 glm::vec3 TopSurfacePoint(Entity proxy, float& topY)
 {
-    // hull 정점을 proxy Local에서 Scene World로 옮겨 가장 높은 점을 찾는다.
-    // 표면에서 2 mm 이내 정점 평균은 단일 꼭짓점 선택보다 GLB 분할에 덜 민감한 지지점이다.
+    // 충돌용 단순 형상의 꼭짓점을 자체 좌표에서 Scene 좌표로 변환해 가장 높은 점을 찾는다.
+    // 표면에서 2 mm 안에 있는 여러 꼭짓점의 평균을 사용하면 한 꼭짓점만 고르는 것보다 GLB 메시 분할 차이에 덜 민감한 지지 위치를 얻는다.
     std::vector<glm::vec3> points;
     for (const auto& shape : proxy.Get<Colliders>().shapes)
         for (const auto& point : shape.pointsMeters)
@@ -128,8 +129,8 @@ void DropOnTip(Fixture& fixture, const char* tipJoint, const char* proxyName)
     float surfaceY = 0.0F;
     const glm::vec3 surface = TopSurfacePoint(proxy, surfaceY);
 
-    // 표면에서 70 mm 위에 8 mm box를 놓는다. 300 × 4 ms 후 중심은 표면보다 2~20 mm 위여야 한다.
-    // 아래 경계는 관통, 위 경계는 collider와 만나지 못한 경우를 잡는다.
+    // 상자를 표면에서 70 mm 위에 놓고 한 변 8 mm로 만든다. 300회의 4 ms 물리 계산 뒤 상자 중심은 표면보다 2~20 mm 위에 있어야 한다.
+    // 너무 낮은 결과는 표면 관통을, 너무 높은 결과는 충돌 형상이 상자에 닿지 못한 경우를 가리킨다.
     Entity drop = fixture.scene->CreateEntity(std::string("Drop_") + tipJoint);
     drop.SetLocalPosition({surface.x, surfaceY + 0.07F, surface.z});
     drop.set<RigidBody>({BodyMotionType::Dynamic, CollisionLayer::DynamicObject})
@@ -144,7 +145,7 @@ int main()
 {
     try
     {
-        // HCR12A_2F-85.glb 원본 관절·메시 hierarchy를 사용한다. 임의 proxy geometry로 대체하지 않는다.
+        // HCR12A_2F-85.glb에 저장된 관절과 Mesh 부모 관계를 그대로 사용한다. 시험용 임의 충돌 형상으로 원본 모델 구조를 대체하지 않는다.
         Fixture fixture;
         const std::size_t beforeInvalid = fixture.CountDescendants(fixture.robotRoot);
         ModelResource missingMesh = fixture.model;
@@ -167,7 +168,7 @@ int main()
             "wrong hierarchy is rejected before creating proxy entities");
         misplacedMesh.SetParent(originalMeshParent);
 
-        // 잘못된 mesh 이름과 owning joint 밖으로 옮긴 메시를 각각 거부하고, 실패 때 proxy가 부분 생성되지 않는지 본다.
+        // 잘못된 Mesh 이름과 소유 관절 바깥으로 이동한 Mesh를 각각 거부하는지 확인한다. 실패하면 충돌 형상이 일부만 만들어진 상태로 남지 않아야 한다.
         grasplink::simulation::ConfigureTwoF85Colliders(*fixture.scene, fixture.robotRoot, fixture.model);
         TransformSystemModule::UpdateWorldTransforms(fixture.world);
 
@@ -195,8 +196,8 @@ int main()
 
         Entity leftTip = fixture.gripper.FindChildByNameRecursive("LeftFingerTipJoint_CollisionProxy");
         Entity rightTip = fixture.gripper.FindChildByNameRecursive("RightFingerTipJoint_CollisionProxy");
-        // fingertip hull World 점을 Gripper local로 역변환해 열린 손가락 사이 거리를 잰다.
-        // 85 mm는 GLB 열린 자세에서 충돌 형상이 통로를 막지 않는지 보는 기준이다.
+        // 손끝 충돌 형상의 Scene 좌표 꼭짓점을 그리퍼 Local 좌표로 되돌려 열린 손가락 사이의 폭을 잰다.
+        // 85 mm보다 넓어야 GLB의 열린 자세에서 충돌 형상이 손가락 사이 통로를 막지 않았다고 볼 수 있다.
         const glm::mat4 worldToGripper = glm::inverse(fixture.gripper.GetWorldMatrix());
         float leftMaxX = -1.0F;
         float rightMinX = 1.0F;
@@ -214,7 +215,7 @@ int main()
             }
         RequireNear(rightMinX - leftMaxX, 0.085, 1.0e-5, "open fingertip aperture is 85 mm");
 
-        // Root translation과 non-identity 회전 뒤에도 World pose가 authored joint hierarchy와 일치해야 한다.
+        // 모델 root에 이동과 항등이 아닌 회전을 적용해도 충돌 형상의 World 자세가 GLB 관절 계층에서 계산한 자세와 같아야 한다.
         fixture.robotRoot.SetLocalPosition({0.0F, 0.3F, 0.0F});
         fixture.gripper.SetLocalPosition(glm::vec3(0.0F));
         fixture.gripper.SetLocalRotation(glm::angleAxis(1.5707963F, glm::vec3{1.0F, 0.0F, 0.0F}));
@@ -250,7 +251,7 @@ int main()
         for (auto& [proxy, colliders] : otherProxyColliders) proxy.set<Colliders>(colliders);
         fixture.Step(1);
 
-        // 열린 fingertip 사이 통로 아래로 떨어져야 한다. 가상의 닫힌 손바닥/손가락 hull 회귀를 잡는다.
+        // 상자가 열린 손끝 사이 통로를 통과해 아래로 떨어져야 한다. 잘못해서 손바닥이나 손가락 전체를 막힌 볼록 형상으로 만든 회귀를 검출한다.
         Entity apertureDrop = fixture.scene->CreateEntity("OpenApertureDrop");
         apertureDrop.SetLocalPosition({0.0F, 0.7F, 0.13F});
         apertureDrop.set<RigidBody>({BodyMotionType::Dynamic, CollisionLayer::DynamicObject})
@@ -258,7 +259,7 @@ int main()
         fixture.Step(350);
         Require(apertureDrop.GetLocalPosition().y < -0.15F, "dynamic object passes through open finger aperture");
 
-        // Root를 올린 뒤 새 위치에서 접촉하고 예전 위치에서는 낙하해야 pose 갱신과 구 Body 재생성을 모두 검증한다.
+        // 모델 root를 올린 새 위치에서는 상자가 손끝에 닿고, 예전 위치에서는 바닥으로 떨어져야 한다. 이 결과로 자세 갱신과 기존 Jolt Body의 재생성을 함께 확인한다.
         float oldSurfaceY = 0.0F;
         const glm::vec3 oldSurface = TopSurfacePoint(leftTip, oldSurfaceY);
         fixture.robotRoot.SetLocalPosition({0.0F, 0.6F, 0.0F});
@@ -282,7 +283,7 @@ int main()
         Require(rootMoveDrop.GetLocalPosition().y < oldSurfaceY - 0.05F,
             "object at old fingertip position falls after root collider moves");
 
-        // Root를 고정하고 한 finger joint만 회전해 해당 Kinematic proxy가 관절 Local 회전을 따라가는지 검사한다.
+        // 모델 root는 고정한 채 손가락 관절 하나만 회전한다. 그 관절에 연결된 Kinematic 충돌 형상이 같은 Local 회전을 따라가는지 확인한다.
         Entity leftJoint = fixture.gripper.FindChildByNameRecursive("LeftFingerTipJoint");
         float oldFingerSurfaceY = 0.0F;
         const glm::vec3 oldFingerSurface = TopSurfacePoint(leftTip, oldFingerSurfaceY);
@@ -302,7 +303,7 @@ int main()
                 movedFingerDrop.GetLocalPosition().y < newFingerSurfaceY + 0.02F,
             "object contacts the physically rotated fingertip collider");
 
-        // 같은 설정을 반복 적용하면 이미 존재하는 이름 때문에 거부되고 proxy를 중복 생성하지 않는다.
+        // 동일한 설정을 두 번 적용하면 이름이 이미 등록되어 있다는 이유로 두 번째 생성이 거부되고 충돌 형상이 중복되지 않아야 한다.
         ExpectThrows<std::invalid_argument>([&]
         {
             grasplink::simulation::ConfigureTwoF85Colliders(*fixture.scene, fixture.robotRoot, fixture.model);
@@ -310,7 +311,7 @@ int main()
         Require(fixture.CountDescendants(fixture.robotRoot) == beforeInvalid + 7,
             "repeated configuration does not create partial proxies");
 
-        // Scene 교체는 Scene 소유 proxy subtree와 PhysicsSystemModule binding을 함께 정리해야 한다.
+        // Scene을 교체할 때 Scene이 소유한 충돌 형상 자손 계층과 PhysicsSystemModule의 Entity 연결 기록도 함께 정리되어야 한다.
         const Entity oldSceneRoot(fixture.scene->GetSceneRoot());
         const Entity oldProxy = fixture.gripper.FindChildByNameRecursive("Gripper_CollisionProxy");
         fixture.scenes.LoadScene<Scene>();

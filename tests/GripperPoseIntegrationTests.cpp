@@ -38,7 +38,7 @@ using grasplink::physics::CollisionLayer;
 
 void RequireVector(const glm::vec3& actual, const glm::vec3& expected, const std::string& label)
 {
-    // GLB/Entity는 float, 기구학은 double을 사용한다. 위치의 20 μm 오차로 변환 정밀도 차이를 허용한다.
+    // GLB에서 만든 Entity 변환은 float로 저장하지만 기구학 계산은 double 정밀도를 쓴다. 두 계산 경로의 반올림 차이를 고려해 위치 비교에 20 μm의 허용 오차를 둔다.
     for (int axis = 0; axis < 3; ++axis)
         RequireNear(actual[axis], expected[axis], 2.0e-5, label);
 }
@@ -52,7 +52,7 @@ void RequireMatrix(const glm::mat4& actual, const glm::mat4& expected, const std
 
 void RequireRotation(const glm::quat& actual, const glm::quat& expected, const std::string& label)
 {
-    // q와 -q는 같은 방향이다. 정규화 내적으로 회전만 비교한다.
+    // quaternion q와 -q는 같은 회전을 나타낸다. 단위 길이로 정규화한 두 값의 내적을 사용해 부호가 달라도 회전 방향이 같은지 비교한다.
     Require(std::abs(glm::dot(glm::normalize(actual), glm::normalize(expected))) > 0.99999F, label);
 }
 
@@ -62,9 +62,10 @@ glm::vec3 InGripper(const Entity& entity, const Entity& gripper)
 }
 
 /**
- * @brief 실제 GLB 전체 계층에서 Controller→관절→World→Jolt 흐름을 실행한다.
- * @details GPU 업로드 없이 원본 노드의 TRS와 부모 관계를 보존한다. Scene이 Entity를 소유하고,
- * 어댑터와 물리 연결은 Scene·World보다 먼저 정리된다. 팔 FK와 그리퍼 분기 회전은 같은 4 ms tick에 적용한다.
+ * @brief 실제 GLB의 전체 부모 계층에서 Controller 상태부터 관절과 Jolt까지의 자세 전달을 실행한다.
+ * @details 실제 모델 node의 위치·회전·크기와 부모 연결을 사용하되 화면 모양을 GPU에 올리지는 않는다. Entity는 장면 물체 참조이고 Scene이 삭제한다.
+ * 따라서 변환 adapter와 물리 연결은 Scene 및 물체 저장소인 Flecs World보다 먼저 정리한다.
+ * 팔 FK는 관절 각도에서 링크 위치·방향을 계산한다. 그 결과와 여러 갈래 손가락 관절의 회전을 같은 4 ms 간격에 적용한다.
  */
 struct Fixture
 {
@@ -174,7 +175,7 @@ struct Fixture
 
     double Gap()
     {
-        // 손끝 proxy의 볼록 외피를 Gripper 기준으로 되돌려 서로 마주 보는 x 경계의 간격 [m]을 측정한다.
+        // 각 손끝의 충돌용 단순 형상 정점을 그리퍼 기준 좌표로 되돌린다. 서로 마주 보는 X 방향 경계 사이의 거리 [m]를 계산한다.
         const glm::mat4 inverseRoot = glm::inverse(gripper.GetWorldMatrix());
         float leftMaximum = -std::numeric_limits<float>::infinity();
         float rightMinimum = std::numeric_limits<float>::infinity();
@@ -200,8 +201,8 @@ void CheckBranchedPose(Fixture& fixture, const std::array<glm::vec3, 2>& outerBi
     const double q = fixture.controller.GetState().closureFraction * models::robotiq::kTwoF85NominalClosedMasterRadians;
     for (std::size_t side = 0; side < 2; ++side)
     {
-        // GLB의 중간 노드들은 항등 bind 회전이다. 관절 원점은 바깥 관절의 -Z 회전으로 옮긴 bind offset이다.
-        // tip 자신의 반대 회전은 원점 위치를 옮기지 않고 손끝 방향을 유지한다. 좌우 가지는 독립 계산한다.
+        // GLB 중간 노드의 기준 회전은 항등이다. 손끝 관절의 원점은 바깥 관절의 -Z 회전에 따라 이동하는 기준 위치를 사용한다.
+        // 손끝 관절 자체에 반대 방향 회전을 적용하면 원점은 그대로 두고 손끝 방향만 맞출 수 있다. 왼쪽과 오른쪽 계층은 각각 계산한다.
         const double angle = side == 0 ? -q : q;
         const glm::vec3 offset = tipBind[side] - outerBind[side];
         const glm::vec3 expected = outerBind[side] + glm::vec3{
@@ -242,7 +243,7 @@ void CheckNonidentityBindRotation()
     Require(std::abs(glm::dot(glm::normalize(joint.GetLocalRotation()), glm::normalize(expected))) > 0.99999F,
         "nonidentity bind rotation multiplies delta on the right");
     RequireVector(joint.GetLocalPosition(), {0.03F, 0.05F, 0.09F}, "nonidentity bind position untouched");
-    // setter를 우회해 root 회전을 손상시켜도 bind 연결 시 거부한다.
+    // 정상 setter를 거치지 않고 ECS root 회전을 직접 손상시킨 경우에도 adapter가 GLB 관절을 연결할 때 잘못된 기준 자세를 거부하는지 확인한다.
     Rotation& rootRotation = root.GetHandle().get_mut<Rotation, Local>();
     rootRotation.w = rootRotation.x = rootRotation.y = rootRotation.z = 0.0F;
     ExpectThrows<std::invalid_argument>([&]
@@ -292,7 +293,7 @@ void CheckMotionAndHierarchy()
     RequireNear(fixture.controller.GetState().closureFraction, stopped, 1.0e-12, "stop holds continuous position");
     CheckBranchedPose(fixture, outerBind, tipBind);
 
-    // 팔과 모델 root를 함께 움직여도 그리퍼 bind와 분기 회전은 바뀌지 않고 World에만 부모 자세가 전파된다.
+    // 팔과 모델 root 위치를 함께 바꿔도 GLB에 저장된 그리퍼 기준 변환과 좌우 관절 회전은 그대로여야 한다. 부모의 변화만 자손 World 행렬에 누적되어야 한다.
     fixture.armState.jointPositionRadians = {0.4, -0.2, 0.1, 0.25, -0.15, 0.3};
     fixture.robotRoot.SetLocalPosition({0.7F, 0.4F, -0.6F});
     fixture.robotRoot.SetLocalRotation(glm::quat{glm::vec3{0.2F, 0.1F, -0.3F}});
@@ -346,8 +347,8 @@ glm::vec3 SupportPoint(Entity proxy, float& top)
 void CheckPhysicalFollowing()
 {
     Fixture fixture;
-    // 접촉 fixture만 Gripper를 +X 90도로 배치해 중력이 개폐 평면에 수직이게 한다.
-    // 누적 팔 변환의 역변환으로 이 World 자세를 Local에 저장한다. 원본 모델 장착의 단일 축 가정은 하지 않는다.
+    // 물리 접촉 시험에서는 그리퍼를 X축 기준 +90도로 돌려 중력이 손가락이 열리고 닫히는 평면에 수직으로 작용하게 한다.
+    // 부모 팔의 누적 변환을 역으로 적용해 원하는 Scene 기준 자세를 부모 기준 Local 값으로 구한다. 원본 모델이 특정 한 축에만 장착된다고 가정하지 않는다.
     const glm::mat4 parentWorld = fixture.gripper.GetParent().GetWorldMatrix();
     const glm::mat4 desiredWorld = glm::translate(glm::mat4(1.0F), {0.0F, 0.5F, 0.0F}) *
         glm::mat4_cast(glm::angleAxis(glm::half_pi<float>(), glm::vec3{1.0F, 0.0F, 0.0F}));
@@ -366,7 +367,7 @@ void CheckPhysicalFollowing()
     fixture.Step(300);
     Require(drop.GetLocalPosition().y > surfaceY + 0.001F && drop.GetLocalPosition().y < surfaceY + 0.02F,
         "Jolt contacts fingertip at controller-driven intermediate pose");
-    // 이미 접촉한 물체는 마찰로 함께 움직일 수 있다. 예전 위치에서 새로 낙하시켜 지지 형상의 이동을 따로 검증한다.
+    // 손끝과 이미 접촉한 물체는 마찰 때문에 함께 움직일 수 있다. 따라서 이전 접촉 위치가 아니라 새 위치에서 물체를 떨어뜨려 손끝 지지 형상이 이동했는지 독립적으로 확인한다.
     drop.Destroy();
     fixture.Command(0);
     fixture.Step(125);
@@ -397,7 +398,7 @@ void CheckPhysicalFollowing()
 }
 }
 
-/** @brief 실제 GLB의 분기 자세와 연속 개폐가 화면용 Entity·Jolt 접촉에서 일치하는지 검증한다. */
+/** @brief 실제 GLB의 갈라진 관절 계층에서 연속 개폐가 화면 Entity와 Jolt 충돌 형상에 같은 자세로 반영되는지 확인한다. */
 int main()
 {
     try

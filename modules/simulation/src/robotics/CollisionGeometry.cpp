@@ -11,8 +11,8 @@ std::vector<glm::vec3> BuildConvexSupportPoints(const std::vector<glm::vec3>& ve
     std::vector<glm::vec3> result;
     if (vertices.size() < 4) return result;
 
-    // 구면의 162개 방향과 6개 축 방향에서 가장 먼 정점을 골라 Jolt Convex Hull 입력을 제한한다.
-    // 이 근사는 오목한 메시 내부를 보존하지 않고 바깥 점을 잇는 볼록 외피로 채울 수 있다.
+    // 전체 정점에서 162개 구면 방향과 6개 축 방향으로 가장 멀리 있는 점을 고른다. 이 대표 정점만 Jolt에 전달해 Convex Hull 계산 입력을 줄인다.
+    // 선택한 바깥 점을 연결하면 오목한 메시 안쪽 공간을 그대로 남기지 못한다. 따라서 실제 메시에는 빈 곳이 있어도 볼록 충돌 외피가 그 공간을 채울 수 있다.
     constexpr int DirectionCount = 162;
     constexpr float GoldenAngle = 2.39996323F;
     auto addExtreme = [&](const glm::vec3& direction)
@@ -46,7 +46,7 @@ std::vector<glm::vec3> BuildConvexSupportPoints(const std::vector<glm::vec3>& ve
 
 bool HasHullVolume(const std::vector<glm::vec3>& points, float coordinateScaleMeters)
 {
-    // 점 4개 미만은 부피가 불가능하다. 이후에는 정규화 좌표에서 한 평면에 놓이는지도 검사한다.
+    // 서로 다른 점이 4개보다 적으면 3차원 부피를 만들 수 없다. 점이 더 있어도 한 평면 위에만 놓인 경우가 있으므로 크기 차이를 정규화한 뒤 평면 밖의 점이 있는지 확인한다.
     if (points.size() < 4) return false;
     glm::vec3 minimum = points.front();
     glm::vec3 maximum = points.front();
@@ -55,7 +55,8 @@ bool HasHullVolume(const std::vector<glm::vec3>& points, float coordinateScaleMe
         minimum = glm::min(minimum, point);
         maximum = glm::max(maximum, point);
     }
-    // 0은 부품 크기별 기준, 양수는 고정 meter 기준이다. Arm의 1.0과 Gripper의 기본값은 허용 오차가 다르다.
+    // coordinateScaleMeters는 좌표 검사에 사용할 기준 길이 [m]다. 값이 0이면 부품 크기에 맞춰 허용 오차를 정한다.
+// 양수면 그 길이에 고정한 오차를 쓴다. Arm 호출부는 1 m를 주고 Gripper는 0을 써 작은 부품 크기에 비례시킨다.
     const float extent = coordinateScaleMeters > 0.0F ? coordinateScaleMeters : glm::length(maximum - minimum);
     if (!std::isfinite(extent) || extent <= 0.0F) return false;
     std::vector<glm::vec3> normalized;

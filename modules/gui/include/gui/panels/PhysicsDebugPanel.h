@@ -4,17 +4,17 @@ namespace grasplink::gui
 {
 
 /**
- * @brief 설정 Collider 표시 여부를 조작하는 ImGui 패널.
- * @details 체크박스 상태만 소유한다. Collider 조회·투영은 ColliderOverlay가 담당하며,
- * 문구는 ECS 설정의 근사 표시와 100 ms 갱신 간격을 안내한다.
+ * @brief ECS에 등록한 충돌 형상을 화면에 표시할지 선택하는 ImGui 패널이다.
+ * @details 이 클래스는 체크박스 상태만 저장한다. ColliderOverlay가 World에 저장된 충돌 모양과 물체 위치를 읽어 화면 선 좌표로 바꾼다.
+ * 패널은 이 선이 실제 접촉 계산 결과가 아니라 설정에서 만든 근사이며, 성능을 위해 좌표를 최대 100 ms 재사용한다고 안내한다.
  */
 class PhysicsDebugPanel
 {
 public:
-    /** @brief 활성 ImGui 프레임 안에서 Collider 표시 체크박스와 범례를 그린다. */
+    /** @brief 현재 ImGui 프레임에 충돌 형상 표시 체크박스와 각 충돌 그룹 색의 범례를 그린다. */
     void Draw();
 
-    /** @brief 체크박스에서 선택한 Collider 표시 여부를 반환한다. */
+    /** @brief 사용자가 체크박스에서 선택한 충돌 형상 표시 여부를 반환한다. */
     [[nodiscard]] bool IsColliderVisible() const;
 
 private:

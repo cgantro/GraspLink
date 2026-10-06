@@ -12,7 +12,7 @@
 
 namespace
 {
-// Physics proxy 추출의 CPU fixture. 정점은 Link Local 기준이며 한 변 0.1 m인 닫힌 입방체다.
+// 물리 충돌용 단순 형상 추출을 검증하는 CPU 시험 자료다. 꼭짓점은 각 로봇 링크 기준 좌표이고, 메시 외곽은 한 변 0.1 m인 닫힌 정육면체다.
 MeshData Cube()
 {
     MeshData mesh;
@@ -31,10 +31,10 @@ MeshData Cube()
 }
 
 /**
- * @brief 링크별 충돌 형상의 소유 범위와 FK 자세 추종을 확인한다.
- * @details 작은 합성 계층으로 하위 관절/Gripper geometry 제외, proxy의 joint pivot 추종, 잘못된 계층과
- * 제거된 Scene handle을 검사한 뒤 실제 HCR12A GLB에서도 arm 6개 링크의 hull 수를 확인한다.
- * 이 검사는 GLB CPU 데이터에서 collider 설정을 만드는 경계를 다루며 GPU 업로드나 Jolt 접촉 계산은 수행하지 않는다.
+ * @brief 로봇 링크마다 만든 충돌용 단순 물체가 올바른 모델 조각을 따라가는지 확인한다.
+ * @details 화면에 보이는 로봇 모델과 별도로 충돌 계산에 쓰는 단순 물체를 만든다. 각 물체는 링크에 붙어 FK가 관절 각도에서 계산한 위치와 방향을 따라야 한다.
+ * 작은 시험 계층으로 하위 관절과 그리퍼가 부모 링크에 중복 포함되지 않는지, 잘못된 모델 연결과 삭제된 Scene 참조가 거부되는지 검사한다.
+ * 실제 HCR12A GLB에서 여섯 팔 링크의 단순 볼록 형상 수가 예상 범위에 있는지도 확인한다. 이 시험은 CPU 자료로 설정을 만드는 단계까지만 다루며 GPU 업로드나 Jolt 접촉 계산은 하지 않는다.
  */
 int main()
 {
@@ -95,7 +95,7 @@ int main()
         scenes.LoadScene<Scene>();
         scenes.OnUpdate(0.0F);
         ExpectThrows<std::runtime_error>([&] { adapter.Apply(fk.Update(state)); }, "removed Scene invalidates physics proxy bindings");
-        // 실제 GLB에는 121개 hull이 만들어진다. 상한 150은 링크별 근사를 유지하면서 runtime 형상 수가 불어나지 않게 한다.
+        // 볼록 껍질은 꼭짓점 집합을 감싸는 단순 충돌 표면이다. 현재 모델에서는 121개가 만들어지므로 150개 상한으로 링크별 구분은 유지하면서 예상 밖의 증가를 검출한다.
         const auto actualModel = GltfLoader::LoadGLB(std::filesystem::path("assets") / "HCR12A_2F-85.glb");
         Entity actualRoot = scenes.GetActiveScene()->CreateEntity("ActualRobot");
         grasplink::simulation::RobotPhysicsAdapter actualAdapter(

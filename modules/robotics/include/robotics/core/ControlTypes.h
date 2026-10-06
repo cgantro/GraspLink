@@ -6,45 +6,48 @@
 #include <vector>
 
 /**
- * @brief 로봇 제어 인터페이스에서 주고받는 값과 결과 형식.
- * @details 관절 위치 [rad], 관절 속도 [rad/s], TCP 위치 [m], 선속도 [m/s], 시간 [s]를 사용한다.
- * 방향 quaternion 순서는 [x,y,z,w]다. TCP feedback은 Controller 상태이며 FK의 ToolFrame 출력과
- * 별개다. 이 형식은 단위와 데이터 모양을 정할 뿐 하드웨어 연결이나 물리량 변환을 구현하지 않는다.
+ * @brief 로봇 Controller가 주고받는 명령과 상태의 공통 자료형을 정의한다.
+ * @details 관절 위치는 [rad], 각속도는 [rad/s], TCP 위치는 [m], 선속도는 [m/s], 시간은 [s]다.
+ * TCP는 공구 끝에서 작업 위치와 방향을 나타내는 기준점이다.
+ * 방향 quaternion은 회전을 네 숫자 [x,y,z,w]로 저장한다.
+ * Controller가 실제로 보고한 TCP는 FK로 계산한 모델 ToolFrame과 별도다.
+ * 이 자료형은 숫자의 단위와 구성을 정할 뿐 장치 연결이나 단위 변환을 수행하지 않는다.
  */
 namespace grasplink::robotics
 {
 
-/** @brief J1..Jn 순서로 저장하는 관절 값 목록. 순서는 RobotSpecification을 따른다. */
+/** @brief RobotSpecification에 적힌 J1부터 Jn 순서대로 각 관절 값을 저장하는 목록. */
 using JointVector = std::vector<double>;
 
 /**
- * @brief 제어 요청 또는 연결 작업의 결과 분류.
- * @details None은 성공, NotConnected는 사용할 연결이 없음, InvalidCommand는 입력값 불량,
- * Busy는 backend가 현재 요청을 받을 수 없음, Fault는 backend/장치 fault, Unsupported는 기능 미지원,
- * TransportError는 통신 실패를 뜻한다. Fault code만으로 protective stop 상태를 판정할 수는 없다.
+ * @brief 요청이 처리됐는지와 실패 종류를 나타낸다.
+ * @details None은 성공, NotConnected는 연결 없음, InvalidCommand는 잘못된 요청값을 뜻한다.
+ * Busy는 앞선 동작 때문에 요청을 받을 수 없음, Fault는 장치나 구현의 오류를 뜻한다.
+ * Unsupported는 이 구현이 기능을 제공하지 않음, TransportError는 통신 실패를 뜻한다.
+ * Fault code만으로 장비 보호 정지 여부를 판단할 수 없다.
  */
 enum class ErrorCode
 {
-    None,           // 성공.
-    NotConnected,   // 아직 연결되지 않았거나 연결이 끊김.
-    InvalidCommand, // 개수, 범위, NaN 등 명령 값이 잘못됨.
-    Busy,           // 기존 동작을 처리 중이라 명령을 받을 수 없음.
-    Fault,          // 장비 또는 Simulation 오류 상태.
-    Unsupported,    // 해당 backend에서 지원하지 않는 기능.
-    TransportError  // TCP/Serial/Modbus 통신 오류.
+    None,           // 요청을 오류 없이 처리했다.
+    NotConnected,   // 제어 구현가 연결되지 않았거나 동작 중 연결을 잃었다.
+    InvalidCommand, // 관절 수, 허용 범위 또는 유한성 등 요청 값에 문제가 있다.
+    Busy,           // 제어 구현가 앞선 동작을 처리하고 있어 새 요청을 지금 받을 수 없다.
+    Fault,          // 장비 또는 Simulation 제어 구현가 오류 상태를 보고했다.
+    Unsupported,    // 공통 인터페이스에 있지만 현재 제어 구현는 구현하지 않은 기능이다.
+    TransportError  // TCP, Serial 또는 Modbus 연결에서 통신이 실패했다.
 };
 
 /**
- * @brief 호출의 성공 여부와 선택적 실패 진단.
- * @details 명령의 성공은 backend가 요청을 받아들였다는 뜻일 수 있으며 목표 도달이나 동작 완료를
- * 보장하지 않는다. 보호 정지나 실제 E-Stop도 이 결과만으로 보장되지 않는다.
+ * @brief 장치 또는 Simulation 구현이 요청을 처리한 결과와 선택적 설명을 반환한다.
+ * @details 성공은 요청을 받아들였다는 뜻일 수 있으며 목표 위치 도달이나 동작 완료를 보장하지 않는다.
+ * 소프트웨어 정지 요청은 장비의 보호 정지(protective stop)나 비상 정지(E-Stop)를 보장하지 않는다.
  */
 struct Result
 {
-    /// None이면 성공이며 message는 추가 진단용이다.
+    /// code가 None이면 성공이다. 실패한 경우 message에 원인을 설명하는 추가 내용을 담을 수 있다.
     ErrorCode code = ErrorCode::None;
 
-    /// 사람이 읽을 수 있는 선택적 진단 문자열.
+    /// 오류 원인을 사람이 읽을 수 있도록 설명하는 선택 메시지다.
     std::string message;
 
     [[nodiscard]] bool Ok() const noexcept { return code == ErrorCode::None; }
@@ -53,111 +56,113 @@ struct Result
     static Result Success() { return {}; }
 };
 
-/** @brief TCP 위치 [m]와 방향 quaternion [x,y,z,w]. 좌표계와 유효성은 이 값에 포함하지 않는다. */
+/** @brief TCP 위치 [m]와 방향을 묶는다. quaternion 성분은 [x,y,z,w] 순서이며 기준 좌표계와 유효 여부는 별도 상태에서 확인한다. */
 struct CartesianPose
 {
     std::array<double, 3> positionMeters{};
 
-    /// [x,y,z,w]; (0,0,0,1)은 회전 없음.
+    /// 방향 quaternion 성분은 [x,y,z,w] 순서다. (0,0,0,1)은 회전이 없는 상태다.
     std::array<double, 4> orientationXyzw{0.0, 0.0, 0.0, 1.0};
 };
 
-/** @brief J1..Jn 절대 목표각 [rad]과 backend가 해석하는 속도·가속도 비율. */
+/** @brief J1부터 Jn까지의 절대 목표각 [rad]과 제어 구현가 적용할 속도·가속도 비율을 담는다. */
 struct JointMoveCommand
 {
     JointVector targetPositionRadians;
 
-    /// 적용 범위와 방식은 backend별로 다르다. Simulation은 (0,1] 비율을 속도 상한에 적용한다.
+    /// 비율을 허용하는 범위와 적용 방식은 제어 구현마다 다르다. Simulation은 (0,1] 값에 모델 최대 각속도를 곱해 상한을 낮춘다.
     double velocityScale = 1.0;
 
-    /// 적용 방식은 backend별로 다르다. Simulation은 가속도 제한을 적용하지 않는다.
+    /// 제어 구현별 해석이 다를 수 있다. Simulation은 값을 저장하지만 가속도 제한 계산에는 사용하지 않는다.
     double accelerationScale = 1.0;
 };
 
-// TCP 직선 이동은 backend의 IK와 trajectory 지원이 필요하다.
-/** @brief TCP 목표 pose와 직선 이동의 속도 상한 요청. 실행에는 backend의 IK와 경로 실행 기능이 필요하다. */
+// TCP는 공구 끝의 작업 기준점이다. TCP 목표에서 관절 목표를 구하는 역기구학(IK)과 경로 실행이 있어야 직선 이동할 수 있다.
+/** @brief TCP가 도착할 위치·방향과 직선 이동 속도 상한을 요청한다. 관절 목표를 계산하는 IK와 경로 실행 기능이 제어 구현에 있어야 처리할 수 있다. */
 struct LinearMoveCommand
 {
-    /// 목표 위치 [m]와 방향 quaternion [x,y,z,w].
+    /// 도착할 TCP 위치 [m]와 방향 quaternion [x,y,z,w]다. 기준 좌표계는 공통 형식만으로 정하지 않는다.
     CartesianPose targetPose{};
 
-    /// 요청 선속도 상한 [m/s].
+    /// 직선 경로를 실행할 때 허용할 TCP 이동 속도 상한 [m/s]다.
     double maxLinearVelocityMetersPerSecond = 0.25;
 
-    /// 요청 각속도 상한 [rad/s].
+    /// 직선 경로를 실행할 때 허용할 TCP 회전 속도 상한 [rad/s]다.
     double maxAngularVelocityRadiansPerSecond = 0.5;
 };
 
-/** @brief Controller가 보고하는 논리 동작 상태. */
+/** @brief Controller가 연결되어 있는지, 움직이는 중인지, 정지했는지를 나타낸다. */
 enum class RobotMode
 {
-    Disconnected, // backend 연결 또는 초기화 전.
-    Idle,         // 연결되어 있고 동작 명령이 없음.
-    Moving,       // 목표 자세로 이동 중.
-    Stopped,      // Stop 요청으로 software 동작 정지.
-    Fault         // 정상 제어 불가.
+    Disconnected, // 제어 구현 연결 또는 초기화 전.
+    Idle,         // 연결은 되었고 실행 중인 동작 명령은 없다.
+    Moving,       // 관절이 목표각을 향해 움직이는 중이다.
+    Stopped,      // 소프트웨어 Stop 요청에 따라 동작이 멈춘 상태다.
+    Fault         // 오류가 있어 정상적인 제어를 할 수 없다.
 };
 
 /**
- * @brief 한 시점의 Controller feedback 복사본.
- * @details 관절 위치 [rad], 속도 [rad/s], TCP 위치 [m]를 담는다. valid는 전체 snapshot,
- * tcpPoseValid는 TCP pose의 유효성이다. TCP가 유효하지 않아도 관절 상태는 유효할 수 있다.
- * faultCode 해석과 보호 정지 의미는 backend 또는 장치 계약에 달려 있다.
+ * @brief 한 시점에 Controller가 보고한 관절과 TCP 상태를 값으로 보관한다.
+ * @details 관절 위치 [rad], 각속도 [rad/s], TCP 위치 [m]를 저장한다.
+ * valid는 관절을 포함한 전체 상태 복사본을 쓸 수 있는지 나타낸다.
+ * tcpPoseValid는 TCP 위치·방향만 유효한지 나타내므로 TCP가 없어도 관절 상태는 유효할 수 있다.
+ * 오류 code의 의미는 장치나 Simulation 구현마다 다르며 보호 정지 여부를 단독으로 판정하지 않는다.
  */
 struct RobotState
 {
-    /// J1..Jn 현재 관절각 [rad].
+    /// RobotSpecification 순서에 맞춘 현재 J1부터 Jn까지의 관절각 [rad]다.
     JointVector jointPositionRadians;
 
-    /// J1..Jn 현재 관절 속도 [rad/s].
+    /// RobotSpecification 순서에 맞춘 현재 J1부터 Jn까지의 관절 속도 [rad/s]다.
     JointVector jointVelocityRadiansPerSecond;
 
-    /// Controller가 보고한 TCP pose; 유효성은 tcpPoseValid로 확인한다.
+    /// Controller가 보고한 TCP 위치·방향이다. 실제로 유효한 feedback인지 tcpPoseValid를 별도로 확인한다.
     CartesianPose tcpPose{};
 
     RobotMode mode = RobotMode::Disconnected;
 
-    // 상세 해석은 backend/제조사 책임이다.
-    /// backend 또는 장치가 정의하는 fault code.
+    // 상세 해석은 제어 구현/제조사 책임이다.
+    /// 제어 구현 또는 실제 장치가 정한 오류 code다. 숫자의 구체적인 의미는 해당 구현 설명을 따라야 한다.
     std::uint32_t faultCode = 0;
 
-    /// TCP pose feedback만의 유효성.
+    /// TCP 위치·방향 feedback만 유효한지 나타낸다. 관절값 유효성과 별개다.
     bool tcpPoseValid = false;
 
-    /// 전체 snapshot의 유효성. TCP 유효성과 별개다.
+    /// 이 상태 복사본의 feedback을 현재 상태로 사용해도 되는지 나타낸다. TCP 유효성과 별개다.
     bool valid = false;
 };
 
 /**
- * @brief Gripper backend에 전달하는 raw 요청값.
- * @details 각 필드는 0..255 code이며 SI 단위가 아니다. 공통적인 mm, rad, mm/s 또는 N 변환은
- * 정의되어 있지 않다. 장치별 매핑과 adaptive/mimic 동작은 backend 책임이다.
+ * @brief Gripper Controller에 보낼 위치·속도·힘 요청값을 담는다.
+ * @details 각 필드는 장치 프로토콜의 원본 정수 code [0,255]다.
+ * Code는 미터, [mm/s], [N] 같은 물리량이 아니며 공통 환산식도 없다.
+ * 실제 장치나 Simulation이 code를 해석해 관절 움직임을 정한다.
  */
 struct GripperCommand
 {
-    /// 요청 위치 raw code [0,255]; 물리 거리 단위가 아니다.
+    /// 장치 프로토콜에 보낼 위치 code [0,255]다. 미터나 각도로 변환된 물리 위치가 아니다.
     std::uint8_t positionRequest = 0;
 
-    /// 요청 속도 raw code [0,255]; [mm/s]가 아니다.
+    /// 장치 프로토콜에 보낼 속도 code [0,255]다. 실제 이동 속도 [mm/s]는 제어 구현별 변환이 필요하다.
     std::uint8_t speedRequest = 255;
 
-    /// 요청 힘 raw code [0,255]; [N]이 아니다.
+    /// 장치 프로토콜에 보낼 힘 code [0,255]다. 실제 힘 [N]은 제어 구현별 변환이 필요하다.
     std::uint8_t forceRequest = 128;
 };
 
-/** @brief Gripper backend가 분류한 물체 상태 code. */
+/** @brief Gripper 제어 구현가 움직임, 접촉 또는 요청 위치 도달로 구분해 보고한 상태. */
 enum class GripperObjectStatus : std::uint8_t
 {
-    Moving = 0,              // 접촉·목표 도달 확인 없음. 실제 이동 여부는 mode와 goToActive로 확인한다.
-    ContactWhileOpening = 1, // 열다가 물체에 닿아 정지.
-    ContactWhileClosing = 2, // 닫다가 물체에 닿아 정지.
-    AtRequestedPosition = 3  // 요청 위치에 도달.
+    Moving = 0,              // 접촉이나 목표 도달은 확인되지 않았다. 실제 이동 중인지는 mode와 goToActive도 확인한다.
+    ContactWhileOpening = 1, // 열리는 방향으로 움직이다 물체에 닿았다고 보고했다.
+    ContactWhileClosing = 2, // 닫히는 방향으로 움직이다 물체에 닿았다고 보고했다.
+    AtRequestedPosition = 3  // backend가 요청 위치에 도달했다고 보고했다.
 };
 
 /**
- * @brief Gripper backend가 제공하는 논리 동작 상태.
- * @details objectStatus는 접촉·목표 도달 분류이고 mode는 연결·활성화·이동·정지를 구분한다.
- * 중간 위치에서 Stop한 상태를 목표 도달로 오인하지 않도록 Stopped를 별도로 둔다.
+ * @brief Gripper 제어 구현의 연결, 활성화, 이동, 정지 또는 오류 상태를 나타낸다.
+ * @details objectStatus는 접촉 여부나 목표 위치 도달을 표현하고 mode는 연결과 명령 실행 상태를 표현한다.
+ * 중간 위치에서 Stop한 경우를 목표에 도달한 상태와 구분하도록 Stopped를 별도로 둔다.
  */
 enum class GripperMode : std::uint8_t
 {
@@ -170,40 +175,40 @@ enum class GripperMode : std::uint8_t
 };
 
 /**
- * @brief 한 시점의 Gripper 상태 복사본.
- * @details protocol 상태와 위치·전류 raw 값을 보존한다. actualPosition과 currentRaw는 SI 단위가
- * 아니다. 선택적 closureFraction은 0=열림, 1=닫힘인 무차원 위치이며 raw 값과 별도로 유효성을 확인한다.
- * 연속 위치를 지원하는 backend는 이를 제공해 raw 8-bit 반올림이 관절 움직임으로 전파되는 것을 피한다.
- * valid가 false이면 feedback을 유효한 현재 상태로 간주하지 않는다. 접촉 판정, 보호 정지,
- * adaptive 또는 mimic 동작의 의미는 backend별로 정의된다.
+ * @brief 한 시점에 Controller가 보고한 Gripper 상태를 값으로 보관한다.
+ * @details actualPosition과 currentRaw는 장치의 정수 code이며 물리 단위로 변환되지 않는다.
+ * closureFraction은 열린 기준 0부터 닫힌 기준 1까지의 연속 비율이며 거리나 힘이 아니다.
+ * 이 연속값으로 기구 회전을 계산하면 8-bit 위치 반올림을 피할 수 있다.
+ * valid가 false이면 상태 복사본을 현재 feedback으로 사용하지 않는다.
+ * 접촉, 보호 정지, 손가락 연동의 의미는 장치나 Simulation 구현별로 다르다.
  */
 struct GripperState
 {
-    /// 연결·활성화·동작의 논리 상태. raw objectStatus와 별개다.
+    /// 연결, 활성화 및 명령 실행 상태다. 물체 접촉이나 목표 도달 분류는 objectStatus에 따로 기록한다.
     GripperMode mode = GripperMode::Disconnected;
 
-    /// backend 또는 장치가 보고한 activation 상태.
+    /// 제어 구현 또는 장치가 Gripper 구동부를 활성화했다고 보고했는지 나타낸다.
     bool activated = false;
 
-    /// backend 또는 장치가 보고한 go-to 동작 상태.
+    /// 제어 구현 또는 장치가 요청 위치로 이동하는 명령을 실행 중이라고 보고했는지 나타낸다.
     bool goToActive = false;
 
-    /// protocol activation status raw code.
+    /// 장치 프로토콜에서 받은 활성화 상태 원본 code다. 공통 단위로 변환하지 않는다.
     std::uint8_t activationStatus = 0;
 
-    /// 이동/접촉/목표 위치 상태 분류.
+    /// 이동 중, 열거나 닫으며 접촉, 요청 위치 도달 중 어떤 상태인지 분류한다.
     GripperObjectStatus objectStatus = GripperObjectStatus::AtRequestedPosition;
 
-    /// 장치 또는 backend fault raw code.
+    /// 장치 또는 제어 구현가 보낸 오류 원본 code다. 값 해석은 장치·제어 구현 정의에 따른다.
     std::uint8_t faultCode = 0;
 
-    /// 요청 위치 echo raw code.
+    /// 장치가 되돌려 준 위치 요청 code다. 현재 실제 위치가 아니라 요청값의 확인용 복사본이다.
     std::uint8_t requestedPositionEcho = 0;
 
-    /// 실제 위치 feedback raw code.
+    /// 장치 또는 제어 구현가 보고한 현재 위치 원본 code다. 물리 거리 단위는 아니다.
     std::uint8_t actualPosition = 0;
 
-    /// 전류 feedback raw code.
+    /// 장치 또는 제어 구현가 보고한 전류 원본 code다. Simulation은 전류를 계산하지 않는다.
     std::uint8_t currentRaw = 0;
 
     /// currentRaw가 실제 제공된 전류 feedback인지 여부. Simulation은 전류를 계산하지 않는다.
@@ -215,7 +220,7 @@ struct GripperState
     /// closureFraction이 유한한 [0,1] 위치로 제공되었는지 여부.
     bool closureFractionValid = false;
 
-    /// 전체 snapshot의 유효성.
+    /// 이 상태 복사본의 feedback을 현재 상태로 사용해도 되는지 나타낸다.
     bool valid = false;
 };
 

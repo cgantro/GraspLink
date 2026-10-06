@@ -32,7 +32,7 @@ glm::mat4 NodeLocalTransform(const NodeData& node)
 
 std::vector<glm::mat4> BuildNodeWorldTransforms(const ModelResource& model)
 {
-    // GLB 내부 node 변환만 누적한다. Scene 배치 변환은 runtime에서 robotRoot가 전달한다.
+    // 메시가 저장된 GLB 내부에서 부모부터 자식까지 node 변환만 누적한다. Scene에서 로봇을 배치한 변환은 실행 중 부모 robotRoot가 적용한다.
     std::vector<glm::mat4> transforms(model.nodes.size(), glm::mat4(1.0F));
     std::vector<bool> ready(model.nodes.size(), false);
     std::vector<bool> visiting(model.nodes.size(), false);
@@ -83,7 +83,7 @@ struct PositionKeyHash
 
 PositionKey MakePositionKey(const glm::vec3& position)
 {
-    // 정점 위치를 약 0.01 mm 격자로 양자화해 index가 달라도 같은 seam 위치를 찾는다.
+    // 정점 좌표를 약 0.01 mm 간격의 격자에 맞춰 비교한다. 그래서 서로 다른 index를 가진 seam(메시 이음새)의 같은 위치 정점을 하나로 인식한다.
     constexpr double Precision = 100000.0;
     return {
         static_cast<std::int64_t>(std::llround(position.x * Precision)),
@@ -93,7 +93,7 @@ PositionKey MakePositionKey(const glm::vec3& position)
 
 PositionKey MakeCollisionCellKey(const glm::vec3& position)
 {
-    // 단위: 한 셀은 16 cm. 긴 링크의 분할 수를 줄이되 부품 사이 빈 공간은 합치지 않는다.
+    // 단위: 충돌 근사 셀 한 변은 16 cm다. 긴 링크의 작은 충돌 형상 수를 줄이면서 떨어진 부품 사이 빈 공간은 한 덩어리로 합치지 않는다.
     constexpr float CellSizeMeters = 0.16F;
     return {
         static_cast<std::int64_t>(std::floor(position.x / CellSizeMeters)),
@@ -146,7 +146,7 @@ std::vector<grasplink::physics::CollisionShapeDescription> BuildLinkShapes(
 
     const std::size_t jointIndex = static_cast<std::size_t>(jointIterator - model.nodes.begin());
     const std::size_t linkIndex = static_cast<std::size_t>(linkIterator - model.nodes.begin());
-    // 형상 좌표를 이 link의 구동 joint 원점으로 바꾼다. 런타임 FK pose는 별도 proxy에 적용한다.
+    // 메시 정점을 GLB 좌표에서 이 Link를 움직이는 joint 원점 좌표로 바꾼다. 실행 중 FK로 계산한 관절 자세는 별도 proxy Entity에 적용한다.
     const glm::mat4 jointInverse = glm::inverse(nodeTransforms[jointIndex]);
 
     for (std::size_t nodeIndex = 0; nodeIndex < model.nodes.size(); ++nodeIndex)
@@ -160,7 +160,7 @@ std::vector<grasplink::physics::CollisionShapeDescription> BuildLinkShapes(
                 insideLink = true;
                 break;
             }
-            // 다음 가동 관절 아래는 다른 link 소유. Gripper도 이 adapter의 충돌 범위에서 제외한다.
+            // 다음 가동 관절 아래의 메시부터는 다른 Link가 움직이므로 이 Link 형상에 포함하지 않는다. Gripper 메시도 팔 어댑터 범위에서 제외한다.
             if (movingNodes.count(model.nodes[ancestor].name) != 0 ||
                 model.nodes[ancestor].name == "Gripper")
                 break;
@@ -196,7 +196,7 @@ std::vector<grasplink::physics::CollisionShapeDescription> BuildLinkShapes(
                 if (!inserted) Join(parents, vertexIndex, iterator->second);
             }
 
-            // 동일 위치의 seam 정점과 삼각형의 index 연결을 합쳐 component를 만들고 분리 부품을 구분한다.
+            // 좌표가 같은 seam 정점과 삼각형으로 연결된 정점을 묶어 연결 component를 만든다. 이 묶음으로 서로 떨어진 메시 부품을 구분한다.
             for (std::size_t index = subMesh.indexStart; index + 2 < end; index += 3)
             {
                 Join(parents, mesh.indices[index], mesh.indices[index + 1]);
@@ -212,7 +212,7 @@ std::vector<grasplink::physics::CollisionShapeDescription> BuildLinkShapes(
 
             std::unordered_map<std::size_t,
                 std::unordered_map<PositionKey, std::vector<glm::vec3>, PositionKeyHash>> collisionCells;
-            // component 안에서 삼각형 중심이 속한 16 cm 셀로 묶는다. 삼각형 면을 셀 경계에서 자르지는 않는다.
+            // 연결된 각 부품 안에서 삼각형 중심이 들어가는 16 cm 셀에 삼각형 정점을 모은다. 삼각형 자체는 셀 경계에서 잘라 나누지 않는다.
             for (std::size_t index = subMesh.indexStart; index + 2 < end; index += 3)
             {
                 const std::uint32_t first = mesh.indices[index];
@@ -227,7 +227,8 @@ std::vector<grasplink::physics::CollisionShapeDescription> BuildLinkShapes(
 
             for (const auto& [component, cells] : collisionCells)
             {
-                // component 최대 폭 4 cm 미만과 셀 최대 폭 1 cm 미만은 제외한다. Mesh와 충돌 외피는 다를 수 있다.
+                // 연결 부품 전체 폭이 4 cm보다 작거나 셀 안 정점 폭이 1 cm보다 작으면 충돌 형상에서 제외한다.
+                // 시각 Mesh와 단순화한 충돌 외피의 크기와 윤곽은 완전히 같지 않을 수 있다.
                 if (!HasExtent(components[component], 0.04F)) continue;
                 for (const auto& [cell, vertices] : cells)
                 {
@@ -245,7 +246,7 @@ std::vector<grasplink::physics::CollisionShapeDescription> BuildLinkShapes(
                     Shape shape;
                     shape.type = grasplink::physics::CollisionShapeType::ConvexHull;
                     shape.pointsMeters = detail::BuildConvexSupportPoints(uniqueVertices);
-                    // 방향별 극점을 모은 근사 hull이 1 m 기준 부피 검사를 통과한 셀만 보존한다.
+                    // 여러 방향에서 가장 바깥에 있는 정점으로 만든 근사 볼록 외피를 검사한다. 1 m 기준으로 실제 부피가 있다고 판단된 셀만 충돌 형상으로 남긴다.
                     if (detail::HasHullVolume(shape.pointsMeters, 1.0F)) shapes.push_back(std::move(shape));
                 }
             }
@@ -290,7 +291,7 @@ RobotPhysicsAdapter::RobotPhysicsAdapter(
         if (shapes.empty()) throw std::invalid_argument("RobotPhysicsAdapter: link has no GLB collision geometry");
 
         Entity entity = scene.CreateEntity(std::string(link.name) + "_CollisionProxy");
-        // FK pose는 robot base 기준 Local 값이며 부모인 robotRoot가 Scene 배치를 더한다.
+        // FK에서 나온 위치와 회전은 Robot base 기준이다. proxy를 robotRoot의 자식으로 두어 Scene에서 로봇에 설정한 배치 변환이 부모 계층을 통해 추가된다.
         entity.SetParent(robotRoot);
         entity.Add<RobotCollisionProxy>()
             .set<RigidBody>(RigidBody{

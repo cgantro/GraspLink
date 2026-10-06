@@ -18,7 +18,7 @@ Window::~Window()
 void Window::Init(const Properties& properties)
 {
 
-    // GLFW는 프로세스 전역 상태를 사용한다. 초기화 실패 시 정리할 Window는 아직 없다.
+    // GLFW 초기화는 프로세스 전체에서 공유된다. 초기화가 실패하면 아직 해제할 Window는 만들어지지 않았다.
     if (glfwInit() == GLFW_FALSE)
         throw std::runtime_error("Failed to Init GLFW");
 
@@ -40,13 +40,13 @@ void Window::Init(const Properties& properties)
         throw std::runtime_error("Failed to create GLFW Window");
     }
 
-    // GPU 자원은 이 Context에서만 쓸 수 있으며 Window보다 먼저 해제한다.
-    // GLAD는 현재 Context에서 함수 주소를 조회하므로 적재 전에 Context를 활성화한다.
+    // GPU 자원은 이 OpenGL context에서만 사용할 수 있으므로 Window가 닫히기 전에 먼저 해제해야 한다.
+    // GLAD는 현재 context의 OpenGL 함수 주소를 읽으므로 함수 적재 전에 context를 활성화한다.
     glfwMakeContextCurrent(m_Handle);
 
     if (!gladLoadGLLoader(reinterpret_cast<GLADloadproc>(glfwGetProcAddress)))
     {
-        // 부분 초기화 실패에서도 생성된 창과 GLFW 전역 상태를 함께 정리한다.
+        // 초기화 중간에 실패해도 이미 만든 창을 닫고 GLFW의 전역 상태를 함께 정리한다.
         Shutdown();
         throw std::runtime_error("Failed to Init GLAD");
     }
@@ -55,20 +55,20 @@ void Window::Init(const Properties& properties)
     glfwSetFramebufferSizeCallback(m_Handle, FramebufferSizeCallback);
     glfwSetScrollCallback(m_Handle, ScrollCallback);
 
-    // 1은 화면 주사와 동기화하고, 0은 프레임 제한 없이 버퍼를 교환한다.
+    // 값 1은 모니터 주사 시점에 화면을 교환하고, 값 0은 주사 시점과 맞추지 않고 가능한 대로 교환한다.
     glfwSwapInterval(properties.vsync ? 1 : 0);
 
     int framebufferWidth = 0;
     int framebufferHeight = 0;
     glfwGetFramebufferSize(m_Handle, &framebufferWidth, &framebufferHeight);
 
-    // OpenGL viewport 단위는 논리 창 좌표가 아니라 실제 framebuffer 픽셀이다.
+    // OpenGL viewport는 창의 논리 단위가 아니라 실제 framebuffer 픽셀 단위로 지정한다.
     glViewport(0, 0, framebufferWidth, framebufferHeight);
 }
 
 void Window::Shutdown()
 {
-    // Context를 소유한 창을 먼저 없애고 GLFW 프로세스 상태를 종료한다.
+    // context를 가진 창을 닫은 다음 GLFW가 프로세스 전체에 보유한 상태를 종료한다.
     if (m_Handle != nullptr)
     {
         glfwDestroyWindow(m_Handle);
@@ -138,7 +138,7 @@ double Window::ConsumeScrollOffset()
 void Window::FramebufferSizeCallback(GLFWwindow* window, int width, int height)
 {
     (void)window;
-    // HiDPI 배율 변경도 framebuffer 크기 이벤트로 전달되므로 viewport를 픽셀 크기에 맞춘다.
+    // HiDPI 배율이 달라져도 framebuffer 크기 변경으로 전달된다. 따라서 viewport를 새 픽셀 크기에 맞춘다.
     glViewport(0, 0, width, height);
 }
 
@@ -152,6 +152,6 @@ void Window::ScrollCallback(
     Window* self = static_cast<Window*>(glfwGetWindowUserPointer(window));
     if (self == nullptr) return;
 
-    // 여러 callback의 세로 scroll을 합쳐 Controller가 한 번에 소비한다.
+    // 한 프레임에 발생한 여러 scroll callback의 세로 이동량을 합쳐 카메라 Controller가 한 번에 처리하게 한다.
     self->m_ScrollOffset += yOffset;
 }

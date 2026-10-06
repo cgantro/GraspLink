@@ -2,7 +2,7 @@
 #type vertex
 #version 330 core
 
-// 입력 위치와 법선은 Mesh의 vertex layout, UV는 base-color texture의 좌표다.
+// Mesh는 삼각형 정점과 연결 번호를 모은 형상이다. 정점에서 위치와 표면 수직 방향(법선)을 읽고 UV 이미지 좌표로 기본색 Texture의 픽셀을 찾는다.
 
 layout(location = 0) in vec3 a_Position;
 layout(location = 1) in vec3 a_Normal;
@@ -20,25 +20,27 @@ out vec2 v_TexCoord;
 
 void main()
 {
-    // Local → World: 조명 계산은 모든 위치와 광원 행렬을 같은 World 좌표에서 수행한다.
+    // Local 좌표는 Mesh의 기준점에서 잰 위치이고 World 좌표는 장면 전체 기준 위치다. 모델 행렬로 Local을 World로 바꿔 표면과 광원을 같은 기준에서 비교한다.
     vec4 worldPosition = u_Model * vec4(a_Position, 1.0);
 
     v_WorldPosition = worldPosition.xyz;
 
-    // 법선은 방향 벡터지만 비균일 크기 변환에서 표면에 수직인 관계를 잃으므로 모델 행렬의 역전치를 쓴다.
+    // 크기 배율이 축마다 다르면 방향만 모델 행렬로 바꾼 법선은 표면에 수직이 아니게 된다.
+    // 역전치 행렬을 적용해 변환 뒤에도 표면에 수직인 방향을 유지한다.
     v_Normal = mat3(transpose(inverse(u_Model))) * a_Normal;
 
     v_LightSpacePosition = u_LightSpaceMatrix * worldPosition;
     v_TexCoord = a_TexCoord;
 
-    // 좌표 변환: Local → World → camera(View) → clip(Projection). 마지막 clip 좌표는 래스터화에 사용된다.
+    // 좌표 변환은 점의 기준을 바꾸는 계산이다. Local에서 World, Camera, Clip 순서로 바꾸며 Camera 좌표는 카메라가 원점인 기준이고 Clip 좌표는 화면 자르기와 깊이 계산에 쓰이는 중간값이다.
+    // Projection 원근 계산으로 먼 표면은 작아 보이고 Clip 좌표를 w로 나눈 뒤 GPU가 화면 위치와 앞뒤 깊이를 정한다.
     gl_Position = u_Projection * u_View * worldPosition;
 }
 
 #type fragment
 #version 330 core
 
-// vertex stage에서 보간된 World 값으로 표면 조명과 광원 깊이 비교를 수행한다.
+// GPU는 삼각형 안의 정점값을 픽셀 위치에 맞게 보간한다. 이 단계는 보간한 World 위치와 표면 방향으로 빛과 그림자를 계산한다.
 
 in vec3 v_Normal;
 in vec3 v_WorldPosition;
@@ -66,7 +68,7 @@ vec3 ToneMapACES(vec3 color)
     const float d = 0.59;
     const float e = 0.14;
 
-    // 조명 합산으로 1을 넘은 선형 RGB를 화면 범위에 부드럽게 압축한다.
+    // 여러 조명을 더해 1보다 커진 선형 RGB를 화면에 표시할 수 있는 0~1 범위로 부드럽게 줄인다.
     return clamp(
         (color * (a * color + b)) /
         (color * (c * color + d) + e),
@@ -77,7 +79,7 @@ vec3 ToneMapACES(vec3 color)
 
 float CalculateShadow(vec4 lightSpacePosition, vec3 normal, vec3 lightDirection)
 {
-    // 광원 Clip 좌표를 texture 좌표·깊이의 0..1 범위로 옮겨 저장된 표면 깊이와 비교한다.
+    // 광원 기준 Clip 좌표를 w로 나누고 0~1 범위로 바꿔 그림자 이미지 위치와 투영 깊이로 사용한다. 이 깊이는 실제 광원 거리값이 아니다.
     vec3 projCoords = lightSpacePosition.xyz / lightSpacePosition.w;
 
     projCoords = projCoords * 0.5 + 0.5;
@@ -91,7 +93,7 @@ float CalculateShadow(vec4 lightSpacePosition, vec3 normal, vec3 lightDirection)
 
     float currentDepth = projCoords.z;
 
-    // u_LightDirection은 표면에서 광원 쪽을 향한다. 비스듬한 입사면일수록 bias를 키워 acne를 줄인다.
+    // 표면 깊이에 작은 여유값을 둔다. 광선을 비스듬히 받는 면은 깊이 오차가 커져 얼룩 그림자가 생기기 쉬우므로 여유를 늘린다.
     float bias = max(
         0.0008 * (1.0 - dot(normal, lightDirection)),
         0.00015
@@ -115,7 +117,7 @@ float CalculateShadow(vec4 lightSpacePosition, vec3 normal, vec3 lightDirection)
         }
     }
 
-    // 5x5 depth 비교 평균: 0=빛, 1=완전한 그림자.
+    // 표면 주변 5×5 위치에서 가려진 비율을 평균한다. 0은 빛을 받음, 1은 완전히 가려짐이다.
     return shadow / 25.0;
 }
 
@@ -144,14 +146,15 @@ void main()
 
     float baseAlpha = sampledBaseColor.a * u_BaseColorFactor.a;
 
-    // 제한: metallic/roughness는 material factor만 사용한다. 해당 채널 texture와 완전한 glTF PBR BRDF는 없다.
+    // 금속성·거칠기 이미지는 연결하지 않으며 glTF가 정한 전체 물리 기반 반사식도 구현하지 않았다.
+    // 재질에 저장된 두 숫자만 읽어 아래의 간단한 빛 계산에 사용한다.
     float metallic = clamp(u_MetallicFactor, 0.0, 1.0);
     float roughness = clamp(u_RoughnessFactor, 0.05, 1.0);
 
-    // 금속도 완전히 검게 사라지지 않도록 diffuse를 35%까지 남기는 간략 근사다.
+    // 금속 계수가 커져도 표면 색이 모두 사라지지 않도록 기본색 조명을 최대 35% 남기는 단순 근사다.
     vec3 diffuseColor = baseColor * mix(1.0, 0.35, metallic);
 
-    // Blinn-Phong 형태의 간단한 정반사 항. roughness가 클수록 지수와 하이라이트가 낮아진다.
+    // 표면에서 빛과 카메라를 향하는 두 방향의 중간을 이용해 반짝임을 계산한다. 거칠수록 넓고 약해진다.
     vec3 H = normalize(L + V);
     float NdotH = max(dot(N, H), 0.0);
 
@@ -161,7 +164,7 @@ void main()
     if (NdotL <= 0.0)
         specularStrength = 0.0;
 
-    // 정면 반사율 F0를 비금속의 0.04에서 금속의 baseColor로 보간한다.
+    // 표면을 정면에서 볼 때의 반사색을 비금속의 회색 값 0.04와 금속의 기본색 사이에서 정한다.
     vec3 F0 = mix(vec3(0.04), baseColor, metallic);
     vec3 specular = F0 * specularStrength * 0.35;
 
@@ -178,7 +181,7 @@ void main()
         directLight +
         fillLight;
 
-    // 선형 조명 결과를 ACES 곡선으로 범위 압축한 뒤 디스플레이 감마 공간으로 변환한다.
+    // ACES 곡선은 조명 결과를 화면 밝기 범위로 압축한다. 이어 1/2.2 거듭제곱 감마 보정으로 모니터 표시용 RGB 값에 맞춘다.
     color = ToneMapACES(color);
 
     color = pow(color, vec3(1.0 / 2.2));

@@ -30,7 +30,9 @@ namespace grasplink::physics
 namespace
 {
 
-// 전역 Factory/타입 등록은 모든 World가 공유한다. 참조 수와 mutex로 최초 생성 및 최종 해제를 관리한다.
+// Jolt Factory와 타입 등록은 모든 PhysicsWorld가 공유하므로 사용 World 수를 세어 관리한다.
+// mutex는 여러 thread가 이 수를 동시에 바꾸지 못하게 한다.
+// 첫 World를 만들 때 등록하고 마지막 World를 해제할 때 등록을 취소한다.
 std::mutex g_JoltRuntimeMutex;
 std::size_t g_JoltRuntimeUsers = 0;
 std::atomic<std::uint64_t> g_NextWorldToken{1};
@@ -86,7 +88,7 @@ void ReleaseJoltRuntime()
 }
 
 
-// Object Layer에는 상대 범주와 Static/이동 상태를 담는다. Broad Phase 분류는 아래에서 이동 여부만 사용한다.
+// Jolt에 넘기는 내부 그룹 번호는 CollisionLayer 종류와 Static인지 움직이는 Body인지를 함께 담는다. 이 번호는 충돌 필터를 구현하기 위한 값이며 공개 API의 CollisionLayer 자체에 움직임 정보가 추가되는 것은 아니다.
 namespace ObjectLayers
 {
 
@@ -113,7 +115,7 @@ CollisionLayer Category(JPH::ObjectLayer layer)
 } // namespace ObjectLayers
 
 
-// Broad Phase는 자세한 충돌 계산 전에 후보 쌍을 줄인다. 범주별 허용 여부는 별도 Pair Filter가 정한다.
+// Broad Phase는 모든 물체 쌍을 자세히 검사하기 전에 공간상 충돌 가능성이 있는 후보를 빠르게 고르는 단계다. 이 구현은 여기서 물체가 움직이는 그룹인지 정지 그룹인지만 나눈다. Robot과 Environment처럼 어떤 종류끼리 검사할지는 아래 범주 조합 필터가 결정한다.
 namespace BroadPhaseLayers
 {
 
@@ -168,8 +170,7 @@ private:
 };
 
 
-// Robot과 Gripper는 서로 또는 자기 범주와 충돌하지 않고 Environment와 DynamicObject만 상대한다.
-// Environment끼리는 충돌하지 않는다. DynamicObject는 모든 범주와 충돌을 허용한다.
+// 이 함수는 두 CollisionLayer 그룹을 받아 정밀 충돌 검사까지 진행할 물체 쌍인지 결정한다. Robot과 Gripper는 Environment 및 DynamicObject와만 검사하고, 서로 또는 같은 그룹끼리는 검사하지 않는다. Environment끼리는 검사하지 않는다. DynamicObject는 네 그룹 모두와 검사한다.
 class ObjectLayerPairFilterImpl final
     : public JPH::ObjectLayerPairFilter
 {
@@ -199,7 +200,7 @@ public:
 };
 
 
-// Static-Static은 후보에서 제외한다. 이동 Object Layer는 두 Broad Phase 그룹과 모두 검사한다.
+// 정지 그룹에 속한 물체는 다른 정지 물체와 검사하지 않는다. 움직이는 Body는 정지 그룹과 움직이는 그룹 모두를 검사해 바닥과 다른 물체 양쪽에 닿을 수 있게 한다.
 class ObjectVsBroadPhaseLayerFilterImpl final
     : public JPH::ObjectVsBroadPhaseLayerFilter
 {
@@ -222,7 +223,7 @@ JPH::RVec3 ToJoltPosition(const glm::vec3& value)
 
 JPH::Quat ToJoltRotation(const glm::quat& value)
 {
-    // GLM quaternion 생성자는 (w,x,y,z), Jolt는 (x,y,z,w)를 요구한다.
+    // GLM과 Jolt는 같은 회전을 서로 다른 성분 순서로 저장하므로, 이 경계에서 (w,x,y,z)를 (x,y,z,w)로 바꾼다.
     return JPH::Quat(value.x, value.y, value.z, value.w);
 }
 
@@ -281,7 +282,7 @@ JPH::BodyID ToBodyID(PhysicsBodyHandle handle)
 
 struct PhysicsWorld::Impl
 {
-    // 필터 interface는 PhysicsSystem이 참조하므로 PhysicsSystem보다 오래 사는 순서로 멤버를 선언한다.
+    // PhysicsSystem은 아래 필터 객체를 참조만 한다. C++은 멤버를 선언한 역순으로 파괴하므로 필터를 먼저 선언해 PhysicsSystem보다 나중에 해제한다.
     BroadPhaseLayerInterfaceImpl broadPhaseLayerInterface;
     ObjectVsBroadPhaseLayerFilterImpl objectVsBroadPhaseLayerFilter;
     ObjectLayerPairFilterImpl objectLayerPairFilter;
@@ -307,7 +308,7 @@ struct PhysicsWorld::Impl
             ? static_cast<int>(std::min(hardwareThreads - 1, 4U))
             : 1;
 
-        // Jolt Update가 실제로 사용하는 worker pool. 이 설정은 메인 스레드 외 최대 4개 worker를 둔다.
+        // Jolt Update가 물리 계산을 나눠 실행할 작업자 pool이다. 메인 스레드와 별도로 최대 4개의 worker를 만든다.
         jobSystem = std::make_unique<JPH::JobSystemThreadPool>(
             JPH::cMaxPhysicsJobs,
             JPH::cMaxPhysicsBarriers,
@@ -327,7 +328,7 @@ struct PhysicsWorld::Impl
             objectVsBroadPhaseLayerFilter,
             objectLayerPairFilter);
 
-        // 좌표: World Y가 위쪽. 중력은 m/s²이며 Body 가속도에 적용된다.
+        // 좌표: World의 +Y가 위쪽이다. 중력 벡터의 단위는 m/s²이며 각 Body의 가속도로 적용된다.
         physicsSystem.SetGravity(JPH::Vec3(0.0F, -9.81F, 0.0F));
 
         JPH::PhysicsSettings settings = physicsSystem.GetPhysicsSettings();
@@ -354,7 +355,7 @@ PhysicsWorld::PhysicsWorld()
 
 PhysicsWorld::~PhysicsWorld()
 {
-    // PhysicsSystem과 참조 자원을 먼저 없앤 뒤 마지막 World인 경우에 전역 등록을 해제한다.
+    // 이 World가 가진 PhysicsSystem과 그 참조 자원을 먼저 해제한다. 살아 있는 World가 마지막 하나일 때만 공유 Jolt 타입 등록을 해제한다.
     impl_.reset();
     ReleaseJoltRuntime();
 }
@@ -368,8 +369,8 @@ void PhysicsWorld::Step(double fixedDeltaSeconds)
         return;
     }
 
-    // 유효하지 않은 시간은 상태를 갱신하지 않는다. Fixed Update가 양수 간격을 전달해야 한다.
-    // 한 호출을 추가 분할 없이 한 번 계산하며 Jolt 내부 병렬 작업은 jobSystem을 사용한다.
+    // 간격이 0 이하이거나 유한하지 않으면 물리 상태를 바꾸지 않는다. 호출자는 Fixed Update의 양수 시간 간격을 전달해야 한다.
+    // 이 호출은 시간을 더 잘게 나누지 않고 Jolt 계산을 한 번 수행한다. Jolt 내부의 병렬 작업은 jobSystem이 맡는다.
     constexpr int CollisionSteps = 1;
 
     impl_->physicsSystem.Update(
@@ -395,8 +396,8 @@ PhysicsBodyHandle PhysicsWorld::CreateBox(const BoxBodyDescription& description)
 
 void ValidateTransform(const Transform& transform)
 {
-    // NaN/무한대 위치와 영 quaternion이 Jolt 공간 계산에 들어가지 않도록 경계에서 거른다.
-    // 길이가 1이 아닌 유한 quaternion은 호출 지점에서 정규화하므로 여기서는 0 여부만 검사한다.
+    // NaN이나 무한대가 포함된 위치, 회전을 나타내지 못하는 영 quaternion은 Jolt 계산을 망가뜨릴 수 있어 입력 경계에서 거부한다.
+    // 유한한 회전 quaternion은 호출자가 이 지점에 오기 전에 길이 1로 정규화한다. 여기서는 회전 방향이 정의되지 않는 길이 0만 거부한다.
     const float rotationLengthSquared = glm::dot(transform.rotation, transform.rotation);
     if (!std::isfinite(transform.position.x) || !std::isfinite(transform.position.y) ||
         !std::isfinite(transform.position.z) || !std::isfinite(rotationLengthSquared) ||
@@ -467,7 +468,7 @@ PhysicsBodyHandle PhysicsWorld::CreateBody(const BodyDescription& description)
             throw std::invalid_argument("Unsupported CollisionShapeType");
         }
 
-        // 형상 치수와 정점은 미터이며 GLM XYZ를 Jolt XYZ로 전달한다. 배치는 Body 원점 기준이다.
+        // 형상 치수와 정점은 미터 단위다. GLM의 X/Y/Z 값을 같은 축의 Jolt 좌표로 전달하고, 각 형상은 모델 Body 원점에 대해 배치한다.
         compoundSettings.AddShape(ToJoltPosition(part.localTransform.position),
             ToJoltRotation(glm::normalize(part.localTransform.rotation)), shape.GetPtr());
     }
@@ -479,7 +480,7 @@ PhysicsBodyHandle PhysicsWorld::CreateBody(const BodyDescription& description)
     const JPH::EMotionType motionType = ToJoltMotionType(description.motionType);
     const JPH::ObjectLayer objectLayer = ToObjectLayer(description.motionType, description.collisionLayer);
     const glm::quat rotation = glm::normalize(description.transform.rotation);
-    // 입력은 모델 Body 원점이다. 비대칭 compound의 COM 기준 내부 변환은 Jolt가 처리한다.
+    // 입력 자세는 모델에서 정한 Body 원점이다. 여러 형상의 배치가 비대칭이라 무게중심(COM)이 달라져도 Jolt가 내부 좌표 변환을 맡는다.
     JPH::BodyCreationSettings settings(shapeResult.Get(),
         ToJoltPosition(description.transform.position), ToJoltRotation(rotation),
         motionType, objectLayer);
@@ -502,7 +503,7 @@ bool PhysicsWorld::IsBodyValid(PhysicsBodyHandle handle) const
 
     const JPH::BodyID bodyID = ToBodyID(handle);
 
-    // Jolt BodyID의 sequence number가 삭제 후 같은 슬롯에 생성된 새 Body를 구분한다.
+    // Jolt는 삭제된 Body의 슬롯을 재사용할 수 있다. BodyID의 sequence number까지 비교해 같은 슬롯에 새로 만들어진 Body를 오래된 핸들과 구분한다.
     return impl_->physicsSystem
         .GetBodyInterface()
         .IsAdded(bodyID);
@@ -520,7 +521,7 @@ Transform PhysicsWorld::GetBodyTransform(
     JPH::RVec3 position;
     JPH::Quat rotation;
 
-    // API 계약은 COM 자세가 아니라 모델 Body 원점의 World 자세를 반환한다.
+    // 이 API는 Jolt가 계산에 쓰는 무게중심(COM) 자세 대신, 모델과 Entity가 공유하는 Body 원점의 World 자세를 반환한다.
     impl_->physicsSystem
         .GetBodyInterface()
         .GetPositionAndRotation(bodyID, position, rotation);
@@ -541,7 +542,7 @@ void PhysicsWorld::SetBodyTransform(
         throw std::invalid_argument("Invalid PhysicsBodyHandle.");
     ValidateTransform(transform);
 
-    // World Body 원점을 직접 전달한다. COM offset을 더하면 Jolt 내부 보정과 중복된다.
+    // 모델 Body 원점의 World 자세를 그대로 전달한다. 무게중심(COM) 차이를 여기서 다시 더하면 Jolt의 내부 보정과 겹쳐 위치가 어긋난다.
     impl_->physicsSystem
         .GetBodyInterface()
         .SetPositionAndRotation(
@@ -581,7 +582,7 @@ void PhysicsWorld::MoveKinematic(
             "MoveKinematic requires a kinematic body.");
     }
 
-    // 목표도 Body 원점 기준이다. Jolt가 COM 이동을 반영하고 목표/간격에서 속도를 계산한다.
+    // 목표 자세 역시 모델 Body 원점 기준이다. Jolt가 무게중심(COM) 이동을 내부에서 처리하고 목표와 시간 간격으로 필요한 속도를 계산한다.
     impl_->physicsSystem
         .GetBodyInterface()
         .MoveKinematic(
@@ -613,7 +614,7 @@ void PhysicsWorld::DestroyBody(PhysicsBodyHandle handle)
     JPH::BodyInterface& bodyInterface =
         impl_->physicsSystem.GetBodyInterface();
 
-    // 계산 목록에서 먼저 제거한 뒤 ID와 메모리를 해제해 다음 물리 계산에서 제외한다.
+    // 먼저 Jolt 계산 목록에서 Body를 제거해 다음 Step에 참여하지 않게 한다. 이후 ID와 Body 메모리를 해제한다.
     bodyInterface.RemoveBody(bodyID);
 
     bodyInterface.DestroyBody(bodyID);

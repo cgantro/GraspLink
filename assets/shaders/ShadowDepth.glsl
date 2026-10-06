@@ -1,13 +1,12 @@
 
 /**
  * @file ShadowDepth.glsl
- * @brief 광원 카메라로 그린 지오메트리의 깊이를 shadow map에 기록한다.
+ * @brief 광원 카메라에서 본 표면 깊이를 이미지에 저장해 나중에 그림자 여부를 판정한다.
  * @details
- * 정점 셰이더는 정점의 로컬 좌표에 모델 변환을 적용한 뒤 광원 시점 행렬을 곱해
- * 동차 clip 좌표를 만든다. 래스터라이저는 이를 clip 및 perspective divide를 거쳐
- * 화면 좌표와 깊이로 변환하고, fragment 셰이더가 별도 색 출력을 내지 않아도
- * 활성화된 depth test와 depth attachment에 깊이를 기록한다. 후속 조명 셰이더는
- * 같은 광원 공간 변환 결과에서 얻은 깊이를 이 값과 비교해 가림을 판정한다.
+ * 꼭짓점은 삼각형의 모서리 위치다. 모델 변환은 Mesh 자체 기준 좌표를 장면 전체 좌표로 옮기며 광원 카메라 변환은 광원 위치와 방향에서 본 좌표로 바꾼다.
+ * GPU는 삼각형이 덮는 픽셀마다 광원 카메라 기준 깊이를 계산한다. 깊이는 실제 광원 거리나 기본 카메라 앞뒤값이 아니라 투영 방향에서의 앞뒤 순서다.
+ * 이 단계는 색을 출력하지 않고 framebuffer의 깊이 저장소에 더 가까운 표면의 투영 깊이를 남긴다. Framebuffer는 실제 창이 아니라 GPU가 결과를 기록하는 저장소다.
+ * 화면 색을 계산할 때 같은 광원 변환으로 깊이를 구해 이 이미지와 비교하면 광선이 다른 표면에 막혔는지 알 수 있다.
  */
 #type vertex
 #version 330 core
@@ -20,7 +19,7 @@ uniform mat4 u_LightSpaceMatrix;
 void main()
 {
 
-    // World 좌표를 광원 clip 공간으로 옮겨 depth map을 만든다.
+    // Mesh 위치를 장면 좌표로 바꾼 뒤 광원에서 본 화면 좌표로 옮겨 깊이 기록 위치를 정한다.
     gl_Position =
         u_LightSpaceMatrix *
         u_Model *
@@ -32,5 +31,5 @@ void main()
 
 void main()
 {
-    // 색 출력 없이 rasterizer가 깊이 attachment에 표면 깊이를 기록한다.
+    // 색상은 출력하지 않는다. GPU가 픽셀마다 광원 카메라에서 본 표면 깊이를 깊이 저장소에 기록한다.
 }

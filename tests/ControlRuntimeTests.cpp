@@ -17,7 +17,7 @@ int main()
 {
     try
     {
-        // 시간 단위 [s]: 250 Hz의 4 ms step, 긴 정지 뒤에는 100 ms까지만 누적한다.
+        // 입력 시간은 초 단위다. 250 Hz 설정은 4 ms 고정 step으로 나뉘며, 긴 정지 뒤에도 한 번에 최대 100 ms만 누적한다.
         runtime::FixedControlLoop loop(0.004, 0.1);
         std::size_t ticks = 0;
         auto tick = [&](double dt) { RequireNear(dt, 0.004, 1e-12, "fixed dt"); ++ticks; };
@@ -40,7 +40,7 @@ int main()
         command.targetPositionRadians[0] = 0.5;
         Require(static_cast<bool>(controller.MoveJoint(command)), "move");
         controller.Update(0.004);
-        // 회전 단위 [rad], 속도 [rad/s]. 작은 dt 한 번 동안 최대 속도로 이동하는 값을 확인한다.
+        // 목표 회전은 rad, 최대 회전 속도는 rad/s로 지정한다. 짧은 한 번의 업데이트에서 속도 한도를 넘지 않는 만큼만 각도가 변하는지 확인한다.
         RequireNear(controller.GetState().jointPositionRadians[0], 2.268928 * 0.004, 1e-12, "model velocity limit");
         const auto unchanged = controller.GetState().jointPositionRadians;
         command.targetPositionRadians[0] = 10.0;

@@ -10,8 +10,8 @@
 
 namespace
 {
-// Component 값과 GPU 공유 참조를 복사해 두 pass가 같은 frame의 목록/행렬을 사용하게 한다.
-// Flecs Component 주소를 보관하지 않으므로 iterator 이동에 영향을 받지 않는다.
+// Component 값과 GPU 자원에 대한 공유 참조를 복사해 그림자 생성과 화면 출력이 같은 프레임 목록 및 행렬을 사용하게 한다.
+// Flecs의 임시 Component 메모리 주소를 저장하지 않으므로, 순회 iterator가 다음 항목으로 이동해도 자료가 유효하다.
 struct RenderItem
 {
     MeshFilter meshFilter;
@@ -28,7 +28,7 @@ RenderSystemModule::RenderSystemModule(flecs::world& world)
 
 void RenderSystemModule::RegisterSystem(flecs::world& world)
 {
-    // PreStore에서 OnUpdate 뒤에 그린다. Transform 계산은 자동 phase가 아니므로 ViewerApp이 progress 전에 끝낸다.
+    // Flecs의 PreStore 단계에서 Scene OnUpdate 이후에 그린다. 변환 계산은 자동 단계가 아니므로 ViewerApp이 World 진행 전에 명시적으로 끝낸다.
     world
         .system<const MeshFilter, const MeshRenderer, const TransformMatrix>(
             "RenderSystem")
@@ -38,7 +38,7 @@ void RenderSystemModule::RegisterSystem(flecs::world& world)
         .run(
             [](flecs::iter& it)
             {
-                // 등록 함수의 임시 World wrapper를 보관하지 않고 현재 실행 World에서 빌린 RenderContext를 읽는다.
+                // system 등록 때 받은 임시 World wrapper를 저장하지 않는다. 실제 실행 중인 Flecs World에서 RenderContext를 빌려 읽는다.
                 const RenderContext* context =
                     it.world().try_get<RenderContext>();
 
@@ -57,7 +57,8 @@ void RenderSystemModule::RegisterSystem(flecs::world& world)
                     {
                         if (!meshRenderers[i].visible) continue;
 
-                        // TransformMatrix의 World specialization이 가진 누적 행렬을 복사해 Local 모델 변환 대신 Renderer에 전달한다.
+                        // 부모 변환까지 누적된 TransformMatrix의 World 값을 복사해 Renderer에 보낸다.
+                        // 모델 자체의 Local 행렬을 넘기면 Scene 배치 변환이 빠지기 때문이다.
                         items.push_back({
                             meshFilters[i],
                             meshRenderers[i],
@@ -65,7 +66,7 @@ void RenderSystemModule::RegisterSystem(flecs::world& world)
                     }
                 }
 
-                // Light 기준 깊이를 먼저 그려 Main pass에서 사용할 그림자 정보를 만든다.
+                // 먼저 광원 위치에서 본 깊이값을 저장한다. 화면을 그리는 단계에서 이 값으로 물체가 그림자를 받는지 판단한다.
                 context->renderer->BeginShadowPass();
                 for (const RenderItem& item : items)
                 {
@@ -75,7 +76,7 @@ void RenderSystemModule::RegisterSystem(flecs::world& world)
                 }
                 context->renderer->EndShadowPass();
 
-                // 같은 Model 행렬을 Camera 기준으로 그린다. Material/Texture/조명은 Main pass에서 적용한다.
+                // 같은 모델 행렬을 카메라 시점으로 그린다. 이 단계에서 Material 색, Texture와 조명을 적용해 화면 색을 만든다.
                 const glm::mat4 view = context->camera->GetViewMatrix();
                 const glm::mat4 projection = context->camera->GetProjectionMatrix();
                 const glm::vec3 cameraPosition = context->camera->GetPosition();

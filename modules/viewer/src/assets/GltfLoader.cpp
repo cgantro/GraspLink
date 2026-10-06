@@ -18,7 +18,8 @@
 
 namespace
 {
-// Accessor -> BufferView -> Buffer를 따라 범위를 확인한 뒤 읽기 시작 주소와 간격을 보관한다.
+// Buffer는 glTF 파일의 원본 byte 묶음이고 BufferView는 그중 일부 구간이다. Accessor는 그 구간에서 읽을 값의 자료형·개수·간격을 적은 기록이다.
+// 세 기록의 연결과 범위를 확인한 뒤 첫 값의 주소와 다음 값까지의 간격을 돌려준다.
 struct AccessorView
 {
     const unsigned char* data = nullptr;
@@ -26,7 +27,7 @@ struct AccessorView
     std::size_t count = 0;
 };
 
-// 범위 검증 후 byte 주소를 만든다. Sparse 데이터는 현재 지원하지 않는다.
+// Accessor가 가리키는 byte가 실제 Buffer 범위 안에 있는지 확인해 읽을 주소를 만든다. 기존 값 일부를 덮어쓰는 Sparse 형식은 현재 지원하지 않는다.
 AccessorView GetAccessorView(
     const tinygltf::Model& model,
     int accessorIndex,
@@ -56,10 +57,9 @@ AccessorView GetAccessorView(
     const tinygltf::Buffer& buffer = model.buffers[bufferView.buffer];
 
     /*
-        ByteStride는 tightly packed와 interleaved 배열 모두에서 다음 원소의 시작점을 준다.
-        예: [Pos][Normal][UV]가 반복되면 POSITION의 간격은 POSITION 자체 크기보다 크다.
-        아래 범위 계산은 마지막 원소의 끝까지 포함하므로 padding이 bufferView 밖으로
-        이어지는 malformed 데이터도 포인터를 만들기 전에 거부한다.
+        byteStride는 한 값의 첫 byte에서 다음 같은 값의 첫 byte까지 간격이다.
+        예를 들어 정점마다 [위치][법선][UV]를 붙여 저장하면 다음 위치는 위치 값만큼이 아니라 법선과 UV까지 건너뛴 뒤 시작한다.
+        마지막 값의 끝까지 BufferView 안에 드는지 확인하므로 잘못된 파일이 범위 밖 주소를 만들기 전에 거부된다.
     */
     const int byteStride = accessor.ByteStride(bufferView);
     if (byteStride <= 0 || static_cast<std::size_t>(byteStride) < elementSize)
@@ -126,7 +126,7 @@ void RequireFinite(const glm::quat& value)
     }
 }
 
-// FLOAT VEC3를 Position/Normal 배열로 복사한다.
+// 정점은 삼각형 꼭짓점 자료다. 이 함수는 각 정점의 3개 실수로 된 위치 또는 표면 수직 방향(법선)을 읽는다.
 std::vector<glm::vec3> ReadVec3FloatAccessor(
     const tinygltf::Model& model,
     int accessorIndex)
@@ -148,7 +148,7 @@ std::vector<glm::vec3> ReadVec3FloatAccessor(
         const unsigned char* source = view.data + i * view.stride;
         float values[3]{};
 
-        // Buffer 주소의 float alignment를 가정하지 않기 위해 reinterpret_cast 대신 memcpy를 사용한다.
+        // 파일의 값 시작 주소가 C++ float 정렬에 맞는다고 가정하지 않고 byte를 복사한다.
         std::memcpy(values, source, sizeof(values));
         result[i] = glm::vec3{values[0], values[1], values[2]};
         RequireFinite(result[i]);
@@ -157,7 +157,7 @@ std::vector<glm::vec3> ReadVec3FloatAccessor(
     return result;
 }
 
-// FLOAT VEC2를 UV 배열로 복사한다.
+// UV는 표면에서 이미지의 어느 위치를 읽을지 나타내는 좌표다. 이 함수는 각 정점의 2개 실수 UV를 읽는다.
 std::vector<glm::vec2> ReadVec2FloatAccessor(
     const tinygltf::Model& model,
     int accessorIndex)
@@ -186,7 +186,7 @@ std::vector<glm::vec2> ReadVec2FloatAccessor(
     return result;
 }
 
-// 현재 Vertex는 tangent xyz만 보관한다. Normal mapping에는 w 보존도 필요하다.
+// tangent는 표면을 따라가는 방향이다. 여기서는 x/y/z만 저장하며 네 번째 w의 방향 부호는 버려 normal mapping에 필요한 전체 방향을 보존하지 않는다.
 std::vector<glm::vec3> ReadTangentAccessor(
     const tinygltf::Model& model,
     int accessorIndex)
@@ -216,8 +216,8 @@ std::vector<glm::vec3> ReadTangentAccessor(
     return result;
 }
 
-// glTF byte 주소가 T의 정렬 경계에 놓인다고 가정하지 않고 scalar를 복사한다.
-// 접근자의 파일 형식상 정렬 요구를 검사하는 코드는 별도 없다.
+// 파일에서 읽을 값 주소가 C++ 타입 T의 정렬 경계에 맞는다고 가정하지 않고 복사한다.
+// glTF 파일이 요구하는 별도의 정렬 조건은 여기서 검사하지 않는다.
 template<typename T>
 T ReadScalar(const unsigned char* data)
 {
@@ -226,7 +226,7 @@ T ReadScalar(const unsigned char* data)
     return value;
 }
 
-// Index는 uint32_t로 통일한다. 없으면 정점 순서로 생성한다.
+// 삼각형 연결 번호는 정점 배열에서 사용할 꼭짓점을 고르는 값이다. 이를 32-bit 정수로 통일하고 파일에 번호가 없으면 0부터 정점 순서대로 만든다.
 std::vector<std::uint32_t> ReadIndices(
     const tinygltf::Model& model,
     int accessorIndex,
@@ -293,7 +293,7 @@ std::vector<std::uint32_t> ReadIndices(
     return result;
 }
 
-// TinyGLTF 디코딩이 끝난 8-bit RGB/RGBA 픽셀을 CPU 데이터와 안정적인 Texture ID로 복사한다.
+// 디코드된 이미지의 RGB/RGBA 채널은 각 8 bit다. Texture 번호는 이미지 번호가 아니라 glTF 재질에서 참조할 glTF texture 항목 번호다.
 TextureData ConvertTexture(
     const tinygltf::Model& model,
     const tinygltf::Texture& source,
@@ -332,7 +332,7 @@ TextureData ConvertTexture(
     return result;
 }
 
-// PBR factor와 base color texture를 내부 Material에 연결한다.
+// 재질은 표면 색과 빛 반응을 정하는 데이터다. 파일의 기본색·금속성·거칠기·발광 계수와 기본색 이미지 참조를 내부 자료로 옮긴다.
 MaterialData ConvertMaterial(
     const tinygltf::Material& source,
     const std::string& resourcePrefix,
@@ -365,7 +365,7 @@ MaterialData ConvertMaterial(
             static_cast<float>(source.emissiveFactor[2])};
     }
 
-    // glTF Material은 Texture index를 보관하지만 내부 IR은 파일 경로 기반 ResourceID로 연결한다.
+    // glTF 재질은 texture 항목 번호를 가리키지만 내부 캐시는 모델 경로와 자원 종류, 해당 texture 항목 번호를 합친 ID로 찾는다.
     if (pbr.baseColorTexture.index >= 0)
     {
         result.baseColorTexture = ResourceID{
@@ -376,7 +376,7 @@ MaterialData ConvertMaterial(
     return result;
 }
 
-// Primitive별 local index에 baseVertex를 더해 하나의 Mesh로 합친다.
+// Primitive는 재질 하나로 그리는 삼각형 묶음이다. 각 묶음에서 0부터 시작하는 연결 번호에 앞서 추가한 정점 수를 더해 하나의 Mesh 배열로 합친다.
 MeshData ConvertMesh(
     const tinygltf::Model& model,
     const tinygltf::Mesh& source,
@@ -393,7 +393,7 @@ MeshData ConvertMesh(
         if (primitive.mode != TINYGLTF_MODE_TRIANGLES && primitive.mode != -1)
             throw std::runtime_error("Only TRIANGLES glTF primitives are supported");
 
-        // POSITION은 렌더 가능한 Primitive에 필수다.
+        // POSITION은 표면 삼각형의 각 꼭짓점 위치다. 위치가 없으면 화면에 표면을 놓을 수 없다.
         const auto positionIterator = primitive.attributes.find("POSITION");
         if (positionIterator == primitive.attributes.end())
             throw std::runtime_error("glTF primitive has no POSITION");
@@ -408,7 +408,7 @@ MeshData ConvertMesh(
         if (vertexCount > kMaxMeshValue || result.vertices.size() > kMaxMeshValue - vertexCount)
             throw std::runtime_error("glTF mesh vertex range exceeds uint32_t");
 
-        // NORMAL/TEXCOORD/TANGENT는 선택 attribute다. 없으면 Vertex 기본값을 사용한다.
+        // NORMAL은 표면에 수직인 방향, TEXCOORD_0은 이미지에서 색을 읽을 UV 위치, TANGENT는 표면을 따라가는 방향이다. 선택 속성이 빠지면 Vertex의 기본값을 유지한다.
         std::vector<glm::vec3> normals;
         const auto normalIterator = primitive.attributes.find("NORMAL");
         if (normalIterator != primitive.attributes.end())
@@ -480,7 +480,7 @@ MeshData ConvertMesh(
     return result;
 }
 
-// 부모 기준 matrix/TRS를 NodeData의 Local TRS로 바꾼다. 회전은 단위 quaternion으로 보관한다.
+// Node는 모델의 한 부품과 부모·자식 관계를 나타낸다. 부모 기준 위치·회전·크기로 변환을 풀어 저장하고 회전은 길이가 1인 quaternion으로 맞춘다.
 void ReadNodeTransform(
     const tinygltf::Node& source,
     NodeData& destination)
@@ -499,7 +499,7 @@ void ReadNodeTransform(
 
         glm::mat4 matrix{1.0F};
 
-        // glTF matrix는 column-major다. GLM 행렬의 같은 [column][row] 위치에 복사한다.
+        // 행렬은 좌표를 다른 기준으로 바꾸는 숫자 표다. 파일과 GLM은 열을 먼저 나열하므로 같은 열·행 위치에 숫자를 복사한다.
         for (int column = 0; column < 4; ++column)
         {
             for (int row = 0; row < 4; ++row)
@@ -514,7 +514,7 @@ void ReadNodeTransform(
             }
         }
 
-        // 마지막 행이 원근 성분을 가지면 TRS로 표현할 수 없어 허용 오차 안의 affine만 받는다.
+        // 원근은 멀리 있는 점을 작게 보이게 하는 효과다. 이런 원근 성분은 위치·회전·크기로 나타낼 수 없으므로 원근이 없는 변환만 받는다.
         if (std::abs(matrix[0][3]) > kTransformTolerance ||
             std::abs(matrix[1][3]) > kTransformTolerance ||
             std::abs(matrix[2][3]) > kTransformTolerance ||
@@ -545,7 +545,7 @@ void ReadNodeTransform(
         RequireFinite(orientation);
         RequireFinite(skew);
         RequireFinite(perspective);
-        // Local TRS에는 shear를 저장할 자리가 없으므로 분해 결과가 순수 TRS인지 확인한다.
+        // Shear는 한 축을 다른 축 방향으로 기울이는 변환이다. 위치·회전·크기 세 값으로 보존할 수 없어 분해 결과에 shear가 있는지 확인한다.
         if (std::abs(scale.x) <= kTransformTolerance ||
             std::abs(scale.y) <= kTransformTolerance ||
             std::abs(scale.z) <= kTransformTolerance ||
@@ -607,7 +607,7 @@ void ReadNodeTransform(
 
     if (source.rotation.size() == 4)
     {
-        // glTF wire 순서 [x,y,z,w]를 GLM 생성자 인자 순서 (w,x,y,z)로 옮긴다.
+        // Quaternion은 회전을 네 숫자로 나타내며 yaw/pitch 같은 세 축 회전각과 다른 표현이다. 파일의 [x,y,z,w] 순서를 GLM 생성자의 (w,x,y,z)로 옮긴다.
         for (const double value : source.rotation)
         {
             if (!std::isfinite(value) ||
@@ -635,7 +635,7 @@ void ReadNodeTransform(
             static_cast<float>(quaternion.x / quaternionLength),
             static_cast<float>(quaternion.y / quaternionLength),
             static_cast<float>(quaternion.z / quaternionLength)};
-        // 영 quaternion은 먼저 거부하고, 회전 방향을 유지하는 단위 quaternion으로 보관한다.
+        // 길이가 0인 quaternion은 회전축과 회전량을 정할 수 없으므로 거부한다. 나머지는 회전 방향을 유지하며 길이를 1로 맞춘다.
         destination.rotation = normalizedQuaternion;
     }
 
@@ -670,21 +670,16 @@ ModelResource GltfLoader::LoadGLB(const std::filesystem::path& path)
             "Failed to load GLB: " + path.string() + "\n" + error);
 
     /*
-        TinyGLTF warning은 load failure가 아니다.
-        현재 Logger가 없어서 버리지만 진단 정보가 필요해지면 warning을 Logger에 전달한다.
+        TinyGLTF가 남긴 경고는 파일 읽기 실패와는 다르다.
+        현재는 경고를 저장하거나 출력하는 기능이 없어 버린다. 진단 로그가 추가되면 Logger에 전달해야 한다.
     */
     (void)warning;
 
     ModelResource result;
 
     /*
-        파일 경로를 Resource namespace prefix로 사용한다.
-        같은 mesh index라도 파일이 다르면 ID가 달라진다.
-
-        예:
-        HCR12A_R00.glb#mesh/0
-        HCR12A_R00.glb#material/0
-        HCR12A_R00.glb#texture/0
+        ResourceID는 캐시에서 자원을 다시 찾는 식별자다. 파일 경로와 자원 종류, 항목 번호를 조합하므로 서로 다른 GLB의 같은 번호도 구분된다.
+        예: HCR12A_R00.glb#mesh/0은 첫 형상, HCR12A_R00.glb#material/0은 첫 재질, HCR12A_R00.glb#texture/0은 첫 glTF texture 항목이다.
     */
     const std::string resourcePrefix = path.generic_string();
 
@@ -738,9 +733,9 @@ ModelResource GltfLoader::LoadGLB(const std::filesystem::path& path)
     }
 
     /*
-        glTF Node는 children index만 저장하고 parent index는 직접 갖지 않는다.
-        PrefabFactory가 parent를 빠르게 복원할 수 있도록 children 정보를 역으로 순회해 parentIndex를 채운다.
-        두 부모가 같은 Node를 참조하면 트리 변환이 모호하므로 즉시 거부한다.
+        glTF 부품은 자식 번호만 기록하고 부모 번호는 기록하지 않는다.
+        PrefabFactory가 각 부품의 부모를 알 수 있도록 자식 목록을 훑어 parentIndex를 채운다.
+        두 부모가 같은 부품을 자식으로 가리키면 한 갈래 계층으로 만들 수 없어 거부한다.
     */
     for (std::size_t parentIndex = 0;
          parentIndex < result.nodes.size();
@@ -765,7 +760,7 @@ ModelResource GltfLoader::LoadGLB(const std::filesystem::path& path)
         }
     }
 
-    // 부모가 하나인 그래프를 세 상태로 방문해, 이미 진행 중인 경로로 돌아오는 순환을 거부한다.
+    // 부모 연결을 따라가며 순환을 검사한다. 현재 방문 중인 부품으로 되돌아오면 잘못된 계층이므로 거부한다.
     std::vector<std::uint8_t> nodeState(result.nodes.size(), 0U);
     for (std::size_t start = 0; start < result.nodes.size(); ++start)
     {
@@ -787,7 +782,7 @@ ModelResource GltfLoader::LoadGLB(const std::filesystem::path& path)
         }
     }
 
-    // defaultScene이 없고 Scene이 하나 이상이면 첫 Scene을 fallback으로 사용한다.
+    // 파일이 기본 장면을 지정하지 않았으면 첫 장면을 사용한다.
     int sceneIndex = gltfModel.defaultScene;
     if (sceneIndex < 0 && !gltfModel.scenes.empty())
         sceneIndex = 0;
@@ -814,7 +809,7 @@ ModelResource GltfLoader::LoadGLB(const std::filesystem::path& path)
         }
     }
 
-    // Scene root가 없으면 parent가 없는 Node를 찾고, 둘 이상이면 거부한다.
+    // 장면에 최상위 부품이 지정되지 않았으면 부모가 없는 부품을 찾는다. 둘 이상이면 어느 장면인지 정할 수 없어 거부한다.
     if (result.rootNodeIndex < 0)
     {
         int rootCandidate = -1;
@@ -838,7 +833,7 @@ ModelResource GltfLoader::LoadGLB(const std::filesystem::path& path)
         result.rootNodeIndex = rootCandidate;
     }
 
-    // PrefabFactory는 모든 Node를 생성하므로 선택한 Scene 밖의 별도 트리는 거부한다.
+    // PrefabFactory가 파일의 모든 부품을 만들기 때문에 선택한 장면과 떨어진 별도 부품 계층이 있으면 거부한다.
     for (std::size_t i = 0; i < result.nodes.size(); ++i)
     {
         if (result.nodes[i].parentIndex == -1 &&

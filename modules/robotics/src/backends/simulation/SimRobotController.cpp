@@ -14,7 +14,7 @@ constexpr double kPositionEpsilon = 1e-8;
 
 Result Failure(ErrorCode code, std::string message)
 {
-    // 입력 검증 실패를 예외가 아닌 공통 controller Result 계약으로 돌려준다.
+    // 잘못된 명령 입력은 예외로 던지지 않고 다른 Controller 구현과 같은 Result 오류 값으로 반환한다.
     return {code, std::move(message)};
 }
 
@@ -49,7 +49,7 @@ Result SimRobotController::Connect()
     state_.jointVelocityRadiansPerSecond.assign(specification_->jointCount, 0.0);
     state_.mode = RobotMode::Idle;
     state_.valid = true;
-    // TCP pose는 Controller feedback이 아니다. 호출자는 joint state를 RobotKinematics에 보내 FK를 별도로 계산한다.
+    // 이 시뮬레이션 Controller는 TCP 자세를 feedback으로 제공하지 않는다. 호출자가 관절 상태를 RobotKinematics에 전달해 FK로 따로 계산해야 한다.
     state_.tcpPoseValid = false;
 
     targetPositionRadians_ = state_.jointPositionRadians;
@@ -102,8 +102,8 @@ Result SimRobotController::MoveJoint(const JointMoveCommand& command)
         }
     }
 
-    // 명령은 여기서 q를 순간 변경하지 않는다. 다음 Update들이 이 목표를 향해 상태를 진행한다.
-    // Moving 중 새 명령은 queue가 아니라 현재 target 교체로 처리한다.
+    // 명령을 받는 순간 관절각 q를 바꾸지 않는다. 이후 Update 호출이 정해진 속도 안에서 현재 상태를 목표까지 진행시킨다.
+    // 움직이는 도중 새 명령이 들어오면 대기열에 쌓지 않고 현재 목표를 새 목표로 바꾼다.
     targetPositionRadians_ = command.targetPositionRadians;
     velocityScale_ = command.velocityScale;
     accelerationScale_ = command.accelerationScale;
@@ -178,7 +178,7 @@ void SimRobotController::Update(double dtSeconds)
             continue;
         }
 
-        // 속도 상한 안에서 target을 직접 따라간다. 가속도 제한이나 ramp는 적용하지 않는다.
+        // 각 관절은 지정된 최대 각속도를 넘지 않게 목표를 향해 움직인다. 속도 변화에 대한 가속도 제한이나 부드러운 ramp는 적용하지 않는다.
         // maxStep은 이번 간격에 허용되는 각도 [rad]. clamp로 큰 dt에서도 목표를 지나치지 않는다.
         const double maxStep = joint.maxVelocityRadiansPerSecond * velocityScale_ * dtSeconds;
         if (maxStep <= 0.0)
@@ -217,7 +217,7 @@ void SimRobotController::Update(double dtSeconds)
 
 const models::RobotSpecification& SimRobotController::GetSpecification() const noexcept
 {
-    // 생성자에서 빌린 사양을 그대로 참조한다. 사양 저장소는 Controller보다 오래 살아야 한다.
+    // 생성 시 받은 사양을 복사하지 않고 참조한다. 따라서 사양 데이터를 가진 저장소는 이 Controller보다 오래 살아 있어야 한다.
     return *specification_;
 }
 

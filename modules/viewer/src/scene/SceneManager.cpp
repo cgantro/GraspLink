@@ -9,7 +9,7 @@ SceneManager::SceneManager(flecs::world& world)
 
 SceneManager::~SceneManager()
 {
-    // borrowed World와 삭제 observer가 살아 있을 때 종료 hook과 자손 삭제를 마친다.
+    // observer는 Scene 물체 삭제를 알아채 Jolt 물체도 지우는 callback이다. 외부에서 빌린 World가 살아 있는 동안 Scene 종료와 자손 삭제를 마친다.
     if (m_ActiveScene)
     {
         m_ActiveScene->OnExit();
@@ -24,26 +24,26 @@ SceneManager::~SceneManager()
 
 void SceneManager::OnUpdate(float dt)
 {
-    // 예약은 프레임 경계에 반영한다. LoadScene 호출 시점에는 활성 계층이 바뀌지 않는다.
+    // LoadScene()은 다음 Scene 객체만 예약한다. 현재 장면 물체는 이 OnUpdate()가 시작될 때까지 그대로 유지된다.
     if (m_NextScene)
     {
         if (m_ActiveScene)
         {
-            // OnExit에서 사용자 자원을 정리한 뒤 root 파괴로 Entity와 Component를 제거한다.
+            // 먼저 OnExit()에서 Scene이 따로 가진 자원을 정리한 뒤 root를 지워 그 아래의 물체와 위치 같은 값도 제거한다.
             m_ActiveScene->OnExit();
             m_ActiveScene->CleanupRoot();
         }
 
-        // 이전 root 삭제 뒤 manager 소유권을 예약 Scene으로 옮긴다.
+        // 이전 장면 물체가 정리된 뒤 예약한 Scene 객체가 활성 Scene의 소유자가 된다.
         m_ActiveScene =
             std::move(m_NextScene);
-        // CreateEntity가 요구하는 활성 root를 먼저 준비하고 OnEnter에서 계층을 구성한다.
+        // OnEnter()에서 바닥과 로봇을 만들 수 있도록 새 root를 준비한 다음 활성화 함수를 호출한다.
         m_ActiveScene->InitRoot();
 
         m_ActiveScene->OnEnter();
     }
 
-    // 전환한 프레임에도 새 Scene의 첫 OnUpdate가 이어진다.
+    // 전환을 적용한 프레임에 새 Scene의 첫 상태 갱신도 실행한다.
     if (m_ActiveScene)
     {
         m_ActiveScene->OnUpdate(dt);

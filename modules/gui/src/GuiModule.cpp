@@ -22,7 +22,7 @@ struct GuiModule::Impl
 
     ~Impl()
     {
-        // GPU backend를 먼저 정리하므로 이 시점까지 Window의 OpenGL context가 살아 있어야 한다.
+        // UI의 OpenGL backend가 GPU 자원을 해제하므로, 이 호출이 끝날 때까지 Window의 OpenGL context가 유효해야 한다.
         ImGui_ImplOpenGL3_Shutdown();
         ImGui_ImplGlfw_Shutdown();
         ImGui::DestroyContext();

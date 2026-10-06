@@ -10,56 +10,51 @@ class Mesh;
 class Texture;
 
 /**
- * @brief CPU에 읽힌 모델 자산을 OpenGL 자원으로 만들고 ID별로 공유한다.
+ * @brief 파일에서 읽은 모델 데이터를 그래픽 카드에 올리고 같은 자원을 여러 사용자가 함께 쓰게 한다.
  * @details
- * 흐름: GltfLoader가 GLB를 CPU 배열(ModelResource)로 디코드하고, UploadModel이
- * Texture·Material·Mesh를 만든 뒤, PrefabFactory가 Node 계층과 렌더링 Entity를 구성한다.
- * ResourceID 캐시는 같은 ID의 GPU 객체를 재사용한다. ModelResource::meshes의 gpuMesh와
- * Entity의 MeshFilter도 Mesh를 shared_ptr로 보유하므로 캐시를 비워도 그 참조가 남아 있으면
- * 자원은 유지된다. 마지막 Mesh/Texture 참조가 해제될 때 OpenGL 삭제가 일어나므로 Scene과
- * ModelResource 및 이 관리자의 GPU 참조를 정리한 뒤 GL context를 종료해야 한다.
- * 업로드와 마지막 GPU 참조 해제는 유효한 OpenGL context가 현재 thread에 있을 때 수행한다.
- * 캐시와 업로드는 동기화되지 않으므로 동시에 호출하지 않는다.
+ * GltfLoader는 GLB 파일에서 삼각형 정점·픽셀·재질 데이터를 CPU 메모리로 읽는다. UploadModel은 픽셀과 정점 byte를 GPU로 복사해 Texture와 Mesh를 만든다.
+ * PrefabFactory는 이 이미지와 형상을 장면 부품 및 Material(표면 색·빛 반응 정보)에 연결한다.
+ * ResourceID 캐시는 같은 식별자를 가진 이미지·재질·형상을 다시 만들어 올리지 않고 재사용한다.
+ * ModelResource와 장면 Entity도 형상 참조를 보유할 수 있어 캐시를 비워도 쓰는 곳이 남아 있으면 GPU 데이터는 유지된다.
+ * 마지막 공유 참조를 놓으면 GPU 객체 삭제가 발생한다. 장면과 모델 및 이 관리자의 참조를 정리한 뒤 OpenGL context를 종료해야 한다.
+ * OpenGL context는 GPU 명령을 실행할 상태와 자원 연결을 제공하는 환경이다. 단지 창이 존재하는 것만으로 충분하지 않고 업로드와 마지막 참조 해제 때 현재 스레드에서 활성화되어 있어야 한다.
+ * 이 캐시는 동시에 여러 스레드에서 호출될 때 서로 보호하지 않는다.
  */
 class AssetManager final
 {
 public:
-    /** @brief 색상 factor만 사용하는 기본 Material을 준비한다. */
+    /** @brief 이미지 없이 기본 표면 색상 계수만 사용하는 재질을 준비한다. */
     AssetManager();
 
     /**
-     * @brief CPU 모델 데이터를 GPU 자원으로 올리고 공유 참조를 채운다.
-     * @param model GltfLoader가 채운 CPU 자산. 성공한 Mesh는 각 gpuMesh에도 보관한다.
-     * @throws std::runtime_error 잘못된 Texture 크기·채널, 유효한 Material의 누락된
-     *         base color texture, 빈 정점·인덱스 배열 또는 uint32_t 범위를 넘는 Mesh 크기에서 발생한다.
-     * @details Texture, Material, Mesh 순으로 처리해 ResourceID 참조를 연결한다. 캐시에
-     *          이미 있는 ID는 재사용하고, 픽셀이 비어 있는 Texture는 건너뛴다. 이 Texture를
-     *          요구하는 Material은 누락 오류를 낸다. Material이 없는 Primitive는 PrefabFactory가
-     *          기본 Material을 선택하지만, 지정 Texture의 실패를 기본 Material로 대체하지 않는다.
-     *          채널 수는 Texture::Create2D에서 검사하며 1, 3, 4만 허용한다.
-     *          runtime Material에는 baseColorTexture만 연결한다. metallicRoughness·normal·
-     *          occlusion·emissive texture ID는 CPU 기록으로 남으며 Material에 연결하지 않는다.
-     *          metallic/roughness factor는 Material에 전달된다. 현재 thread의 OpenGL context가 필요하다.
+     * @brief 모델의 픽셀·꼭짓점 데이터를 그래픽 카드에 복사하고 재질과 형상 참조를 채운다.
+     * @param model GltfLoader가 읽은 모델 데이터. 성공한 형상은 gpuMesh에서도 공유한다.
+     * @throws std::runtime_error 이미지 크기·채널이 잘못됐거나 재질이 요구한 기본색 이미지가 없거나, 정점·삼각형 번호 배열이 비었거나 형상 크기가 32-bit 번호 범위를 넘으면 발생한다.
+     * @details Texture는 GPU가 표면 색을 읽을 이미지이고 Mesh는 삼각형 정점과 연결 번호를 담는 형상이다. 이미지, 재질, 형상 순서로 올려 뒤 단계가 앞 단계 자원을 찾는다.
+     * 캐시에 같은 ResourceID가 있으면 다시 만들지 않고 공유한다. 픽셀 자료가 없는 이미지는 업로드하지 않으며 그런 이미지를 요구하는 재질은 오류다.
+     * 재질 번호가 없는 표면만 기본 재질을 쓴다. 지정한 이미지가 없을 때는 기본 재질로 대체하지 않는다.
+     * 이미지 채널은 단일 밝기 1개, RGB 색 3개, RGBA 색과 alpha 4개만 지원한다. GLB의 모든 이미지 Texture를 현재 sRGB 형식으로 업로드한다.
+     * sRGB는 모니터용 RGB 색을 GPU 조명 계산용 선형 색으로 읽게 하는 저장 형식이다. Material에는 기본색 이미지 참조만 연결하며 금속성·거칠기, 표면 방향, 빛 가림, 발광 이미지 참조는 유효한 ID로 설정하지 않는다.
+     * 금속성·거칠기 숫자 계수는 전달한다. 발광색 숫자는 읽혀도 화면 Shader에 전달되지 않는다.
+     * GPU 업로드에는 OpenGL 명령 실행 환경(context)이 현재 스레드에서 활성화되어 있어야 한다.
      */
     void UploadModel(ModelResource& model);
 
-    /** @brief ID의 GPU Mesh 공유 참조를 찾는다. @return 캐시에 없으면 빈 참조. */
+    /** @brief 자원 식별자에 해당하는 GPU Mesh(삼각형 형상)를 찾는다. @return 없으면 빈 공유 참조. */
     std::shared_ptr<Mesh> GetMesh(ResourceID id) const;
 
-    /** @brief ID의 runtime Material 공유 참조를 찾는다. @return 캐시에 없으면 빈 참조. */
+    /** @brief 자원 식별자에 해당하는 Material(표면 색·빛 반응 정보)을 찾는다. @return 없으면 빈 공유 참조. */
     std::shared_ptr<Material> GetMaterial(ResourceID id) const;
 
-    /** @brief ID의 GPU Texture 공유 참조를 찾는다. @return 캐시에 없으면 빈 참조. */
+    /** @brief 자원 식별자에 해당하는 GPU Texture(표면 이미지)를 찾는다. @return 없으면 빈 공유 참조. */
     std::shared_ptr<Texture> GetTexture(ResourceID id) const;
 
-    /** @brief Material이 지정되지 않은 Primitive에 사용할 기본 Material을 반환한다. */
+    /** @brief 파일에서 재질 번호를 주지 않은 표면에 쓸 기본 재질을 반환한다. */
     std::shared_ptr<Material> GetDefaultMaterial() const;
 
     /**
-     * @brief Mesh·Material·Texture 캐시의 소유 참조를 해제한다.
-     * @details ModelResource나 Entity의 shared_ptr가 남아 있으면 해당 GPU 자원은 유지된다.
-     *          마지막 참조 해제 시 OpenGL 삭제가 발생할 수 있으므로 context가 유효한 동안 호출한다.
-     *          기본 Material은 이 캐시와 별도로 보유하므로 유지된다.
+     * @brief 이 관리자가 캐시에 보관한 형상·재질·이미지 참조를 모두 놓는다.
+     * @details 모델이나 장면이 같은 GPU 객체를 계속 참조하면 그 객체는 살아 있다. 마지막 참조를 놓는 호출일 수 있으므로 GPU 명령 실행 환경(context)이 현재 스레드에서 활성화된 동안 실행한다. 기본 재질은 별도로 보유하므로 그대로 남는다.
      */
     void Clear();
 

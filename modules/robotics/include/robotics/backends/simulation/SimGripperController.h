@@ -7,12 +7,12 @@ namespace grasplink::robotics::backends::simulation
 {
 
 /**
- * @brief raw speed를 master 각속도로 대응시키는 프로젝트 시뮬레이션 설정.
- * @details
- * GripperCommand raw 위치는 specification의 양 끝 범위를 열린 0과 닫힌 1로 선형 대응한다.
- * 내부 계산은 연속 closureFraction을 사용하고, GripperState.actualPosition만 raw 정수로 반올림한다.
- * raw speed는 SimGripperMotionSettings의 master 각속도 [rad/s] 범위에 대응하며 제조사 속도 사양이 아니다.
- * 위치·속도·힘 요청 범위 검사는 수행하지만 힘, 전류, 접촉, 물체 검출이나 파지 적응은 계산하지 않는다.
+ * @brief Gripper speed code를 Simulation의 기준 관절 각속도 [rad/s]로 바꾸는 설정이다.
+ * @details raw code는 장치가 주고받는 0..255 정수다.
+ * 이 Simulation은 raw 위치 범위의 양 끝을 열린 비율 0과 닫힌 비율 1로 선형 대응시킨다.
+ * 기구 계산은 연속 비율을 사용하고 actualPosition만 표시용 정수로 반올림한다.
+ * raw speed는 아래 프로젝트 각속도 범위에 대응하며 제조사 속도 사양이 아니다.
+ * 힘, 전류, 접촉 검출과 접촉 뒤 손가락 적응은 계산하지 않는다.
  */
 struct SimGripperMotionSettings
 {
@@ -24,10 +24,11 @@ struct SimGripperMotionSettings
 };
 
 /**
- * @brief 자유공간 linkage 위치를 시간에 따라 갱신하는 Gripper backend.
- * @details GetState는 값 복사본을 돌려준다. GUI나 기구학 계층이 연속 위치를 사용할 때는
- * valid와 closureFractionValid를 모두 확인해야 한다. 목표 도달은 자유공간 목표에 도달했다는 뜻이며 접촉이나 grasp를 뜻하지 않는다.
- * GripperSpecification은 빌려 쓰므로 배열과 문자열을 포함한 사양 저장소가 이 객체보다 오래 살아야 한다.
+ * @brief 접촉을 계산하지 않고 위치·속도 code에 따라 Gripper의 개폐 상태를 갱신한다.
+ * @details GetState는 내부 저장소와 분리된 복사본을 반환한다.
+ * 연속 개폐 비율을 쓰려면 valid와 closureFractionValid를 확인한다.
+ * 목표 도달은 장애물 없는 공간에서 요청 위치에 왔다는 뜻이지 접촉이나 파지 성공이 아니다.
+ * GripperSpecification의 관절 배열과 문자열은 빌려 쓰므로 원본이 이 Controller보다 오래 살아야 한다.
  */
 class SimGripperController final : public IGripperController
 {
@@ -94,18 +95,18 @@ private:
     bool IsAtTarget() const noexcept;
     void UpdateRawPosition() noexcept;
 
-    // specification의 배열/string_view 소유권은 호출자에게 있다.
+    // specification이 가리키는 관절 배열과 문자열 view의 실제 데이터는 이 객체가 소유하지 않는다. 해당 데이터를 제공한 호출자 측 저장소가 더 오래 살아 있어야 한다.
     const models::GripperSpecification* specification_ = nullptr;
 
-    // 모델 사양과 분리된 프로젝트 Simulation 가정값.
+    // 이 속도 범위는 제조사 사양이 아니라 프로젝트 Simulation backend가 사용하는 가정값이다.
     SimGripperMotionSettings settings_{};
     GripperState state_{};
     bool connected_ = false;
 
-    // raw 8-bit position으로 되돌리지 않고 계산하는 무차원 연속 위치와 목표.
+    // 프로토콜 8-bit raw 위치로 반올림하지 않고 기구 계산에 사용하는 연속 위치와 목표다. 값은 0에서 1 사이의 무차원 비율이다.
     double targetClosureFraction_ = 0.0;
 
-    // 현재 명령 speed가 정하는 자유공간 master 각속도 [rad/s].
+    // 현재 명령의 raw speed를 프로젝트 설정값에 대응시켜 정한 자유공간 master 관절의 각속도 [rad/s]다.
     double masterVelocityRadiansPerSecond_ = 0.0;
 };
 

@@ -16,7 +16,7 @@ Entity::Entity(flecs::entity handle)
 
 glm::vec3 Entity::GetLocalPosition() const
 {
-    // Entity wrapper는 소유권 없는 handle이므로, 파괴 뒤 접근은 기본값으로 종료한다.
+    // Entity는 장면 물체 자체가 아니라 그 물체 ID를 빌려 보관한다. 대상이 삭제된 뒤에는 Flecs 저장소를 읽지 않고 기본 위치를 반환한다.
     if (!IsValid())
         return glm::vec3(0.0f);
 
@@ -56,7 +56,7 @@ void Entity::SetLocalPosition(const glm::vec3& position)
     if (!IsValid())
         return;
 
-    // 저장소에는 부모 기준 값만 쓴다. World 행렬 계산은 TransformSystem의 다음 갱신에 맡긴다.
+    // Local은 바로 위 부모 기준 값이고 World는 부모와 조상까지 더한 Scene 기준 값이다. 여기서는 새 위치만 저장하고 행렬은 다음 TransformSystemModule 호출에서 계산한다.
     m_EntityHandle.set<Position, Local>(
         Position{position}
     );
@@ -90,7 +90,7 @@ glm::mat4 Entity::GetWorldMatrix() const
     if (!IsValid())
         return glm::mat4(1.0f);
 
-    // 파생 행렬을 getter에서 즉석 계산하지 않아 모든 consumer가 한 번의 시스템 갱신 결과를 공유한다.
+    // 이 World 행렬은 저장된 Local 값과 부모 행렬에서 마지막으로 계산한 결과다. 위치를 바꾼 직후의 행렬이 필요하면 호출자가 TransformSystemModule을 실행해야 한다.
     if (!m_EntityHandle.has<TransformMatrix, World>())
         return glm::mat4(1.0f);
 
@@ -107,11 +107,10 @@ Entity& Entity::SetParent(const Entity& parent)
     if (!IsValid() || !parent.IsValid())
         return *this;
 
-    // Flecs 관계는 같은 World 내부에서만 안전하게 연결할 수 있다.
+    // Flecs World는 Entity와 그 값을 소유하는 저장소다. 서로 다른 저장소의 물체는 같은 부모-자식 관계에 연결할 수 없다.
     if (m_EntityHandle.world().c_ptr() != parent.GetHandle().world().c_ptr())
         throw std::invalid_argument("Entity::SetParent requires the same Flecs World");
-    // SceneRootTag까지 올라가 Scene 소속을 찾는다. 일반 grouping node는 소유 경계가 아니며,
-    // 이미 Scene에 속한 Entity를 다른 Scene이나 외부 계층으로 빼지 못하게 한다.
+    // SceneRootTag는 이 물체 묶음을 정리할 Scene의 경계를 표시한다. 중간 grouping Entity는 소유 경계가 아니므로 건너뛰고 Scene에 속한 물체가 다른 Scene이나 Scene 밖으로 이동하지 않게 한다.
     auto sceneRoot = [](flecs::entity handle)
     {
         while (handle.id() != 0 && handle.is_alive())
@@ -124,12 +123,12 @@ Entity& Entity::SetParent(const Entity& parent)
     const flecs::entity owner = sceneRoot(m_EntityHandle);
     if (owner.id() != 0 && owner != sceneRoot(parent.GetHandle()))
         throw std::invalid_argument("Entity::SetParent cannot leave the owning Scene");
-    // 부모 후보의 조상에 자기 자신이 있으면 새 ChildOf 관계가 순환을 만들어 World 갱신이 끝나지 않는다.
+    // 새 부모의 위쪽 조상에 현재 물체가 있으면 자식이 다시 조상이 되는 순환이 생긴다. 부모 행렬을 따라 내려갈 수 없는 구조이므로 연결을 거부한다.
     for (flecs::entity ancestor = parent.GetHandle(); ancestor.id() != 0 && ancestor.is_alive(); ancestor = ancestor.parent())
         if (ancestor == m_EntityHandle)
             throw std::invalid_argument("Entity::SetParent cannot create a hierarchy cycle");
 
-    // Local TRS를 보존하고 관계만 바꾼다. 따라서 World 자세 보존이 필요하면 호출자가 Local 값을 다시 계산한다.
+    // 부모를 바꿔도 저장된 Local 위치·회전·크기는 새 부모 기준으로 다시 해석된다. Scene에서 보이는 자세를 유지하려면 새 부모 기준 값을 호출자가 다시 지정해야 한다.
     m_EntityHandle.child_of(
         parent.GetHandle()
     );
@@ -143,7 +142,7 @@ Entity& Entity::AddChild(const Entity& child)
     if (!IsValid() || !child.IsValid())
         return *this;
 
-    // 검증·Scene 경계·순환 검사를 SetParent 한 곳에 유지한다.
+    // 부모 설정 한 곳에서 World 소속, Scene 경계, 순환 여부를 검사해 자식을 추가할 때도 같은 규칙을 지킨다.
     Entity childHandle = child;
     childHandle.SetParent(*this);
 
@@ -185,7 +184,7 @@ Entity Entity::GetChild(const std::string& name) const
     if (!IsValid())
         return Entity{};
 
-    // Flecs lookup은 이 Entity를 기준으로 이름 경로를 해석한다. 없는 경로는 무효 wrapper로 통일한다.
+    // Flecs 저장소에서 이 물체 아래의 이름 또는 경로를 찾는다. 대상이 없으면 비어 있는 Entity 참조를 반환한다.
     flecs::entity child =
         m_EntityHandle.lookup(
             name.c_str()
@@ -205,7 +204,7 @@ Entity Entity::FindChildByNameRecursive(
     if (!IsValid())
         return Entity{};
 
-    // 현재 handle은 검사하지 않고 자식부터 깊이 우선 탐색한다. 이름 없는 grouping node도 재귀로 통과한다.
+    // 이 물체 자신은 검사하지 않고 자식부터 각 하위 가지를 끝까지 따라가며 찾는다. 이름 없는 중간 물체 아래에 있어도 검색한다.
     flecs::entity found =
         flecs::entity::null();
 
@@ -213,7 +212,7 @@ Entity Entity::FindChildByNameRecursive(
     m_EntityHandle.children(
         [&](flecs::entity child)
         {
-            // 이미 첫 일치를 찾았으면 나머지 형제 subtree는 읽지 않는다.
+            // 첫 번째로 발견한 이름을 반환하므로 나머지 형제 가지는 더 살펴보지 않는다.
             if (found != flecs::entity::null())
                 return;
 
@@ -252,7 +251,7 @@ Entity Entity::FindChildByNameRecursive(
 
 bool Entity::IsValid() const
 {
-    // wrapper 복사본 자체가 소멸 여부를 추적하지 않고 Flecs World의 live 상태를 질의한다.
+    // 이 참조는 삭제 알림을 받거나 수명을 연장하지 않는다. 호출할 때마다 Flecs World에 물어 대상 물체가 남아 있는지 확인한다.
     return m_EntityHandle.is_alive();
 }
 
@@ -262,6 +261,6 @@ void Entity::Destroy()
     if (!IsValid())
         return;
 
-    // Flecs가 Entity와 ChildOf hierarchy를 정리한다. 다른 wrapper는 남지만 이후 IsValid()==false다.
+    // Flecs는 이 물체와 그 아래 연결된 자손을 저장소에서 함께 삭제한다. 복사된 Entity 참조는 메모리에 남아도 모두 더는 유효하지 않다.
     m_EntityHandle.destruct();
 }

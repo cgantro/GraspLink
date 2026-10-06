@@ -17,24 +17,28 @@ namespace grasplink::simulation
 {
 
 /**
- * @brief GLB의 팔 링크 메시에서 Kinematic 충돌 프록시를 만들고 FK 자세를 전달한다.
- * @details 각 링크 메시의 위치는 그 링크를 움직이는 관절 원점 기준 [m]으로 저장한다. 다음 가동 관절과
- * Gripper 아래 형상은 소유 링크에서 제외한다. 삼각형 연결 부품별로 16 cm 셀의 볼록 외피를 만들며,
- * 셀은 삼각형 중심으로 정하고 삼각형 자체는 자르지 않는다. 현재 HCR-12A 모델은 팔 링크 6개에서
- * 외피 121개를 만들며 Base 충돌 형상은 만들지 않는다. 볼록 근사는 오목한 빈 공간을 채울 수 있다.
- * Scene이 프록시 Entity를 소유하고 이 어댑터는 Entity 핸들만 보관한다. Scene 제거 뒤 Apply는 실패한다.
+ * @brief 로봇 팔 Mesh에서 충돌 모양을 만들고 FK 자세를 Kinematic Body에 전달한다.
+ * @details FK는 관절각에서 Link 위치와 방향을 계산한다.
+ * Link는 회전 관절 사이를 잇는 로봇 팔 부분이며 각 Link 메시에서 충돌 모양을 만든다.
+ * 다음 관절 아래 메시와 Gripper 메시를 제외해 각 Link가 자기 부품만 가지게 한다.
+ * 연결된 삼각형 덩어리를 나눈 뒤 삼각형 중심이 속한 16 cm 셀에 정점을 모아 각 셀의 ConvexHull을 만든다.
+ * ConvexHull은 점을 둘러싼 볼록한 모양이므로 실제 메시의 오목한 부분을 채울 수 있다.
+ * 삼각형은 셀 경계에서 자르지 않는다.
+ * 현재 HCR-12A에서는 여섯 팔 Link에 121개 껍질을 만들며 Base 충돌 모양은 만들지 않는다.
+ * Scene이 충돌 proxy Entity를 소유하고 이 어댑터는 Entity 핸들만 빌려 보관한다.
+ * Scene이 먼저 제거되면 Apply가 저장한 Entity를 찾지 못해 실패한다.
  */
 class RobotPhysicsAdapter final
 {
 public:
     /**
-     * @brief 모델 메시를 검증하고 링크별 충돌 프록시를 Scene에 추가한다.
+     * @brief 로봇 모델의 Link와 메시 연결을 확인한 뒤 Link별 충돌용 Entity를 Scene에 만든다.
      * @param scene 새 프록시 Entity를 소유하는 Scene.
      * @param robotRoot GLB 계층의 모델 기준 Entity. FK 자세의 상위 변환으로 사용한다.
-     * @param specification joints/links 이름과 링크를 움직이는 관절 인덱스를 제공하는 모델 참조.
-     * @param model GLB 노드와 메시 정점을 담은 로드된 자원. 데이터는 생성 중만 읽는다.
-     * @throws std::invalid_argument 모델 배열이나 index가 비었거나 중복·누락되었거나 충돌 형상을 만들 수 없을 때.
-     * @throws std::runtime_error GLB parent, primitive index 또는 vertex index가 잘못되었을 때.
+     * @param specification 관절·Link 이름과 각 Link를 움직이는 관절 번호를 제공하는 모델 참조.
+     * @param model GLB 계층과 정점 데이터가 든 자원. 이 함수가 검증과 Entity 생성 중에만 읽는다.
+     * @throws std::invalid_argument 모델 배열이나 번호가 비었거나 중복·누락되었거나 충돌 모양을 만들 수 없을 때.
+     * @throws std::runtime_error GLB의 부모 관계, 삼각형 연결 번호 또는 정점 번호가 잘못되었을 때.
      */
     RobotPhysicsAdapter(
         Scene& scene,
@@ -42,12 +46,12 @@ public:
         const grasplink::robotics::models::RobotSpecification& specification,
         const ModelResource& model);
 
-    /**
-     * @brief 계산된 FK 링크 자세를 각 프록시 Entity의 Local 변환에 반영한다.
-     * @param state Robot base 기준 관절 pose 배열. 위치는 [m], 회전은 [w,x,y,z] 모델 quaternion이다.
-     * robotRoot의 Scene 변환은 계층 World 변환에서 적용된다.
-     * @throws std::invalid_argument FK link pose 수가 연결된 관절 index에 미치지 못할 때.
-     * @throws std::runtime_error Scene 제거로 보관한 Entity handle이 유효하지 않을 때.
+        /**
+     * @brief FK 결과를 대응하는 충돌 proxy의 부모 기준 위치와 회전으로 저장한다.
+     * @param state Robot base 기준 Link 위치 [m]와 quaternion [w,x,y,z]을 담은 FK 결과다.
+     * robotRoot에 설정한 Scene 위치와 회전은 부모 계층을 통해 더해진다.
+     * @throws std::invalid_argument 결과에 연결된 관절 자세가 없을 때 발생한다.
+     * @throws std::runtime_error Scene이 없어 저장한 Entity 핸들을 찾지 못할 때 발생한다.
      */
     void Apply(const grasplink::robotics::kinematics::RobotKinematicState& state);
 

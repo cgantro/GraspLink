@@ -10,30 +10,30 @@ namespace grasplink::viewer::robotics
 {
 
 /**
- * @brief FK 관절 Local 회전을 검증된 GLB Entity 계층에 반영한다.
- * @details 모델의 joint 이름으로 authored GLB 노드를 연결하고 base-frame bind pivot, 직렬 부모 관계,
- * 항등 bind 회전을 확인한다. 배치용 robot root는 검사 대상에서 빼며, Scene의 계층 변환이 FK base pose를
- * Scene 좌표로 옮긴다. Entity는 Scene 소유이므로 Scene 제거 뒤 적용은 실패한다.
+ * @brief 관절 각도에서 계산한 로봇 링크 방향을 GLB 장면 물체에 적용한다.
+ * @details Forward Kinematics(FK)는 관절 각도에서 각 팔 링크와 도구 끝의 위치·방향을 계산한다. 이 Adapter는 그 결과 중 링크별 회전을 GLB 모델의 해당 관절에 전달한다.
+ * 생성 시 모델 사양의 이름으로 GLB node를 찾고 관절 중심 위치와 부모 관계가 맞는지 확인한다. 모델 기준 위치와 방향에 Scene의 부모 변환을 더하면 Viewer 안에 로봇을 배치할 수 있다.
+ * GLB 장면 물체는 Scene이 삭제하므로 Scene 전환 뒤 Apply()를 호출하면 실패한다.
  */
 class RobotTransformAdapter
 {
 public:
     /**
-     * @brief Specification의 관절을 authored GLB Entity에 연결하고 bind 상태를 검사한다.
-     * @param robotRoot Scene에서 배치될 모델 base Entity.
-     * @param specification GLB 관절 이름, 순서와 base-frame bind pivot을 제공하는 모델 참조.
-     * @throws std::runtime_error root가 없거나 GLB에 관절이 없을 때.
-     * @throws std::invalid_argument 관절 계층 또는 bind 변환이 FK 모델과 맞지 않을 때.
+     * @brief 로봇 사양에 적힌 관절 이름을 GLB 장면 물체에 연결하고 기준 자세를 검사한다.
+     * @param robotRoot Scene 안에서 모델을 배치하는 기준 물체다.
+     * @param specification GLB 관절 이름과 순서, 로봇 기준 관절 중심 위치를 제공하는 모델 사양이다.
+     * @throws std::runtime_error 기준 Entity가 없거나 필요한 관절 이름을 GLB에서 찾지 못한 경우.
+     * @throws std::invalid_argument 관절 부모 관계 또는 초기 변환이 정기구학 모델과 맞지 않는 경우.
      */
     RobotTransformAdapter(
         const Entity& robotRoot,
         const ::grasplink::robotics::models::RobotSpecification& specification);
 
     /**
-     * @brief FK local 회전을 대응 GLB 관절에 적용한다.
-     * @param state 같은 RobotSpecification 순서로 계산한 FK 결과.
-     * @throws std::invalid_argument 관절 회전 수가 연결된 Entity 수와 다를 때.
-     * @throws std::runtime_error Scene이 제거되어 Entity가 유효하지 않을 때.
+     * @brief FK가 계산한 부모 기준 회전을 이름과 순서가 맞는 GLB 관절에 적용한다.
+     * @param state RobotSpecification 순서로 정렬한 링크 회전 결과다.
+     * @throws std::invalid_argument 관절 회전 결과 수가 연결한 Entity 수와 다른 경우.
+     * @throws std::runtime_error Scene이 제거되어 연결한 Entity를 더 사용할 수 없는 경우.
      */
     void Apply(const ::grasplink::robotics::kinematics::RobotKinematicState& state);
 
@@ -43,7 +43,7 @@ private:
         Entity entity;
     };
 
-    /// 모델 joint 순서에 대응하는 Scene 소유 Entity 목록.
+    /// 모델 사양에 적힌 순서대로 Scene이 소유하는 관절 Entity를 보관한다. 각 Entity는 계산된 관절 회전을 화면에 반영하는 데 사용한다.
     std::vector<JointBinding> joints_;
 };
 

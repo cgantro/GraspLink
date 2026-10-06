@@ -77,7 +77,7 @@ QuaternionWxyz AxisRotation(const Axis3& axis, double angle)
 RobotKinematics::RobotKinematics(const models::RobotSpecification& specification)
     : specification_(specification)
 {
-    // 참조 모델의 pivot, 축, 선택적 ToolFrame이 FK 계산에 쓸 수 있는지 먼저 확인한다.
+    // FK(정방향 기구학)는 관절각에서 각 링크 자세를 계산한다. 계산에 앞서 모델에 관절 pivot(회전 중심), 축, 선택적 ToolFrame이 유효하게 정의되어 있는지 확인한다.
     if (specification_.joints == nullptr || specification_.jointCount == 0)
         throw std::invalid_argument("RobotKinematics: empty robot specification");
 
@@ -104,7 +104,7 @@ RobotKinematics::RobotKinematics(const models::RobotSpecification& specification
 
 const RobotKinematicState& RobotKinematics::Update(const RobotState& state)
 {
-    // 좌표: Robot base 기준 결과. Scene에서 배치한 root의 위치와 회전은 포함하지 않음.
+    // 결과 위치와 회전은 Robot base 기준이다. Scene에서 robotRoot에 적용한 배치 위치와 회전은 아직 포함하지 않는다.
     if (!state.valid)
         throw std::invalid_argument("RobotKinematics: invalid RobotState");
     if (state.jointPositionRadians.size() != specification_.jointCount)
@@ -121,7 +121,7 @@ const RobotKinematicState& RobotKinematics::Update(const RobotState& state)
         if (!std::isfinite(angle))
             throw std::invalid_argument("RobotKinematics: non-finite joint angle");
 
-        // 계산: 연속한 base-frame bind pivot 차이를 부모 누적 회전으로 옮겨 현재 관절 중심을 구한다.
+        // 모델 초기 상태(bind pose)에서 이웃한 관절 중심 사이의 차이를 구한다. 부모 관절이 회전하면 이 간격도 함께 회전하므로, 누적된 부모 회전을 적용해 현재 관절 중심을 계산한다.
         const Vec3 bindOffset = i == 0
             ? joint.bindPivotMeters
             : Subtract(joint.bindPivotMeters, previousBindPivot);
@@ -140,7 +140,8 @@ const RobotKinematicState& RobotKinematics::Update(const RobotState& state)
     state_.toolFrameValid = specification_.hasToolFrame;
     if (state_.toolFrameValid)
     {
-        // ToolFrame의 고정 강체 변환을 마지막 joint에 합성한다. Controller tcpPose feedback과 독립된 예측값이다.
+        // ToolFrame은 모델에 고정된 공구 장착 기준점이며 공구 끝 TCP와 다를 수 있다.
+        // 여기서 계산한 모델 자세는 Controller가 실제로 보고한 tcpPose feedback이 아니다.
         const auto& tool = specification_.toolFrameInLastJoint;
         state_.toolFrameInBaseFrame = {
             Add(parentPosition, Rotate(parentRotation, tool.positionMeters)),

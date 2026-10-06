@@ -5,24 +5,24 @@
 #include <glm/gtc/quaternion.hpp>
 
 /**
- * @brief Entity의 Local TRS를 Local/World 행렬로 계산하는 변환 모듈이다.
- * @details flecs 모듈만 등록하며 자체 자동 실행 System은 만들지 않는다. Local 값의 작성은 Controller,
- * Physics, Scene logic의 책임이다. 호출자는 해당 로직이 값을 바꾼 뒤 Physics가 읽기 전과 렌더 단계 전에
- * `UpdateWorldTransforms`를 명시적으로 호출해야 한다. World 행렬은 캐시된 현재 상태이지 자동 추적 값이 아니다.
+ * @brief 장면 물체의 부모 기준 위치·회전·크기를 Scene 전체 기준 변환으로 계산한다.
+ * @details Local 값은 바로 위 부모를 기준으로 하고 World 값은 모든 부모 변환을 누적한 Scene 기준이다. 로봇 팔 링크의 Local 회전을 바꾸면 이 모듈은 부모 관절의 회전까지 반영한 World 행렬을 만든다.
+ * 위치(Translation), 회전(Rotation), 크기(Scale)를 묶어 TRS라 부른다. 이 타입을 Flecs World에 등록해도 자동 실행되지 않으므로 호출자가 물리 계산 전과 화면 그리기 전에 `UpdateWorldTransforms`를 불러야 한다.
+ * World 행렬은 마지막 호출 결과를 저장하므로 Local 값을 바꿔도 자동 갱신되지 않는다.
  */
 class TransformSystemModule
 {
 public:
-    /** @brief flecs World에 모듈 표식을 등록한다. 변환 갱신은 호출자가 수행한다. */
+    /** @brief 변환 계산 모듈을 World에 등록한다. 자동 실행은 없으므로 호출자가 필요한 시점에 계산한다. */
     explicit TransformSystemModule(flecs::world& world);
 
     /**
-     * @brief 부모 기준 TRS를 Local 행렬로 합성한다.
-     * @param position 부모 좌표계 위치 [m].
-     * @param rotation 부모 기준 quaternion. 유한하고 영벡터가 아니어야 하며 합성 전에 정규화한다.
-     * @param scale 축별 크기 배율. 단위 없음.
-     * @return 열 벡터 기준 `T * R * S` 행렬. 점에는 scale, rotation, translation 순서로 적용된다.
-     * @throws std::invalid_argument 회전이 영 quaternion 또는 비유한 값일 때.
+     * @brief 물체의 부모 기준 위치·방향·크기를 하나의 행렬로 합친다.
+     * @param position 부모 원점에서 떨어진 위치 [m].
+     * @param rotation 부모 기준 방향을 나타내는 quaternion. 성분은 유한해야 하고 모두 0일 수 없다.
+     * @param scale 부모 기준 축별 크기 배율. 단위 없음.
+     * @return 점에 크기 배율, 회전, 위치 이동을 차례로 적용하는 행렬이다.
+     * @throws std::invalid_argument 방향을 나타낼 수 없는 quaternion을 전달한 경우.
      */
     static glm::mat4 ComposeLocalMatrix(
         const glm::vec3& position,
@@ -30,13 +30,11 @@ public:
         const glm::vec3& scale);
 
     /**
-     * @brief 완전한 Local TRS Entity에서 시작해 조상 순서로 World 행렬을 갱신한다.
-     * @details 시작 Entity는 Position/Rotation/Scale의 Local pair와 TransformMatrix의 Local/World pair를
-     * 모두 가져야 한다. 재귀로 방문한 grouping 부모는 완전한 TRS가 없으면 항등 Local로 조상 변환만 전달하며,
-     * 부분 TRS도 합성하지 않는다. 방문한 부모와 SceneRoot에는 파생 World 행렬을 저장하지만 Local TRS를
-     * 새로 붙이지 않는다. SceneRootTag는 Scene 소유권 표시이며 공간 변환의 입력이 아니다.
-     * 호출 한 번 안에서만 부모 결과를 공유하는 캐시를 사용하므로 다음 호출은 변경된 Local 값을 다시 읽는다.
-     * 이 함수는 캐시를 갱신할 뿐 Entity의 TRS를 움직이지 않는다.
+     * @brief 각 물체의 Local 값을 부모 값과 합쳐 Scene 전체에서 사용할 World 행렬을 갱신한다.
+     * @details Local은 바로 위 부모 기준이고 World는 Scene root부터 현재 물체까지 누적한 값이다. 시작 물체에는 위치·회전·크기와 두 종류의 행렬 저장 공간이 모두 있어야 한다.
+     * 중간 부모에 위치·회전·크기 중 하나라도 없으면 일부 값만 적용하지 않고 그 부모의 자체 변환을 생략한다. 예를 들어 이름만 있는 grouping 물체는 위치를 옮기지 않고 조상 행렬만 자식에게 전달한다.
+     * 방문한 중간 부모와 SceneRoot에는 계산한 World 행렬을 저장하지만 새 Local 값은 만들지 않는다. SceneRootTag는 Scene 소속 경계이며 위치 변환 값이 아니다.
+     * 한 호출 안에서 여러 자식이 같은 부모를 쓰면 그 부모 행렬을 한 번만 계산해 재사용한다. 다음 호출에서는 바뀐 Local 값을 다시 읽는다. 이 함수는 행렬만 계산하며 물체를 움직이지 않는다.
      */
     static void UpdateWorldTransforms(flecs::world& world);
 };

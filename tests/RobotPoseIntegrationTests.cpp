@@ -28,7 +28,7 @@ namespace
 {
 void RequirePositionNear(const glm::vec3& actual, const glm::vec3& expected, const std::string& label)
 {
-    // World 위치 [m]를 축별 0.2 mm 허용오차로 비교한다. GLB float 행렬과 FK double 결과 정밀도 차이를 허용한다.
+    // Scene 기준 위치를 [m] 단위로 비교하고 축마다 0.2 mm 오차를 허용한다. GLB Entity 행렬은 float, 정기구학 계산은 double을 쓰므로 생기는 반올림 차이를 포함한다.
     const auto coordinateLabel = [&](const char* axis, float actualValue, float expectedValue)
     {
         return label + " " + axis + ": actual=" + std::to_string(actualValue) +
@@ -49,7 +49,7 @@ void ApplyAndCompare(
     const glm::quat& rootRotation,
     const std::string& label)
 {
-    // FK 관절 입력 [rad]에서 나온 ToolFrame Base pose에 Scene root Local TRS를 적용하고 GLB Entity World pose와 비교한다.
+    // FK는 관절 각도 [rad]에서 각 링크와 도구 끝의 위치·방향을 계산한다. 여기서는 로봇 root의 Scene 위치와 회전까지 적용한 결과가 GLB 장면 계층의 World 자세와 같은지 비교한다.
     RobotState state;
     state.valid = true;
     state.jointPositionRadians.assign(jointRadians.begin(), jointRadians.end());
@@ -64,7 +64,7 @@ void ApplyAndCompare(
     Require(static_cast<bool>(toolFrame), label + ": GLB ToolFrame exists");
     const glm::mat4 rootWorld = robotRoot.GetWorldMatrix();
     const glm::mat4 toolWorld = toolFrame.GetWorldMatrix();
-    // 비교: GLB에서 생성된 ToolFrame Entity의 실제 world 위치와 CPU FK 결과.
+    // ToolFrame은 로봇이 작업할 때 기준으로 삼는 도구 끝 위치다. GLB 장면 계층에서 읽은 Scene 위치와 CPU FK가 계산한 위치를 비교한다.
     const glm::vec3 actualWorld = glm::vec3(toolWorld[3]);
     const glm::vec3 expectedWorld = glm::vec3(rootWorld * glm::vec4(
         static_cast<float>(fk.toolFrameInBaseFrame.positionMeters.x),
@@ -78,23 +78,23 @@ void ApplyAndCompare(
     const glm::quat expectedOrientation = glm::quat_cast(glm::mat3(rootWorld)) * glm::quat{
         static_cast<float>(expectedRotation.w), static_cast<float>(expectedRotation.x),
         static_cast<float>(expectedRotation.y), static_cast<float>(expectedRotation.z)};
-    // Quaternion 부호가 반대여도 같은 회전을 뜻하므로 정규화 quaternion 내적의 절댓값으로 방향을 비교한다.
+    // quaternion과 그 음수는 같은 회전이므로, 두 값을 정규화한 내적의 절댓값으로 부호와 무관하게 회전 방향을 비교한다.
     Require(std::abs(glm::dot(glm::normalize(actualOrientation), glm::normalize(expectedOrientation))) > 0.9999F,
         label + ": ToolFrame world orientation");
 }
 }
 
 /**
- * @brief CPU FK와 GLB에서 만든 Flecs 관절 계층이 같은 ToolFrame World 자세를 내는지 확인한다.
- * @details 영 자세, 각 관절 단독 회전, 혼합 자세와 Scene root 이동/회전을 비교하고 bind pivot 및 부모 계층
- * 손상 시 RobotTransformAdapter가 거부하는지 확인한다. 숨긴 OpenGL Context는 GLB Mesh 업로드 자원보다 먼저
- * 만들어지고, 이 범위의 AssetManager/Shader GPU 자원이 정리된 뒤 Window 소멸로 마지막에 닫힌다.
+ * @brief 관절 각도에서 계산한 도구 끝 위치와 GLB 모델 계층에서 얻은 위치가 같은지 확인한다.
+ * @details Forward Kinematics(FK)는 각 관절의 회전값으로 팔 링크와 도구 끝의 자세를 계산한다. 기본 자세와 개별·복합 관절 이동에서 이 결과를 실제 GLB 관절 계층과 비교한다.
+ * 로봇 root를 옮기거나 돌린 경우도 확인하며, 모델의 관절 이름·부모·기준 위치가 사양과 다르면 연결을 거부해야 한다.
+ * 숨겨진 Window가 OpenGL context를 제공하고 AssetManager와 Shader가 만든 GPU 자원을 해제한 뒤 마지막에 context를 닫는다.
  */
 int main()
 {
     try
     {
-        // 수명: 숨긴 Window의 GL context는 AssetManager/Shader가 만든 GPU 리소스보다 오래 살아 있어야 한다.
+        // 보이지 않는 시험용 Window도 OpenGL context를 소유한다. AssetManager와 Shader가 만든 GPU 자원을 해제할 때까지 이 context를 유지해야 한다.
         Window window(Window::Properties{320, 240, "RobotPoseIntegrationTests", false, false});
         AssetManager assets;
         ModelResource model = GltfLoader::LoadGLB(
@@ -138,13 +138,13 @@ int main()
             {0.45, -0.4, 0.3, 0.5, -0.2, 0.7},
             {1.2F, -0.4F, 0.7F}, glm::quat{glm::vec3{0.3F, 0.7F, -0.4F}}, "root translation and rotation");
 
-        // 검증: 정상 bind pose에서 시작해 각 실패 원인을 따로 확인.
+        // 정상 기준 자세에서 시작해 관절 이름, 부모 계층과 기준 변환의 각 오류를 따로 만들어 연결 검사가 거부하는지 확인한다.
         ApplyAndCompare(world, robotRoot, kinematics, adapter,
             {0, 0, 0, 0, 0, 0}, {}, {1, 0, 0, 0}, "restore bind pose");
         grasplink::viewer::robotics::RobotTransformAdapter validBind(robotRoot, specification);
 
         Entity j1 = robotRoot.FindChildByNameRecursive("J1");
-        // -identity도 같은 bind 방향이다. quaternion 부호로 정상 자산을 거부하지 않는다.
+        // 항등 quaternion의 음수도 같은 항등 회전이다. 성분 부호만 반대라는 이유로 정상 GLB 기준 자세를 거부하면 안 된다.
         j1.SetLocalRotation(glm::quat{-1.0F, 0.0F, 0.0F, 0.0F});
         grasplink::viewer::robotics::RobotTransformAdapter negativeIdentityBind(robotRoot, specification);
         const glm::vec3 originalJ1Position = j1.GetLocalPosition();

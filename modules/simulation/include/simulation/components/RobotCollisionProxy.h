@@ -1,8 +1,10 @@
 #pragma once
 
 /**
- * @brief 시각 Mesh와 별도로 만든 로봇 arm 충돌 proxy Entity를 식별하는 ECS marker.
- * @details 위치·회전은 RobotPhysicsAdapter가 FK 결과로 설정하고, RigidBody와 Colliders가 실제 물리 구성을 제공한다.
- * 이 marker 자체는 GLB mesh나 Jolt Body를 소유하지 않으며 충돌 형상을 만들거나 동작을 변경하지 않는다.
+ * @brief 화면 모델 대신 충돌 계산에 사용할 proxy Entity임을 표시한다.
+ * @details Proxy는 원래 시각 메시와 별도로 만든 대리 물체이며 충돌 모양을 가진다.
+ * RobotPhysicsAdapter가 FK 결과로 이 Entity의 위치와 회전을 정한다.
+ * 움직임 방식은 RigidBody에, 접촉 모양은 Colliders에 따로 기록한다.
+ * 이 표식은 GLB 메시나 Jolt Body를 소유하지 않고 자체적으로 충돌 동작을 바꾸지 않는다.
  */
 struct RobotCollisionProxy {};

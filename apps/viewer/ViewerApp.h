@@ -48,9 +48,8 @@ class RobotPhysicsAdapter;
 }
 
 /**
- * @brief Viewer의 선택 실행 모드.
- * @details physicsDemo는 로봇 이동과 물리 디버그 객체를 명시적으로 켠다. smokeTest는 자동 검증용으로
- * 창 표시를 끄고 정해진 렌더 프레임 수를 실행한다.
+ * @brief Viewer를 일반 조작, 물리 시연, 자동 화면 확인 중 어떤 방식으로 실행할지 정한다.
+ * @details physicsDemo는 로봇 관절을 움직이고 물리 상자를 보여 준다. smokeTest는 창을 표시하지 않고 정해진 프레임 수만 그려 초기화와 렌더 경로를 확인한다.
  */
 struct ViewerOptions
 {
@@ -59,11 +58,10 @@ struct ViewerOptions
 };
 
 /**
- * @brief Viewer, Scene, 로봇 제어, 물리와 GUI 모듈의 수명을 조정한다.
- * @details
- * 계산은 각 모듈에 위임한다. 초기화는 Window/Context와 ECS에서 시작해 Scene·모델, Controller/FK,
- * Physics 순으로 연결한다. Shutdown은 빌린 Scene handle과 observer를 먼저 정리한 뒤 ECS/Physics를
- * 해제하고, 마지막에 GPU 자원과 이를 해제할 OpenGL Context를 정리한다.
+ * @brief Viewer 창, 장면, 로봇 제어, 물리와 GUI 객체를 만들고 종료 순서를 관리한다.
+ * @details 그래픽 창은 GPU 자원을 만들고 해제하는 OpenGL context를 제공한다. Entity는 장면 물체 참조이고 Flecs World가 실제 물체와 값을 소유하므로 이 앱은 두 수명을 조정한다.
+ * 초기화는 창과 World를 준비한 뒤 장면·모델·제어기·물리를 연결한다. 로봇 FK는 관절 각도에서 링크와 도구 끝의 위치·방향을 계산하며, 결과는 화면 모델과 물리 충돌용 단순 물체에 적용한다.
+ * 종료할 때 Scene 참조, 삭제 observer, World, 물리 상태 순으로 정리하고 GPU 자원 해제까지 OpenGL context를 유지한다.
  */
 class ViewerApp
 {
@@ -78,80 +76,80 @@ private:
     ViewerOptions m_Options;
     bool Init();
 
-    // Window와 OpenGL Context를 먼저 만들고, 그 Context를 쓰는 GPU/ECS/Scene을 준비한다.
+    // Window와 OpenGL Context를 만든 뒤, 이 Context를 필요로 하는 GPU 자원과 ECS 및 Scene을 초기화한다.
     bool InitViewer();
 
-    // GPU 업로드 모델을 Scene의 Entity 계층으로 만들고, 로봇 모델 리소스는 collider 추출에도 보관한다.
+    // GLB 모델의 node 부모 관계로 장면 물체를 만들고, 물리 충돌용 단순 모양을 만들 원본 꼭짓점 자료도 보관한다.
     void InitScene(Entity& robotRoot, Entity& floorEntity);
 
-    // Controller 상태 → FK 결과 → 시각 Entity와 Kinematic collider Entity 연결을 구성한다.
+    // Controller의 관절 각도에서 각 링크 위치와 방향을 계산해 화면 모델과 로봇을 따라 움직이는 충돌 물체에 적용한다.
     bool InitRobot(const Entity& robotRoot);
 
-    // Gripper의 연속 상태와 Local 회전 계산을 연결한다. 원본 GLB의 장착·관절 위치는 유지한다.
+    // 그리퍼 개폐 비율을 손가락 관절별 부모 기준 회전으로 바꾼다. GLB가 정한 장착 위치와 관절 위치는 유지한다.
     bool InitGripper(const Entity& robotRoot);
 
-    // ECS 설정에서 Jolt Body를 만들고, 시각/물리 프록시의 첫 자세를 동기화한다.
+    // ECS의 충돌 모양 설정에서 Jolt 물체를 만들고, 초기 위치를 화면 물체 및 화면 모델을 따라가는 충돌용 물체에 맞춘다.
     void InitPhysics(const Entity& robotRoot, Entity& floorEntity);
 
-    // 두 Controller snapshot에서 계산한 자세를 적용한다. World 행렬은 호출자가 이 뒤 갱신한다.
+    // Controller 상태에서 계산한 로봇과 그리퍼 위치·방향을 장면 물체에 적용한다. 호출자는 이후 Scene 전체 행렬을 다시 계산한다.
     void ApplyControllerPoses();
 
     // 입력, 누적 Fixed Update, 렌더 프레임 처리를 서로 다른 주기로 반복한다.
     void MainLoop();
 
-    // 부분 초기화 실패 때도 호출된다. World observer와 OpenGL Context가 필요한 정리를 먼저 끝낸다.
+    // 초기화가 일부만 성공한 경우에도 호출된다. ECS observer가 Body를 정리하고 GPU 자원이 해제될 수 있도록 World와 OpenGL Context 수명을 고려해 정리한다.
     void Shutdown();
 
-    // GLFW Window와 OpenGL Context 소유. Renderer/GPU 객체보다 오래 살아야 한다.
+    // GLFW Window와 OpenGL Context를 소유한다. Renderer와 GPU 객체의 소멸자가 실행될 때까지 Context를 유지한다.
     std::unique_ptr<Window> m_Window;
 
-    // OpenGL Render 담당
+    // OpenGL 상태를 설정하고 Mesh를 화면에 그린다.
     std::unique_ptr<Renderer> m_Renderer;
 
-    // View·Projection 행렬 관리
+    // 카메라의 위치와 View·Projection 행렬을 관리한다.
     std::unique_ptr<Camera> m_Camera;
 
-    // Mouse 입력 → Camera 조작
+    // 마우스 입력으로 바라보는 지점 주위를 도는 카메라를 움직인다.
     std::unique_ptr<OrbitCameraController> m_CameraController;
 
-    // Scene 생성·수명 관리
+    // 활성 Scene을 선택하고 전환 및 수명을 관리한다.
     std::unique_ptr<SceneManager> m_SceneManager;
 
-    // GPU Mesh·Material·Texture 관리
+    // 모델의 Mesh, Material, Texture를 GPU 자원으로 올리고 공유한다.
     std::unique_ptr<AssetManager> m_AssetManager;
 
     // Collider 추출용 CPU 데이터와 업로드된 GPU Mesh를 함께 공유한다. Context보다 먼저 해제한다.
     ModelResource m_RobotModel;
 
-    // Robot·Debug Box 공용 Shader
+    // 로봇 모델과 디버그 상자 렌더링에 함께 사용하는 Shader다.
     std::shared_ptr<Shader> m_RobotShader;
 
-    // Flecs Entity·Component·System 소유. Physics observer가 Body를 정리할 때까지 PhysicsWorld가 살아 있어야 한다.
+    // 장면 물체와 위치 같은 값, 자동 실행 규칙을 저장하는 Flecs World다. 물체 삭제를 감지하는 callback이 Jolt 물체를 지울 때까지 PhysicsWorld가 살아 있어야 한다.
     flecs::world m_World;
 
-    // Robot 제어 Backend
+    // 로봇의 관절 상태를 갱신하고 이동 명령을 처리하는 제어 backend다.
     std::unique_ptr<grasplink::robotics::IRobotController> m_RobotController;
 
-    // Gripper 개폐 위치의 기준 상태를 소유한다. GUI는 요청을 보내고 snapshot을 읽는다.
+    // 그리퍼의 개폐 명령과 현재 상태를 관리한다. GUI는 명령을 보내고 상태의 독립된 복사본을 읽는다.
     std::unique_ptr<grasplink::robotics::IGripperController> m_GripperController;
 
-    // Adapter는 Scene Entity handle을 빌린다. Scene 정리 전에 파괴한다.
+    // 아래 변환 adapter는 Scene Entity handle을 빌려 쓰므로 Scene보다 먼저 파괴해야 한다.
     std::unique_ptr<grasplink::robotics::kinematics::RobotKinematics> m_RobotKinematics;
     std::unique_ptr<grasplink::viewer::robotics::RobotTransformAdapter> m_RobotTransformAdapter;
     std::unique_ptr<grasplink::simulation::RobotPhysicsAdapter> m_RobotPhysicsAdapter;
     std::unique_ptr<grasplink::robotics::kinematics::GripperKinematics> m_GripperKinematics;
     std::unique_ptr<grasplink::viewer::robotics::GripperTransformAdapter> m_GripperTransformAdapter;
 
-    // Robot·Physics 고정 시간 업데이트
+    // 렌더 프레임 시간과 분리해 Controller 및 Physics를 고정 간격으로 실행한다.
     grasplink::robotics::runtime::FixedControlLoop m_ControlLoop;
 
-    // Jolt World 소유
+    // 충돌 형상과 강체 상태를 보관하고 시뮬레이션하는 Jolt World를 소유한다.
     std::unique_ptr<grasplink::physics::PhysicsWorld> m_PhysicsWorld;
 
-    // Flecs 물리 설정과 Jolt 연결·고정 Step 실행
+    // ECS의 물리 설정을 Jolt Body에 연결하고 고정 시간 간격의 물리 step을 실행한다.
     std::unique_ptr<grasplink::simulation::PhysicsSystemModule> m_PhysicsSystemModule;
 
-    // ImGui 수명과 독립 UI/Overlay를 앱에서 명시적으로 조립한다.
+    // ImGui backend, 조작 패널, 디버그 패널과 Collider overlay의 수명을 앱이 함께 관리한다.
     std::unique_ptr<grasplink::gui::GuiModule> m_GuiModule;
     std::unique_ptr<grasplink::gui::GripperPanel> m_GripperPanel;
     std::unique_ptr<grasplink::gui::PhysicsDebugPanel> m_PhysicsDebugPanel;

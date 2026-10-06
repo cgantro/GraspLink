@@ -7,29 +7,32 @@ namespace grasplink::robotics::backends::simulation
 {
 
 /**
- * @brief 고정 시간 간격마다 관절 상태를 목표각 쪽으로 진행하는 software controller.
- * @details
- * Controller는 RobotState만 갱신하며 GLB mesh, Flecs Entity, Physics body는 직접 움직이지 않는다.
- * Viewer는 상태를 RobotKinematics에 보내 FK pose를 만들고 adapter가 별도로 화면 계층에 반영한다.
- * 관절 이동은 모델의 최대 각속도와 velocityScale로 제한되며 가속도 제한이나 속도 ramp는 없다.
- * MoveLinear은 IK와 Cartesian trajectory 실행이 없어 Unsupported다. FK의 ToolFrame 결과도 이
- * Controller가 제공하는 TCP feedback이 아니므로 Connect 뒤 valid는 true, tcpPoseValid는 false다.
- * specification과 내부 name/array view는 빌려 쓰며 Controller보다 오래 살아야 한다.
+ * @brief 목표 관절각을 향해 관절 위치와 속도를 계산하는 로봇 Simulation Controller다.
+ * @details Controller는 관절 상태만 갱신하며 화면 메시, Scene Entity, 물리 Body는 직접 움직이지 않는다.
+ * 앱은 RobotState를 RobotKinematics에 보내 FK를 계산한다.
+ * FK는 관절각에서 Link 위치와 방향을 구하며 어댑터가 이 결과를 화면 계층에 적용한다.
+ * 한 번의 Update에서 관절은 모델 최대 각속도에 velocityScale을 곱한 한계 안에서 목표를 향한다.
+ * 가속도 제한이나 속도를 부드럽게 올리는 ramp는 적용하지 않는다.
+ * 역기구학(IK)은 목표 TCP 위치에서 이를 만드는 관절각을 찾는 계산이다.
+ * 이 Controller에는 IK와 직선 경로 실행이 없어 MoveLinear은 Unsupported를 반환한다.
+ * FK로 계산한 모델 ToolFrame과 Controller가 보고하는 공구 TCP는 서로 다른 값이다.
+ * Connect 뒤 관절 상태 valid는 true지만 TCP feedback을 제공하지 않으므로 tcpPoseValid는 false다.
+ * 사양 문자열과 배열은 빌려 쓰므로 원본은 Controller보다 오래 살아야 한다.
  */
 class SimRobotController final : public IRobotController
 {
 public:
     /**
-     * @brief 정적 로봇 사양을 참조해 controller를 만든다.
+     * @brief 관절 이름·각도 제한·최대 속도를 제공하는 로봇 사양을 참조하는 Controller를 만든다.
      * @param specification 관절 제한과 최대 속도를 제공하는 사양. 배열과 문자열 저장소도 수명 동안 유효해야 한다.
      * @throws std::invalid_argument 관절 배열이 비었거나, q=0이 제한 밖이거나, 제한/최대 속도가 유한한 유효값이 아닐 때.
      * @details 시작 상태가 항상 q=0이므로 0을 포함하지 않는 모델은 이 구현의 초기화 계약과 맞지 않는다.
      */
     explicit SimRobotController(const models::RobotSpecification& specification);
 
-    /** @brief q=0, dq=0의 유효한 논리 상태로 Simulation 연결을 초기화한다.
-     * @return 항상 성공. TCP pose는 여기서 계산하지 않으므로 tcpPoseValid는 false다.
-     * @details target도 현재 q로 설정되고 속도·가속도 비율은 1.0으로 돌아간다.
+    /** @brief 관절각과 속도를 0으로 한 유효한 Simulation 상태로 연결한다.
+     * @return 항상 성공하며 TCP feedback은 계산하지 않아 tcpPoseValid는 false다.
+     * @details 목표 관절각도 0으로 두고 속도와 가속도 비율을 1.0으로 초기화한다.
      */
     Result Connect() override;
 
@@ -40,47 +43,53 @@ public:
     [[nodiscard]] bool IsConnected() const noexcept override;
 
     /**
-     * @brief J1..Jn 절대 목표각을 받아 다음 Update부터 관절 이동을 시작한다.
-     * @param command 관절 수와 순서가 specification과 같은 목표각 [rad], 속도·가속도 비율.
-     * @return NotConnected 또는 InvalidCommand(관절 수, 비율, 유한성, 관절 범위 오류); 유효한 요청은 성공.
-     * @details 두 비율은 모두 유한한 (0,1]이어야 한다. velocityScale은 각 모델 최대 각속도에 곱해진다.
-     * accelerationScale은 계약상 저장되지만 여기서는 사용하지 않는다. Moving 중 새 명령은 기존 목표를 교체하며,
-     * 성공은 목표 수락이지 목표 도달이 아니다. 완료 여부는 GetState의 mode와 관절값으로 확인한다.
+     * @brief J1..Jn 목표각을 받아 다음 Update부터 관절을 움직인다.
+     * @param command 사양과 같은 순서의 목표각 [rad]와 속도·가속도 비율이다.
+     * @return 연결되지 않았거나 관절 수, 값, 비율, 범위가 잘못되면 오류를 반환한다.
+     * @details 두 비율은 유한한 (0,1] 값이어야 한다.
+     * velocityScale은 모델 최대 각속도에 곱해 속도 상한을 정한다.
+     * accelerationScale은 보관만 하며 이 Simulation은 가속도 제한에 사용하지 않는다.
+     * 새 명령은 현재 목표를 교체한다.
+     * 성공은 목표를 받았다는 뜻이며 도달 여부는 GetState에서 확인한다.
      */
     Result MoveJoint(const JointMoveCommand& command) override;
 
     /**
-     * @brief Cartesian 직선 이동을 요청한다.
-     * @param command 공통 API의 TCP 목표 pose와 선속도·각속도 상한.
-     * @return 미연결이면 NotConnected, 연결되어 있으면 항상 Unsupported.
-     * @details RobotKinematics의 FK는 관절각에서 pose를 구하는 계산이다. 목표 pose를 관절각으로 바꾸는 IK와
-     * 경로 실행이 이 backend에 연결되지 않았으므로 FK가 있어도 MoveLinear을 수행할 수 없다.
+     * @brief TCP 목표까지 직선 이동을 요청한다.
+     * @param command 공통 API의 TCP 목표 위치·방향과 선속도·각속도 상한이다.
+     * @return 연결되지 않았으면 NotConnected를, 연결 상태면 항상 Unsupported를 반환한다.
+     * @details FK는 관절각에서 모델 ToolFrame 위치와 방향을 계산한다.
+     * 이 Controller에는 TCP 목표에서 관절각을 찾는 IK와 직선 경로 실행이 없다.
+     * 따라서 FK가 있어도 이 명령은 수행되지 않는다.
      */
     Result MoveLinear(const LinearMoveCommand& command) override;
 
     /**
-     * @brief 현재 위치에서 software 동작을 정지시킨다.
-     * @return 미연결이면 NotConnected, 연결 상태에서는 성공.
-     * @details 현재 q를 새 target으로 하고 dq를 0, mode를 Stopped로 설정한다. 이는 이 Simulation의 상태 변경이며
-     * protective stop 또는 hardware E-Stop을 뜻하지 않는다. 성공은 software 요청 처리 완료를 뜻한다.
+     * @brief 현재 관절 위치에서 Simulation 동작을 멈춘다.
+     * @return 연결되지 않았으면 NotConnected를 반환하고 연결 상태에서는 성공한다.
+     * @details 현재 관절각을 새 목표로 저장하고 속도를 0, mode를 Stopped로 바꾼다.
+     * 이는 Simulation 상태 변경이며 장비 보호 정지나 비상 정지가 아니다.
      */
     Result Stop() override;
 
     /**
-     * @brief 현재 논리 상태의 독립된 값 복사본을 반환한다.
-     * @return 관절 위치 [rad], 속도 [rad/s], mode, valid 및 TCP 유효성 정보를 복사한 snapshot.
-     * @details Connect 직후 valid=true, tcpPoseValid=false다. TCP pose는 FK의 ToolFrame과 별개의 controller feedback이므로
-     * 이 구현은 이를 채우지 않는다. Disconnect 뒤에는 valid=false다. 반환된 vector는 controller 내부 저장소를 빌리지 않는다.
+     * @brief Controller 상태의 독립된 값 복사본을 반환한다.
+     * @return 관절 위치 [rad], 속도 [rad/s], mode와 상태 유효성을 담는다.
+     * @details Connect 뒤 관절 상태는 유효하지만 이 Controller는 TCP feedback을 계산하거나 보고하지 않는다.
+     * FK로 구한 모델 ToolFrame은 Controller가 보고하는 실제 TCP feedback과 별도다.
+     * 반환 vector는 내부 저장소를 빌리지 않는다.
      */
     [[nodiscard]] RobotState GetState() const override;
 
     /**
-     * @brief 유효한 양의 경과 시간만큼 각 관절을 목표 쪽으로 진행한다.
-     * @param dtSeconds 경과 시간 [s]. 연결, Moving 상태, 유한한 양수일 때만 적용된다.
-     * @details 각 관절에서 maxStep = maxVelocityRadiansPerSecond * velocityScale * dtSeconds를 계산하고,
-     * 목표까지의 각도 차이를 그 범위로 잘라 q를 갱신한다. dq는 이번 step/dtSeconds다. 가속도 제한이 없어
-     * 명령 시작 시 속도가 즉시 바뀔 수 있다. 목표에 도달하면 q를 정확히 맞추고 dq=0, mode=Idle로 바꾼다.
-     * 잘못된 dt는 오류 상태를 만들지 않고 해당 호출을 무시한다.
+     * @brief 경과 시간 [s]만큼 각 관절을 목표각 쪽으로 움직인다.
+     * @details 연결되고 Moving 상태이며 시간이 유한한 양수일 때만 적용한다.
+     * 한 번의 각도 변화 한도는 모델 최대 각속도 × velocityScale × dtSeconds다.
+     * 목표까지의 차이가 한도보다 크면 한도만큼 움직이고, 작으면 남은 차이만큼 움직인다.
+     * 이번 각도 변화량을 시간으로 나눈 값을 관절 속도 [rad/s]로 기록한다.
+     * 가속도 제한이 없어 새 명령을 받으면 속도가 즉시 바뀔 수 있다.
+     * 목표에 도달하면 각도를 정확히 맞추고 속도를 0으로 만든 뒤 Idle로 바꾼다.
+     * 잘못된 시간은 오류 없이 무시한다.
      */
     void Update(double dtSeconds) override;
 

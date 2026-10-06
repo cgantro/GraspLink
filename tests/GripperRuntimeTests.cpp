@@ -43,7 +43,7 @@ void RequireSnapshotEqual(const GripperState& left, const GripperState& right, c
 
 void CheckLifecycleAndCommands()
 {
-    // 2F-85의 raw 범위는 0..255 전체다. 거부 경로 검증용 사양만 force 최솟값을 좁힌다.
+    // 실제 2F-85 장치 코드는 0..255 범위를 모두 허용한다. 범위 밖 입력을 거부하는 동작을 시험할 때만 시험 사양의 최소 힘 값을 높여 유효 범위를 좁힌다.
     auto specification = kTwoF85;
     specification.forceRequestMin = 1;
     SimGripperController controller(specification);
@@ -88,9 +88,10 @@ void CheckLifecycleAndCommands()
     const auto beforeInvalid = controller.GetState();
     Require(controller.Command(Request(255, 255, 0)).code == ErrorCode::InvalidCommand,
         "force below model range rejected");
+    // 잘못된 명령을 거부한 뒤에는 이전 목표 위치, 속도, 상태가 모두 그대로여야 한다.
     RequireSnapshotEqual(beforeInvalid, controller.GetState(), "invalid request is atomic");
 
-    // 속도 raw 최솟값과 최댓값의 차이는 시뮬레이션 설정 각속도 0.1..1.0 rad/s에 대응한다.
+    // 장치의 가장 느린 값과 가장 빠른 속도 코드가 시뮬레이션에서 각각 0.1 rad/s와 1.0 rad/s의 각속도가 되는지 확인한다.
     SimGripperController maximumSpeed(kTwoF85);
     maximumSpeed.Connect();
     maximumSpeed.Activate();
@@ -126,7 +127,7 @@ void CheckLifecycleAndCommands()
         state.objectStatus == GripperObjectStatus::AtRequestedPosition,
         "large dt clamps exactly to target without reporting contact");
 
-    // 목표 교체: 직전 요청 위치가 아니라 현재 연속 위치에서 새 목표로 이동한다.
+    // 움직이는 중 새 명령을 받으면 이전 목표 위치에서 이어가지 않고, 현재 실제 연속 개폐 위치부터 새 목표까지 이동해야 한다.
     Require(static_cast<bool>(maximumSpeed.Command(Request(255, 255))), "repeat close request accepted");
     Require(static_cast<bool>(maximumSpeed.Command(Request(0, 255))), "open retarget accepted");
     maximumSpeed.Update(0.1);
@@ -225,7 +226,7 @@ void CheckSpecificationAndSettingsValidation()
             "invalid motion settings rejected");
     }
 
-    // 동등한 양의 각속도 범위는 raw speed에 상관없이 일정한 시뮬레이션 속도를 뜻한다.
+    // 장치 속도 값이 달라도 사양에서 같은 시뮬레이션 각속도 범위로 변환된다면 목표까지 걸리는 시간은 일정해야 한다.
     SimGripperController fixedSpeed(kTwoF85, {0.25, 0.25});
     Require(static_cast<bool>(fixedSpeed.Connect()) && static_cast<bool>(fixedSpeed.Activate()),
         "equal positive settings accepted");
@@ -234,8 +235,8 @@ void CheckSpecificationAndSettingsValidation()
 
 /**
  * @brief 자유공간 Gripper Controller의 상태 전이, 시간 진행과 입력 검증을 회귀 검사한다.
- * @details 위치 raw는 비단위 요청 code, closureFraction은 연속 무차원 위치, master 속도는 rad/s,
- * dt는 s다. 이 테스트는 힘/전류/접촉이나 실제 grasp 동작을 주장하지 않는다.
+ * @details raw 위치는 장치에 보내는 정수 명령 코드라 거리 단위가 아니다. closureFraction은 0부터 1까지의 연속 개폐 비율이고 master 속도는 rad/s, dt는 초다.
+ * 이 Controller는 빈 공간에서 개폐만 계산하므로 힘·전류·접촉이나 물체를 실제로 집는 동작은 시험하지 않는다.
  */
 int main()
 {

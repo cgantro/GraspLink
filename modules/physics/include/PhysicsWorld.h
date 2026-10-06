@@ -8,11 +8,11 @@ namespace grasplink::physics
 {
 
 /**
- * @brief Jolt 물리 World와 그 안의 Body 수명을 관리한다.
+ * @brief Jolt 물리 공간을 만들고, 그 안에 생성된 Body의 사용과 해제를 관리한다.
  * @details
- * Entity와의 연결 및 Fixed Update 호출 순서는 simulation 모듈 책임이다. 각 World는 자체 Jolt
- * PhysicsSystem, 임시 메모리 할당기, 실제 계산에 쓰이는 thread pool을 가진다. Jolt 전역 타입 등록은
- * 살아 있는 World 수를 세어 첫 World에서 준비하고 마지막 World가 끝날 때 해제한다.
+ * Flecs Entity와 Body를 연결하고 고정 업데이트마다 Step을 부르는 일은 simulation 모듈이 맡는다.
+ * 각 PhysicsWorld는 충돌과 움직임을 계산하는 Jolt PhysicsSystem, 계산 중 임시로 쓰는 메모리, 작업자 thread pool을 가진다.
+ * Jolt 타입 등록은 프로그램 전체가 공유하므로 첫 PhysicsWorld를 만들 때 준비하고 마지막 World가 끝날 때 해제한다.
  */
 class PhysicsWorld final
 {
@@ -27,39 +27,43 @@ public:
     PhysicsWorld& operator=(PhysicsWorld&&) = delete;
 
     /**
-     * @brief World를 주어진 시간만큼 한 번 계산한다.
+     * @brief 고정 시간 간격 하나만큼 Jolt 물리 상태를 한 번 진행한다.
      * @param fixedDeltaSeconds 계산 간격 [s]. 유한한 양수여야 한다.
      * @details 한 호출은 추가 분할 없이 Jolt Update 한 번으로 처리한다. 유효하지 않은 간격은 조용히 무시한다.
      */
     void Step(double fixedDeltaSeconds);
 
-    /** @brief 단일 Box 형상으로 Body를 만든다.
-     * @param description World 기준 Body 원점 자세, 반쪽 길이 [m], 이동 방식과 충돌 범주.
-     * @return 이 World에서만 유효한 Body 핸들.
-     * @throws std::invalid_argument 자세, layer 또는 치수가 유효하지 않은 경우.
+        /**
+     * @brief Box 충돌 모양 하나를 가진 물리 Body를 만든다.
+     * @param description Box 반쪽 길이 [m], Body 원점의 World 자세, 움직임 방식과 충돌 그룹이다.
+     * @return 이 PhysicsWorld에서만 사용할 수 있는 Body 핸들이다.
+     * @throws std::invalid_argument 자세, 그룹 또는 치수가 유효하지 않을 때 발생한다.
      */
     PhysicsBodyHandle CreateBox(
         const BoxBodyDescription& description);
 
-    /**
-     * @brief Box/Cylinder/Sphere/ConvexHull 형상을 하나의 Body로 묶는다.
-     * @param description 각 형상의 국소 배치와 치수, 그리고 World 기준 Body 원점 자세.
-     * @return 이 World에서만 유효한 Body 핸들.
-     * @throws std::invalid_argument 비어 있는 형상 목록, 유효하지 않은 자세·layer·치수인 경우.
-     * @throws std::runtime_error Jolt가 형상 또는 Body를 만들지 못한 경우.
-     * @details 입력 자세와 반환 자세는 모델 Body 원점 기준이다. Jolt는 비대칭 compound의 무게중심(COM)을
-     * 내부 계산에 사용하지만, 이 API는 COM 위치 대신 Body 원점을 보고하고 설정한다.
+        /**
+     * @brief Box, Cylinder, Sphere 또는 ConvexHull 충돌 모양을 하나의 물리 Body로 묶는다.
+     * ConvexHull은 점들을 모두 포함하는 볼록한 껍질이다. 입력 점 네 개는 최소 개수일 뿐이며 Jolt가 부피를 만들 수 있는 점을 추가로 요구한다.
+     * @param description 형상별 Body 기준 배치와 크기, Body 원점의 World 자세, 움직임 방식과 충돌 그룹이다.
+     * @return 이 PhysicsWorld에서만 유효한 핸들이다.
+     * @throws std::invalid_argument 형상 목록이 비었거나 자세, 그룹, 치수가 유효하지 않을 때 발생한다.
+     * @throws std::runtime_error Jolt가 형상 또는 Body를 만들지 못할 때 발생한다.
+     * @details 여러 형상이 한 Body를 구성하므로 모두 같은 움직임 방식으로 움직인다.
+     * 공개 함수의 자세 기준은 모델이 정한 Body 원점이다.
+     * 형상이 비대칭이면 Jolt 계산에 쓰는 무게중심(COM)이 이 원점과 다를 수 있다.
+     * Jolt가 그 차이를 내부에서 처리하므로 호출자는 COM 보정을 더하지 않는다.
      */
     PhysicsBodyHandle CreateBody(
         const BodyDescription& description);
 
-    /** @brief 핸들이 현재 이 World에 추가된 Body를 가리키는지 확인한다. */
+    /** @brief 핸들이 이 World에서 현재 물리 계산에 등록된 Body를 가리키는지 확인한다. */
     [[nodiscard]]
     bool IsBodyValid(
         PhysicsBodyHandle handle) const;
 
     /**
-     * @brief Body 원점의 현재 World 자세를 읽는다.
+     * @brief Body의 모델 기준점 위치와 회전을 World 좌표로 읽는다.
      * @param handle 이 World에서 생성한 유효한 Body 핸들.
      * @return 위치 [m]와 회전. Entity에 물리 계산 결과를 반영할 때 사용한다.
      * @throws std::invalid_argument 핸들이 무효이거나 다른 World 소유인 경우.
@@ -70,7 +74,7 @@ public:
         PhysicsBodyHandle handle) const;
 
     /**
-     * @brief Body 원점을 지정한 World 자세로 즉시 설정한다.
+     * @brief Body를 지정한 World 위치와 회전에 즉시 배치한다. 이동 경로를 따라가지는 않는다.
      * @param handle 이 World에서 생성한 유효한 Body 핸들.
      * @param transform 목표 위치 [m]와 회전.
      * @throws std::invalid_argument 핸들이 무효이거나 자세 성분이 유한하지 않고 회전이 0인 경우.
@@ -80,15 +84,15 @@ public:
         PhysicsBodyHandle handle,
         const Transform& transform);
 
-    /**
-     * @brief Kinematic Body가 한 고정 간격 동안 목표 자세로 이동하도록 예약한다.
-     * @param handle 이 World의 Kinematic Body 핸들.
-     * @param targetTransform 목표 Body 원점의 World 자세, 위치 단위 [m].
-     * @param fixedDeltaSeconds 이번 이동 간격 [s], 유한한 양수.
-     * @throws std::invalid_argument 핸들, 목표 자세 또는 시간 간격이 유효하지 않은 경우.
-     * @throws std::logic_error Body가 Kinematic이 아닌 경우.
-     * @details Jolt는 현재 자세와 목표, 간격에서 이동 속도를 계산해 충돌 처리를 수행한다. 즉시 순간이동할
-     * 때는 SetBodyTransform을 사용한다.
+        /**
+     * @brief Scene 목표까지 Kinematic Body가 충돌을 고려하며 움직이도록 Jolt에 전달한다.
+     * @param handle 이 PhysicsWorld가 만든 Kinematic Body 핸들이다.
+     * @param targetTransform 목표 Body 원점의 World 위치 [m]와 회전이다.
+     * @param fixedDeltaSeconds 이번 이동 간격 [s]이며 유한한 양수여야 한다.
+     * @throws std::invalid_argument 핸들, 목표 자세 또는 간격이 유효하지 않을 때 발생한다.
+     * @throws std::logic_error Body가 Kinematic이 아닐 때 발생한다.
+     * @details Jolt는 현재 자세에서 목표까지 이번 간격 동안 움직일 속도를 계산해 충돌을 처리한다.
+     * 경로를 따라가지 않고 즉시 배치할 때는 SetBodyTransform을 사용한다.
      */
     void MoveKinematic(
         PhysicsBodyHandle handle,
@@ -96,7 +100,7 @@ public:
         double fixedDeltaSeconds);
 
     /**
-     * @brief 목표에 도달한 Kinematic Body의 선속도·각속도를 0으로 만든다.
+     * @brief 목표에 도달한 Kinematic Body에 남아 있는 직선·회전 속도를 없애 정지시킨다.
      * @details MoveKinematic은 목표에서 이동 속도를 만들며 Step 이후에도 그 속도가 남는다.
      * 목표 전달을 생략하기 전에 한 번 호출해 정지시킨다. 위치·회전은 바꾸지 않는다.
      * @throws std::invalid_argument 핸들이 유효하지 않을 때.
@@ -104,7 +108,7 @@ public:
      */
     void StopKinematic(PhysicsBodyHandle handle);
 
-    /** @brief Body를 Jolt 계산 목록에서 빼고 해제한다. 무효·타 World 핸들은 무시한다. */
+    /** @brief Body를 다음 물리 계산에서 제외한 뒤 메모리를 해제한다. 유효하지 않거나 다른 World의 핸들은 무시한다. */
     void DestroyBody(
         PhysicsBodyHandle handle);
 

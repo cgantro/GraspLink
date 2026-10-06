@@ -8,40 +8,41 @@ class Shader;
 class Material;
 
 /**
- * @brief Entity가 공유할 GPU Mesh와 그릴 index 구간을 지정한다.
+ * @brief 장면 물체가 화면에 그릴 3D 모양과 그중 사용할 삼각형 범위를 지정한다.
  * @details
- * RenderSystem이 Transform과 MeshRenderer를 함께 조회해 Renderer로 넘긴다. indexOffset은 index 원소 위치이고
- * Renderer가 uint32 index의 byte offset으로 바꾸므로 호출자는 byte 단위로 환산하지 않는다.
- * 여러 Primitive가 같은 Mesh를 가리킬 수 있다. mesh의 shared_ptr은 AssetManager 캐시와 독립된 소유 참조여서
- * Entity가 남아 있으면 캐시를 비워도 Mesh가 유지된다. 마지막 참조 해제는 OpenGL Context가 살아 있을 때 해야 한다.
+ * Mesh는 표면 모양을 이루는 꼭짓점과 삼각형 자료다. GLB 모델 하나의 여러 부분이 같은 Mesh를 재사용할 수 있다.
+ * RenderSystem은 이 선택과 물체의 변환 행렬을 함께 읽어 Renderer에 넘긴다. indexOffset은 시작할 index 원소 번호이며 byte 수가 아니다.
+ * shared_ptr은 AssetManager의 이름 검색 목록과 별개로 Mesh 사용 수명을 공유한다. 이 물체가 참조를 보유하면 검색 목록을 비워도 Mesh가 남는다.
+ * 마지막 참조를 해제할 때 GPU 메모리를 지우므로 OpenGL Context가 살아 있어야 한다.
  */
 struct MeshFilter
 {
-    /// AssetManager가 올린 OpenGL Mesh의 공유 소유 참조. 비어 있으면 그릴 수 없다.
+    /// AssetManager가 GPU에 올린 표면 모양의 공유 참조다. 참조가 비어 있으면 RenderSystem은 이 물체를 그리지 않는다.
     std::shared_ptr<Mesh> mesh;
 
-    /// Index Buffer에서 시작할 위치, 단위: uint32 index 원소.
+    /// 삼각형 목록에서 그리기를 시작할 uint32 index 번호다. byte 위치로 직접 지정하지 않는다.
     std::size_t indexOffset = 0U;
 
-    /// 그릴 index 원소 수. 0이면 Mesh 전체 index 수를 사용하며, 이때 indexOffset은 0이어야 한다.
+    /// 사용할 uint32 index 개수다. 0이면 Mesh 전체를 그리며 이때 시작 번호도 0이어야 한다.
     std::size_t indexCount = 0U;
 };
 
 /**
- * @brief Entity의 Main pass 재질과 Shader, 렌더 포함 여부를 지정한다.
+ * @brief 장면 물체의 표면 색을 계산할 프로그램과 화면에 그릴지 여부를 지정한다.
  * @details
- * 공유 참조는 AssetManager 캐시에서 얻은 객체의 수명을 연장한다. visible이 false이면 현재 Renderer의
- * Shadow pass와 Main pass 모두에서 제외된다. 이 Component는 draw 호출을 직접 하지 않고 MeshFilter,
- * Transform과 함께 RenderSystem 조회 결과로 사용된다.
+ * Shader는 GPU가 꼭짓점과 표면 색을 계산하는 프로그램이고 Material은 색과 Texture 같은 표면 설정이다.
+ * Main pass는 카메라에서 보이는 색을 만들고 Shadow pass는 광원에서 보이는 물체가 다른 물체를 가리는지 기록한다.
+ * visible이 false이면 두 단계 모두에서 빠진다. 이 설정만 저장하며 실제 선택과 그리기는 RenderSystem과 Renderer가 수행한다.
+ * AssetManager에서 가져온 Shader와 Material의 수명도 공유 참조로 이어져 사용 중인 물체가 사라질 때까지 유지된다.
  */
 struct MeshRenderer
 {
-    /// Main pass에서 사용할 Shader의 공유 참조.
+    /// 카메라 화면을 만들 때 꼭짓점 위치와 색을 계산하는 GPU 프로그램의 공유 참조다.
     std::shared_ptr<Shader> shader;
 
-    /// 표면 색과 지원된 Texture를 제공하는 Material의 공유 참조.
+    /// Renderer가 표면 색과 지원된 Texture를 선택할 때 사용하는 Material 공유 참조다.
     std::shared_ptr<Material> material;
 
-    /// false이면 그림자와 화면 렌더링 대상에서 모두 제외한다.
+    /// false이면 이 Mesh를 그림자 생성 단계와 화면에 보이는 주 렌더 단계 모두에서 제외한다.
     bool visible = true;
 };

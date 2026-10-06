@@ -18,8 +18,8 @@ GlHooks* activeHooks = nullptr;
 
 /**
  * @brief OpenGL 객체 생성/실패 지점을 감시하는 테스트용 GLAD 함수 집합.
- * @details 실제 OpenGL 동작은 저장된 GLAD 함수를 호출하고 생성 ID를 기록한다. 일부 검사는 반환 상태나
- * shader 입력만 제어해 생성자 실패 경로와 부분 생성 자원의 정리를 검사한다.
+ * @details GLAD는 C++ 코드가 OpenGL에 요청할 때 실제 그래픽 함수로 연결해 주는 표다. 이 시험용 객체는 원래 함수를 호출하면서 만들어진 framebuffer, texture, shader ID를 기록한다.
+ * 일부 검사에서는 OpenGL의 완료 상태나 shader 입력만 바꿔 실패를 재현하고, 생성 도중 만들어진 GPU 객체가 모두 해제되는지 확인한다.
  */
 struct GlHooks
 {
@@ -126,7 +126,7 @@ void APIENTRY CompileShader(GLuint shader)
 {
     if (++activeHooks->compileShaderCalls == activeHooks->failCompileShaderCall)
     {
-        // 실패: stage 순서에 의존하지 않고 두 번째 stage를 실제 GLSL 컴파일 오류로 만듦.
+        // 두 번째 Shader 단계의 GLSL 문법을 실제로 잘못 써 컴파일 실패를 만든다. 어떤 단계가 먼저 생성되는지에 테스트 결과가 좌우되지 않게 한다.
         const GLchar* invalidSource = "#version 330 core\nvoid main(){ invalid GLSL; }\n";
         glShaderSource(shader, 1, &invalidSource, nullptr);
     }
@@ -135,7 +135,7 @@ void APIENTRY CompileShader(GLuint shader)
 
 GlHooks::GlHooks()
 {
-    // 수명: 테스트 범위가 끝나거나 예외가 나면 원래 GLAD 함수를 복원.
+    // 테스트가 끝나거나 예외가 발생해도 바꿔 둔 GLAD 함수 포인터를 원래 OpenGL 함수로 복구한다.
     activeHooks = this;
     glad_glGenFramebuffers = RecordFramebuffers;
     glad_glGenTextures = RecordTextures;
@@ -175,7 +175,7 @@ void RequireFailure(Function&& function, const std::string& expectedMessage)
 
 void TestShadowMap(GlHooks& hooks)
 {
-    // 잘못된 크기와 불완전 framebuffer의 정리, Begin/End의 framebuffer·viewport 복원 계약을 확인한다.
+    // 잘못된 크기와 완성되지 않은 framebuffer의 자원 정리를 확인한다. Begin/End 이후에는 이전 framebuffer와 viewport가 복원되어야 한다.
     for (int size : {0, -1})
         ExpectThrows<std::invalid_argument>([&] { ShadowMap invalid(size); }, "invalid shadow size rejected");
     Require(hooks.framebuffers.empty() && hooks.textures.empty(), "invalid shadow size allocates nothing");
@@ -214,7 +214,8 @@ void TestShadowMap(GlHooks& hooks)
 
 void TestMultisampleFramebuffer(GlHooks& hooks)
 {
-    // GPU 표본 한도 clamp, Resize의 보존/재생성, 실패한 생성·resize의 모든 attachment 정리를 검사한다.
+    // MSAA는 경계 픽셀을 여러 번 계산해 거친 선을 부드럽게 한다. GPU가 지원하는 표본 수보다 크게 요청하지 않는지 확인한다.
+    // framebuffer 크기를 바꾸면 그 크기에 맞는 색·깊이 저장소가 필요하다. 생성이나 변경이 실패해도 새로 만든 GPU 객체가 남지 않아야 한다.
     GLint maxSamples = 0;
     glGetIntegerv(GL_MAX_SAMPLES, &maxSamples);
     Require(maxSamples >= 2, "test context supports MSAA");
@@ -278,7 +279,7 @@ void TestMultisampleFramebuffer(GlHooks& hooks)
 
 void TestShader(GlHooks& hooks)
 {
-    // Program/stage 생성 실패와 실제 compile/link 실패에서 임시 GL object가 남지 않는지 확인한다.
+    // Shader 프로그램 또는 단계 생성 자체가 실패하거나 GLSL 컴파일·연결이 실패해도 임시 OpenGL 객체가 남지 않는지 확인한다.
     const std::string vertex = "#version 330 core\nout vec3 value; void main(){value=vec3(1);gl_Position=vec4(0,0,0,1);}";
     const std::string fragment = "#version 330 core\nin vec3 value; out vec4 color; void main(){color=vec4(value,1);}";
     {
@@ -298,7 +299,7 @@ void TestShader(GlHooks& hooks)
     hooks.failCompileShaderCall = 2;
     RequireFailure([&] { Shader failed("compile-failure", vertex, fragment); }, "Shader Compile Failed");
     Require(hooks.shaders.size() == 2 && hooks.compileShaderCalls == 2, "second-stage real compile failure exercised");
-    // 확인: 앞 stage는 Program에 연결된 상태라 Program 삭제 후 실제 해제까지 검사.
+    // 첫 Shader 단계는 프로그램에 이미 연결되어 있다. 프로그램을 삭제한 뒤 이 단계의 OpenGL 객체도 실제로 해제되는지 확인한다.
     hooks.RequireReleased("second-stage compile failure");
     hooks.Reset();
     const std::string mismatch = "#version 330 core\nin vec2 value; out vec4 color; void main(){color=vec4(value,0,1);}";
@@ -324,14 +325,14 @@ void TestShader(GlHooks& hooks)
 
 /**
  * @brief ShadowMap, MSAA framebuffer, Shader의 OpenGL 자원 수명과 실패 복구를 확인한다.
- * @details 숨긴 Window가 GL context를 소유한다. 테스트 객체가 만드는 GL 자원과 GlHooks가 바꾼 GLAD 함수 포인터를
- * 먼저 정리하고 Window가 마지막에 파괴되어야 한다. 불완전 상태는 hook으로 재현하고 객체 삭제 여부를 GL에서 조회한다.
+ * @details 숨긴 Window가 GL context를 제공한다. 테스트가 만든 GPU 자원과 원래 OpenGL 함수 대신 끼워 넣은 GlHooks 함수를 먼저 정리하고 Window를 마지막에 파괴한다.
+ * framebuffer가 불완전한 상황을 재현해 생성 실패 때 만들어 둔 OpenGL 객체도 실제로 삭제되는지 확인한다.
  */
 int main()
 {
     try
     {
-        // 수명: 함수 지역 GPU 객체와 GlHooks가 먼저 정리되고, Window가 GL context를 마지막에 닫는다.
+        // 함수 안의 GPU 객체와 GLAD 함수 대체물을 먼저 정리한다. 마지막 Window가 파괴될 때 OpenGL context를 닫도록 수명을 배치한다.
         Window window(Window::Properties{128, 128, "GraphicsResourceTests", false, false});
         GlHooks hooks;
         TestShadowMap(hooks);

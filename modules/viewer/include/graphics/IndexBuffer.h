@@ -3,47 +3,47 @@
 #include <cstdint>
 
 /**
- * @brief 정점 번호를 GPU에 복사해 glDrawElements가 삼각형 연결에 사용하게 한다.
+ * @brief Element Buffer Object(EBO)는 삼각형마다 이을 꼭짓점 번호를 GPU에 보관한다.
  * @details
- * 각 uint32 index는 정점 buffer의 한 Vertex를 가리키는 원소 번호다. 업로드 byte 수는 원소 개수에
- * sizeof(uint32_t)를 곱한다. 이 객체는 GPU 사본을 소유하며 CPU 배열은 소유하지 않는다. UnBind는 현재
- * EBO 연결을 바꾸지만 GPU 사본을 해제하지 않는다.
+ * index는 정점 배열에서 어느 Vertex(꼭짓점 자료)를 선택할지 가리키는 번호다. 번호 세 개가 삼각형 하나를 만든다.
+ * 이 객체는 32-bit 번호의 GPU 복사본을 소유하고 CPU 원본은 소유하지 않는다. 업로드 byte 수는 번호 개수에 4를 곱해 구한다.
+ * UnBind는 현재 VAO와의 연결만 해제하며 GPU 복사본은 남긴다.
  *
- * GL_ELEMENT_ARRAY_BUFFER 연결은 현재 VAO 상태에 기록된다. VAO가 선택된 채 EBO를 0에 바인딩하면 그
- * VAO의 연결도 사라진다. draw 때 같은 VAO를 선택하면 attribute 설명과 저장된 EBO를 함께 사용한다.
+ * EBO 연결은 현재 선택된 VertexArray Object(VAO, 정점 자료 읽기 설정)에 기록된다. VAO가 선택된 채 연결을 0으로 바꾸면 그 VAO에 저장된 연결도 지워진다.
+ * 그릴 때 같은 VAO를 선택하면 정점 형식과 이 번호 배열을 함께 사용한다.
  */
 class IndexBuffer
 {
 public:
     /**
-     * @brief uint32 index 배열을 GPU에 복사한다.
+     * @brief 32-bit 정수로 된 삼각형 꼭짓점 번호 배열을 GPU에 복사한다.
      * @param indices 복사할 정점 번호 배열 주소.
-     * @param cnt 배열의 index 원소 개수. byte 크기가 아니다.
+     * @param cnt 배열에 든 번호 개수. byte 크기가 아니다.
      * @throws std::runtime_error indices가 null이거나 cnt가 0인 경우.
-     * @details GL_STATIC_DRAW는 초기 업로드 뒤 드물게 변경하는 사용 패턴 힌트다. 개별 index의 범위는
-     * 검사하지 않으므로 호출자가 유효한 정점 번호를 제공해야 한다. 유효한 현재 OpenGL context가 필요하다.
+     * @details GPU에는 처음 한 번 올린 뒤 거의 바꾸지 않을 것이라는 사용 정보를 전달한다. 각 번호가 실제 정점을 가리키는지는 확인하지 않으므로 호출자가 올바른 번호를 제공해야 한다.
+     * GPU 명령 실행 환경인 OpenGL context가 현재 스레드에서 활성화되어 있어야 한다.
      */
     IndexBuffer(const uint32_t* indices, uint32_t cnt);
 
-    /** @brief 현재 유효한 OpenGL context에서 GPU buffer를 해제한다. */
+    /** @brief 소유한 GPU 꼭짓점 번호 배열을 해제한다. 현재 스레드에서 OpenGL 실행 환경(context)이 활성화되어야 한다. */
     ~IndexBuffer();
 
     IndexBuffer(const IndexBuffer&) = delete;
     IndexBuffer& operator=(const IndexBuffer&) = delete;
 
-    /** @brief 이 buffer를 현재 VAO의 element array buffer로 연결한다. */
+    /** @brief 이 EBO의 번호 배열을 현재 VAO가 기억할 연결 번호로 지정한다. */
     void Bind() const;
 
-    /** @brief 현재 VAO의 element array buffer 연결을 해제한다. VAO가 선택돼 있으면 저장된 상태도 바뀐다. */
+    /** @brief 현재 정점 읽기 설정에서 번호 배열을 분리한다. 그 설정이 선택돼 있으면 저장된 연결도 지워진다. */
     void UnBind() const;
 
-    /** @brief 업로드한 index 원소 개수를 반환한다. 단위: uint32 index 개수. */
+    /** @brief GPU에 복사한 꼭짓점 번호의 개수를 반환한다. */
     uint32_t GetCount() const { return m_Count; }
 
 private:
-    // OpenGL buffer 이름(ID).
+    // GPU가 부여한 번호 배열의 이름.
     uint32_t m_RendererID = 0;
 
-    // draw에 쓰는 원소 개수. 업로드 byte 크기는 m_Count * sizeof(uint32_t).
+    // 그리기에 사용할 번호 개수. GPU로 복사한 byte 수는 번호 개수×4다.
     uint32_t m_Count = 0;
 };

@@ -29,7 +29,7 @@ RobotTransformAdapter::RobotTransformAdapter(
         throw std::invalid_argument("RobotTransformAdapter: empty robot specification");
 
     std::unordered_set<std::string> wantedJoints;
-    // RobotSpecification의 joint 이름을 GLB Entity 계층에서 찾아 연결한다.
+    // 모델 사양에 나열된 관절 이름을 모아 GLB Entity 계층에서 같은 이름의 노드를 찾는다.
     for (std::size_t i = 0; i < specification.jointCount; ++i)
         wantedJoints.emplace(specification.joints[i].name);
 
@@ -59,14 +59,14 @@ RobotTransformAdapter::RobotTransformAdapter(
                 "RobotTransformAdapter: joint not found: " + std::string(jointSpec.name));
         const Entity& joint = found->second;
 
-        // 좌표: 관절 중심을 모델 base 기준으로 복원한다. Scene에 배치할 robot root 변환은 bind 비교에서 제외한다.
+        // 관절의 Local 변환과 중간 부모 변환을 누적해 모델 base 기준 pivot을 구한다. Scene 안에서 로봇을 배치하는 robotRoot 변환은 이 bind 검증에 포함하지 않는다.
         glm::mat4 bindInBase = TransformSystemModule::ComposeLocalMatrix(
             joint.GetLocalPosition(), joint.GetLocalRotation(), joint.GetLocalScale());
         Entity parent = joint.GetParent();
         bool followsPreviousJoint = i == 0;
         while (parent && parent != robotRoot)
         {
-            // 계층: 첫 joint는 root 아래에, 이후 joint는 직전 joint의 자손이어야 하며 중간 link node는 허용한다.
+            // 첫 관절은 robotRoot 아래에 있어야 하고 이후 관절은 직전 관절의 자손이어야 한다. GLB의 중간 link node는 경로에 있어도 된다.
             if (i > 0 && parent == joints_[i - 1].entity)
                 followsPreviousJoint = true;
             bindInBase = TransformSystemModule::ComposeLocalMatrix(
@@ -76,7 +76,7 @@ RobotTransformAdapter::RobotTransformAdapter(
         const glm::vec3 expectedPivot{static_cast<float>(jointSpec.bindPivotMeters.x),
             static_cast<float>(jointSpec.bindPivotMeters.y), static_cast<float>(jointSpec.bindPivotMeters.z)};
         const glm::mat4 expectedBind = glm::translate(glm::mat4{1.0F}, expectedPivot);
-        // GLB bind는 지정 pivot의 translation과 항등 orientation/scale이어야 FK의 보존된 위치와 일치한다.
+        // FK는 모델 사양의 pivot 위치를 유지한 채 관절 회전만 바꾼다. 따라서 GLB의 bind 행렬도 그 위치와 항등 회전·크기를 가져야 한다.
         bool matchesBind = parent == robotRoot && followsPreviousJoint;
         for (int column = 0; column < 4; ++column)
             matchesBind = matchesBind && glm::all(glm::lessThanEqual(
@@ -84,7 +84,7 @@ RobotTransformAdapter::RobotTransformAdapter(
         if (!matchesBind)
             throw std::invalid_argument("RobotTransformAdapter: GLB hierarchy or bind pivot differs from robot specification");
 
-        // q와 -q 모두 항등 방향일 수 있다. 벡터 성분으로 항등 여부를 비교한다.
+        // quaternion q와 -q는 같은 회전이므로 성분 전체를 직접 비교하지 않는다. 정규화한 quaternion의 벡터부가 0인지 확인해 항등 회전을 판정한다.
         const glm::quat bindRotation = Rotation{joint.GetLocalRotation()};
         const glm::vec3 bindVector{bindRotation.x, bindRotation.y, bindRotation.z};
         if (glm::dot(bindVector, bindVector) >
@@ -101,15 +101,15 @@ RobotTransformAdapter::RobotTransformAdapter(
 
 void RobotTransformAdapter::Apply(const ::grasplink::robotics::kinematics::RobotKinematicState& state)
 {
-    // FK의 joint 순서와 GLB에 연결한 Entity 수가 같아야 한다.
+    // FK 결과는 사양 순서로 나오므로 연결한 GLB 관절 수와 회전 결과 수가 같아야 한다.
     if (state.jointLocalRotations.size() != joints_.size())
         throw std::invalid_argument("RobotTransformAdapter: joint rotation count mismatch");
 
     for (std::size_t i = 0; i < joints_.size(); ++i)
     {
-        // 반영: Local 회전만 바꿔 GLB 계층에 저장된 초기 관절 위치를 유지.
+        // GLB가 저장한 관절 위치와 부모 관계는 그대로 두고, FK가 계산한 부모 기준 Local 회전만 적용한다.
         const auto& pose = state.jointLocalRotations[i];
-        // 순서/정밀도: 모델 [w,x,y,z]를 GLM 생성자에 맞춘다. 단위 회전을 유지하며 float 저장 경계만 지난다.
+        // 모델 quaternion의 성분 순서는 [w,x,y,z]이며 GLM 생성자도 같은 순서를 받는다. 계산은 double 정밀도로 전달되고 Entity 저장 때 float로 바뀐다.
         const glm::dquat rotation{pose.w, pose.x, pose.y, pose.z};
         auto& binding = joints_[i];
         if (!binding.entity)

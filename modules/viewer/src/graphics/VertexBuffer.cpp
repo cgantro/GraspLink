@@ -4,11 +4,11 @@
 
 VertexBuffer::VertexBuffer(const void* data, uint32_t size)
 {
-    // CPU 메모리의 byte 범위를 GPU 사본으로 복사한다. 이후 draw는 이 사본을 읽는다.
+    // 지정된 CPU 메모리 구간을 GPU 메모리에 복사한다. 이후 그리기 명령은 이 GPU 사본에서 정점 데이터를 읽는다.
     glGenBuffers(1, &m_RendererID);
     glBindBuffer(GL_ARRAY_BUFFER, m_RendererID);
 
-    // GL_STATIC_DRAW는 초기 업로드 후 드물게 바꾸는 데이터라는 사용 패턴 힌트다.
+    // GL_STATIC_DRAW는 초기 업로드 뒤 내용을 자주 바꾸지 않는다는 사용 패턴을 GPU에 알려 준다.
     glBufferData(GL_ARRAY_BUFFER, size, data, GL_STATIC_DRAW);
 }
 
@@ -28,6 +28,6 @@ void VertexBuffer::Bind() const
 
 void VertexBuffer::UnBind() const
 {
-    // GL_ARRAY_BUFFER의 현재 선택만 비운다. GPU 사본과 VAO의 attribute 설명은 남는다.
+    // 현재 GL_ARRAY_BUFFER 선택만 해제한다. GPU에 복사된 데이터와 VAO에 기록한 정점 속성 설명은 유지된다.
     glBindBuffer(GL_ARRAY_BUFFER, 0);
 }

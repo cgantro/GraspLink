@@ -61,7 +61,7 @@ GripperKinematics::GripperKinematics(const models::GripperSpecification& specifi
             joint.minPositionRadians > joint.maxPositionRadians)
             throw std::invalid_argument("GripperKinematics: invalid joint limits");
 
-        // closureFraction은 0에서 1까지 움직이므로 선형 각도의 양 끝을 제한 안에 둔다.
+        // closureFraction은 열린 상태 0부터 닫힌 상태 1까지의 비율이다. 비율을 각도로 바꾼 뒤 각 관절 제한 범위 안에 있도록 끝값을 자른다.
         const double closedAngle = joint.masterMultiplier * specification_.nominalMasterClosedRadians;
         if (!std::isfinite(closedAngle) || joint.minPositionRadians > 0.0 ||
             joint.maxPositionRadians < 0.0 || closedAngle < joint.minPositionRadians ||
@@ -76,7 +76,7 @@ GripperKinematics::GripperKinematics(const models::GripperSpecification& specifi
 
 const GripperKinematicState& GripperKinematics::Update(const GripperState& state)
 {
-    // inactive 여부는 위치 계산을 막지 않는다. 현재 pose의 유효성은 두 valid 표식과 fraction 값으로 판정한다.
+    // 비활성 상태여도 현재 개폐 위치에서 관절 자세를 계산할 수 있다. 계산 가능 여부는 전체 상태와 연속 개폐 위치 각각의 valid 표식, fraction 값으로 판단한다.
     if (!state.valid || !state.closureFractionValid || !std::isfinite(state.closureFraction) ||
         state.closureFraction < 0.0 || state.closureFraction > 1.0)
         throw std::invalid_argument("GripperKinematics: invalid closure state");
@@ -95,7 +95,7 @@ const GripperKinematicState& GripperKinematics::Update(const GripperState& state
         next.jointLocalRotations[i] = rotation;
     }
 
-    // 모든 관절 결과를 먼저 계산해 검증한다. 중간 관절 오류가 직전 정상 상태 일부를 덮지 않게 한다.
+    // 먼저 모든 관절의 새 결과를 계산하고 유효성을 확인한다. 하나라도 실패하면 이전 결과 배열 일부만 새 값으로 바뀌는 일을 막는다.
     std::swap(state_, pending_);
     return state_;
 }

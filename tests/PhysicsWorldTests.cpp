@@ -10,11 +10,9 @@ using namespace grasplink::physics;
 namespace
 {
 /**
- * @brief Body 원점과 위치·회전이 따로 있는 바닥 Box fixture.
- * @details Body 회전은 World Z축 기준 +90°다. Body 원점에서 Local X=0.5 m에 있는 형상 중심은
- * 회전 뒤 World Y=0.5 m가 되고, Local X 반쪽 길이 0.25 m가 World 수직 반높이가 된다.
- * 따라서 Body 원점은 Y=0에 남고 플랫폼 윗면은 Y=0.75 m다. 위치와 방향이 원점과 다른
- * 형상을 써야 COM을 Body 원점으로 잘못 반환하는 회귀를 접촉 위치로 드러낼 수 있다.
+ * @brief 물리 물체 기준점과 실제 바닥 상자 중심이 다른 플랫폼 시험 자료를 만든다.
+ * @details Body는 Jolt에서 위치와 회전을 가진 물체다. 이 플랫폼의 상자 중심은 Body 기준점에서 Local X로 0.5 m 떨어져 있고, Z축으로 90도 돌리면 그 차이는 Scene Y 방향이 된다.
+ * 상자 반높이 0.25 m까지 더하면 윗면은 Y=0.75 m에 있어야 한다. 구가 여기에 안착하는 높이를 확인하면 계산이 실제 형상 중심 대신 Body 기준점을 사용한 오류를 찾을 수 있다.
  */
 BodyDescription OffsetPlatform()
 {
@@ -34,9 +32,8 @@ BodyDescription OffsetPlatform()
  * @param world 테스트용 PhysicsWorld. 호출자가 플랫폼을 만들고 수명을 관리한다.
  * @param x 플랫폼과 구의 World X 위치 [m].
  * @param expectedY 구 Body 원점의 기대 높이 [m].
- * @details 플랫폼 윗면 0.75 m에 반지름 0.1 m인 구가 닿으므로 구 중심은 0.85 m다.
- * 750회의 4 ms step은 3 s 동안 낙하·접촉·안정화할 시간을 준다. 15 mm 허용치는 solver의
- * 작은 잔류 오차를 허용하면서 Body 원점/COM 혼동으로 생기는 큰 높이 오차는 잡는다.
+ * @details 플랫폼 윗면 0.75 m에 반지름 0.1 m인 구가 닿으면 구 중심은 0.85 m가 된다.
+ * 750회의 4 ms 계산은 3 s 동안 낙하하고 접촉한 뒤 안정될 시간을 준다. 15 mm 허용 오차는 작은 계산 흔들림은 허용하면서 구 중심과 물체 기준점을 혼동한 큰 높이 오류를 잡는다.
  */
 void CheckContact(PhysicsWorld& world, float x, float expectedY)
 {
@@ -57,7 +54,7 @@ int main()
 {
     try
     {
-        // 생성·접촉·Teleport 후 Body 원점을 확인하고, 동일 접촉 높이를 두 X 위치에서 재검증한다.
+        // Body를 만들고 다른 물체와 접촉시킨 뒤 순간이동시켜 원점이 올바른지 확인한다. 서로 다른 두 X 위치에서도 같은 접촉 높이가 유지되는지 검사한다.
         PhysicsWorld world;
         auto platform = OffsetPlatform();
         const auto handle = world.CreateBody(platform);
@@ -78,7 +75,7 @@ int main()
         world.MoveKinematic(moving, target, 0.004);
         world.Step(0.004);
         RequireNear(world.GetBodyTransform(moving).position.y, 0.25, 1e-4, "kinematic body origin");
-        // 목표 전송을 중단해도 COM이 치우친 회전 Body가 계속 움직이지 않아야 한다.
+        // 질량 중심은 물체의 질량이 균형을 이루는 위치로 Body 기준점과 다를 수 있다. 이 중심이 어긋난 회전 물체도 Kinematic 목표 전송을 멈춘 뒤 계속 미끄러지거나 돌지 않아야 한다.
         world.StopKinematic(moving);
         const Transform stopped = world.GetBodyTransform(moving);
         for (int tick = 0; tick < 250; ++tick) world.Step(0.004);
@@ -89,7 +86,7 @@ int main()
         ExpectThrows<std::logic_error>([&] { world.StopKinematic(handle); }, "Static body cannot stop as Kinematic");
         world.DestroyBody(moving);
 
-        // 핸들은 World별 token과 Body ID를 함께 식별한다. 파괴 뒤 ID가 재사용돼도 이전 handle은 무효다.
+        // Body handle은 소속 World의 고유 표식과 Body ID를 함께 확인한다. World가 파괴된 뒤 같은 ID가 재사용돼도 예전 handle은 새 Body를 가리키지 않는다.
         PhysicsWorld otherWorld;
         const auto other = otherWorld.CreateBody(OffsetPlatform());
         Require(otherWorld.IsBodyValid(other), "own World handle");
@@ -101,7 +98,7 @@ int main()
         const auto replacement = world.CreateBody(OffsetPlatform());
         Require(world.IsBodyValid(replacement) && !world.IsBodyValid(handle), "reused ID must not revive old handle");
 
-        // Jolt 경계에 넘기기 전에 수치·회전 입력을 검증해 예측 가능한 예외를 낸다.
+        // 잘못된 숫자와 회전값은 Jolt 내부로 전달하기 전에 검사해, 호출자가 입력 오류를 예측 가능한 예외로 확인할 수 있게 한다.
         auto invalid = OffsetPlatform();
         invalid.transform.position.x = std::numeric_limits<float>::quiet_NaN();
         ExpectThrows<std::invalid_argument>([&] { world.CreateBody(invalid); }, "non-finite pose must fail");

@@ -13,49 +13,49 @@
 class Mesh;
 
 /**
- * @brief GLB에서 읽은 정점 한 개의 CPU 속성이다.
+ * @brief 모델 표면의 꼭짓점 한 개와 그릴 때 필요한 표면 정보를 담는다.
  * @details
- * 좌표: position과 normal은 Mesh Local 기준이며 UV는 텍스처 좌표다.
- * 현재 지원: GltfLoader는 FLOAT 속성을 읽고 tangent는 VEC4의 xyz만 보존한다.
- * tangent의 w와 GPU vertex attribute 연결은 아직 없어 tangent 공간 기반 normal mapping에는 쓸 수 없다.
+ * Mesh는 여러 삼각형의 꼭짓점과 연결 번호를 모은 모델 형상이다. position은 Mesh 자체 기준(Local) 위치고 normal(법선)은 그 꼭짓점 표면에 수직인 방향이다.
+ * texCoord(UV)는 표면에서 색상 Texture의 어느 픽셀을 읽을지 나타내는 이미지 좌표다. GltfLoader는 실수형 위치·법선·UV만 읽는다.
+ * tangent는 표면을 따라가는 방향이고 normal(법선)은 표면에 수직인 방향이다. 원본 VEC4의 w 부호는 tangent와 법선에서 두 방향과 수직인 나머지 표면 방향을 정한다.
+ * 현재 w는 버리고 tangent도 GPU에 전달하지 않는다. Normal mapping은 이미지의 방향 정보를 이용해 표면을 울퉁불퉁하게 보이게 하는 방법이며 현재 사용할 수 없다.
  */
 struct Vertex
 {
-    /// Mesh Local 좌표의 정점 위치.
+    /// Mesh 기준 좌표의 위치. 모델 변환이 적용되기 전 값이다.
     glm::vec3 position{0.0f};
-    /// Mesh Local 기준 정점 법선.
+    /// Mesh 기준 표면의 수직 방향.
     glm::vec3 normal{0.0f, 1.0f, 0.0f};
-    /// 텍스처 이미지에서 색을 읽을 위치.
+    /// 색상 이미지 안에서 읽을 위치. 각 성분은 이미지 크기에 대한 비율이다.
     glm::vec2 texCoord{0.0f};
 
-    /// glTF VEC4 tangent의 xyz. w handedness와 GPU attribute 연결은 보존하지 않는다.
+    /// tangent는 표면을 따라가는 방향이다. 원본 네 성분 중 xyz만 보존하며 w의 부호는 tangent와 법선에서 나머지 표면 방향을 정하는 데 쓰이지만 현재 버린다.
     glm::vec3 tangent{0.0F};
 };
 
 /**
- * @brief glTF Primitive 하나를 변환한 CPU 정점·index 데이터다.
+ * @brief 모델 표면을 그리는 한 덩어리의 꼭짓점과 삼각형 연결 정보를 담는다.
  * @details
- * GltfLoader가 primitive별 index와 재질 번호를 읽고, Mesh 생성 시 여러 Primitive의 데이터를
- * 하나의 Mesh 배열과 SubMeshInfo 범위로 합친다. index 값은 byte 주소가 아닌 정점 배열의 원소 번호다.
+ * glTF Primitive는 하나의 재질로 그릴 삼각형 꼭짓점 묶음이다. GltfLoader가 묶음별 꼭짓점과 삼각형 연결 번호를 읽고 Mesh를 만들 때 배열 뒤에 이어 붙인다.
+ * index는 삼각형 세 꼭짓점을 고르는 vertices 배열 번호다. byte 위치와 달리 0은 첫 꼭짓점, 1은 두 번째 꼭짓점을 뜻한다.
  */
 struct PrimitiveData
 {
     std::vector<Vertex> vertices;
     std::vector<std::uint32_t> indices;
 
-    /// ModelResource::materials 원소 번호. -1이면 기본 Material을 사용한다.
+    /// 사용할 재질의 ModelResource::materials 번호. -1이면 기본 재질을 사용한다.
     int materialIndex = -1;
 };
 
 /**
- * @brief GLB 이미지에서 디코딩한 CPU 픽셀과 리소스 식별자다.
+ * @brief GLB 이미지 파일을 픽셀 바이트로 풀어 둔 CPU 데이터다.
  * @details
- * GltfLoader는 현재 8-bit RGB/RGBA 이미지만 허용한다. AssetManager가 GPU Texture를 만들고
- * ResourceID 캐시에 보관하므로, 이 구조체의 pixels는 업로드 전 원본 데이터 역할을 한다.
+ * GltfLoader는 색의 빨강·초록·파랑 및 선택적 alpha 채널마다 8 bit를 쓰는 RGB 또는 RGBA 이미지로 읽는다. AssetManager가 이 바이트를 GPU 이미지로 복사하고 캐시에 보관한다. 따라서 pixels는 GPU 업로드 전까지 사용하는 원본이다.
  */
 struct TextureData
 {
-    /// 모델 경로와 texture 번호로 만든 캐시 키.
+    /// 모델 파일 경로와 glTF texture 항목 번호를 조합한 식별자.
     ResourceID uniqueID;
 
     /// 이미지 너비, 단위: pixel.
@@ -65,76 +65,74 @@ struct TextureData
     /// 픽셀당 채널 수. 현재 3(RGB) 또는 4(RGBA).
     int channels = 0;
 
-    /// 행 단위 패딩 없이 저장한 디코딩 픽셀 바이트.
+    /// 위에서 아래 순서의 픽셀 바이트. 행 사이에 빈 패딩이 없다.
     std::vector<unsigned char> pixels;
 };
 
 /**
- * @brief GLB 재질의 색상·PBR 값과 연결할 Texture ID다.
+ * @brief 표면 색·반사 계수와 기본색 이미지 연결 정보를 담는다.
  * @details
- * GltfLoader가 glTF 값을 CPU에 보관하고 AssetManager가 runtime Material을 만든다.
- * 현재 AssetManager가 실제 Material에 연결하는 것은 baseColorTexture뿐이며 나머지 ID는
- * 로드되어도 렌더 재질 입력으로 사용되지 않는다.
+ * glTF 재질은 표면 색과 빛 반응을 정하는 값의 묶음이다. GltfLoader는 기본색, 금속성·거칠기 계수와 발광색 숫자를 읽고 기본색 이미지 참조만 기록한다.
+ * 다른 이미지 참조 필드는 빈 식별자로 남아 화면용 재질에 연결되지 않는다. 모델 이미지 배열을 읽어 GPU에 올리는 작업과 재질이 그 이미지를 사용하도록 연결하는 작업은 별개다.
+ * 금속성·거칠기 숫자는 화면용 재질에 전달되지만 발광색 숫자는 저장만 하고 현재 화면 계산에는 전달하지 않는다.
  */
 struct MaterialData
 {
-    /// 모델 경로와 material 번호로 만든 캐시 키.
+    /// 모델 파일 경로와 재질 번호를 조합한 식별자.
     ResourceID uniqueID;
     /// GLB에 기록된 표시 이름. 비어 있을 수 있다.
     std::string name;
 
-    /// 표면 기본 색과 알파 배율.
+    /// 표면 기본 RGB 색과 투명도에 곱할 값.
     glm::vec4 baseColorFactor{1.0f,1.0f,1.0f,1.0f};
     /// 금속성 계수, glTF 범위 0~1.
     float metallicFactor = 1.0f;
     /// 거칠기 계수, glTF 범위 0~1.
     float roughnessFactor = 1.0f;
 
-    /// 표면에서 더해지는 발광 색.
+    /// 파일에서 읽은 발광 색. 현재 화면용 재질과 shader에는 전달하지 않는다.
     glm::vec3 emissiveFactor{0.0f};
 
-    /// 기본 색 Texture의 캐시 ID. 픽셀과 GPU 객체는 AssetManager가 보유한다.
+    /// 기본색 이미지 연결 정보. 해당 픽셀과 GPU 객체는 AssetManager가 관리한다.
     ResourceID baseColorTexture;
 
-    /// 금속성·거칠기 Texture의 캐시 ID. 현재 runtime Material에 연결되지 않는다.
+    /// 금속성·거칠기 이미지 참조. 현재는 빈 식별자로 남고 화면용 재질에 연결되지 않는다.
     ResourceID metallicRoughnessTexture;
 
-    /// 법선 Texture의 캐시 ID. 현재 runtime Material에 연결되지 않는다.
+    /// 표면 기울기 이미지 참조. 현재는 빈 식별자로 남고 화면용 재질에 연결되지 않는다.
     ResourceID normalTexture;
 
-    /// 차폐 Texture의 캐시 ID. 현재 runtime Material에 연결되지 않는다.
+    /// 빛을 가리는 정도를 담는 이미지 참조. 현재는 빈 식별자로 남고 화면용 재질에 연결되지 않는다.
     ResourceID occlusionTexture;
 
-    /// 발광 Texture의 캐시 ID. 현재 runtime Material에 연결되지 않는다.
+    /// 표면이 내는 빛을 담는 이미지 참조. 현재는 빈 식별자로 남고 화면용 재질에 연결되지 않는다.
     ResourceID emissiveTexture;
 };
 
 /**
- * @brief 합쳐진 Mesh index 배열에서 Primitive가 사용할 범위와 기본 재질이다.
+ * @brief 이어 붙인 꼭짓점 연결 배열 중 한 표면 묶음의 범위와 재질을 가리킨다.
  * @details
- * indexStart와 indexCount 단위는 uint32 index 원소다. Renderer가 draw 호출을 만들 때 시작 위치를
- * byte offset으로 변환한다. 재질 번호는 ModelResource::materials 기준이며 -1은 기본 Material이다.
+ * indexStart는 첫 연결 번호의 위치이고 indexCount는 사용할 연결 번호 개수다. 둘 다 4-byte 정수 원소 단위다. Renderer는 GPU 호출 전에 시작 위치를 byte 단위로 바꾼다. 재질 번호 -1은 기본 재질을 뜻한다.
  */
 struct SubMeshInfo{
-    /// MeshData::indices에서 시작하는 원소 위치.
+    /// MeshData::indices 배열에서 이 묶음의 첫 연결 번호 위치.
     std::uint32_t indexStart = 0;
-    /// 이 Primitive에 포함된 index 원소 수.
+    /// 이 묶음이 사용할 꼭짓점 연결 번호의 개수.
     std::uint32_t indexCount = 0;
 
-    /// ModelResource::materials 원소 번호. -1이면 기본 Material을 사용한다.
+    /// ModelResource::materials에서 선택할 재질 번호. -1이면 기본 재질을 사용한다.
     int defaultMaterialIndex = -1;
 };
 
 /**
- * @brief glTF Mesh의 CPU 배열, Primitive 범위와 업로드된 GPU Mesh 참조다.
+ * @brief 한 모델 Mesh의 CPU 데이터, 표면별 범위, GPU에 올린 Mesh 참조를 모은다.
  * @details
- * AssetManager가 vertices와 indices로 OpenGL Mesh를 만들고 gpuMesh에 공유 참조를 둔다.
- * PrefabFactory는 같은 참조를 MeshFilter에 복사하므로 Manager 캐시가 비워져도 Entity가 그리는 동안
- * GPU Mesh가 살아 있을 수 있다. 마지막 참조를 놓을 때 OpenGL Context가 유효해야 한다.
+ * AssetManager가 vertices와 indices를 그래픽 카드 메모리에 올려 gpuMesh를 만든다.
+ * PrefabFactory는 gpuMesh 참조를 Entity의 MeshFilter에도 복사한다. 그래서 캐시를 비운 뒤에도 Entity가 그리는 동안 GPU 데이터가 유지된다. 마지막 참조를 해제할 때 OpenGL context가 현재 스레드에서 활성화되어 있어야 한다.
  */
 struct MeshData
 {
-    /// 모델 경로와 mesh 번호로 만든 캐시 키.
+    /// 모델 파일 경로와 형상 번호를 조합한 식별자.
     ResourceID uniqueID;
 
     /// 디버깅과 오류 메시지에 사용하는 Mesh 이름.
@@ -143,7 +141,7 @@ struct MeshData
     /// GPU 업로드 전 정점 속성 배열.
     std::vector<Vertex> vertices;
 
-    /// 정점 배열을 참조하는 삼각형 index 배열.
+    /// 삼각형을 만들 꼭짓점 번호의 연속 배열. 번호는 vertices의 위치를 가리킨다.
     std::vector<std::uint32_t> indices;
 
     /// 원래 Primitive별 draw 범위와 기본 재질 번호.
@@ -154,65 +152,66 @@ struct MeshData
 };
 
 /**
- * @brief glTF Node의 Local TRS와 Mesh 연결, 부모·자식 관계다.
+ * @brief 모델 안 한 부품의 위치·회전·크기와 부모·자식, 그릴 Mesh 번호를 저장한다.
  * @details
- * translation, rotation, scale은 모두 부모 Node 기준이다. translation은 glTF 장면의 길이 단위(m),
- * rotation은 단위 quaternion, scale은 배율이다. glTF 회전과 matrix 분해 결과를 같은 회전 표현으로 보관한다.
- * GltfLoader는 단일 root 아래의 트리만 허용하고, PrefabFactory가 이 관계를 Entity hierarchy로 옮긴다.
- * Mesh가 없는 Node도 관절 pivot과 자식 기준 변환을 유지하므로 삭제하지 않는다.
+ * 위치(translation), 회전(rotation), 크기(scale)는 부모 부품 기준 값이다. 위치 단위는 m이고 크기는 배율이다.
+ * Quaternion은 회전축과 회전량을 네 숫자로 나타내는 방식이며 yaw/pitch/roll처럼 세 축 각도를 차례로 적용하는 방식과 다르다.
+ * 이 회전은 길이가 1인 quaternion으로 저장한다. 파일이 회전을 행렬로 적었든 네 숫자로 적었든 같은 quaternion 형태로 저장한다.
+ * GltfLoader는 부모가 하나인 나무 모양 관계만 허용하고 PrefabFactory가 이를 Entity 관계로 옮긴다.
+ * Mesh가 없는 부품도 관절 중심점이나 자식 위치의 기준이 될 수 있어 보존한다.
  */
 struct NodeData
 {
     /// 이름이 비어 있으면 GltfLoader가 Node 번호를 붙여 생성한다.
     std::string name;
 
-    /// 부모 Node 기준 위치, 단위: m.
+    /// 부모 부품 기준 위치 [m].
     glm::vec3 translation{
         0.0F
     };
 
-    /// 부모 Node 기준 단위 quaternion. GLM 생성자 순서는 (w,x,y,z), 기본값은 항등 회전이다.
+    /// 부모 부품 기준 회전. 길이가 1인 quaternion이며 GLM 생성자 인자 순서는 (w,x,y,z)다.
     glm::quat rotation{
         1.0F, 0.0F, 0.0F, 0.0F
     };
 
-    /// 부모 Node 기준 크기 배율.
+    /// 부모 부품 기준 크기 배율. (1,1,1)은 원래 크기다.
     glm::vec3 scale{
         1.0F
     };
 
-    /// ModelResource::meshes 원소 번호. -1이면 Node 자체에 그릴 Mesh가 없다.
+    /// ModelResource::meshes에서 그릴 형상의 번호. -1이면 이 부품에는 형상이 없다.
     int meshIndex = -1;
 
-    /// ModelResource::nodes 부모 원소 번호. root는 -1.
+    /// ModelResource::nodes에서 부모 부품의 번호. 최상위 부품은 -1이다.
     int parentIndex = -1;
 
-    /// ModelResource::nodes에서 이 Node 바로 아래에 올 자식 원소 번호 목록.
+    /// 이 부품 바로 아래에 연결할 자식 번호 목록.
     std::vector<int> childrenIndices;
 };
 
 
 /**
- * @brief GLB 한 파일에서 읽은 그래픽 데이터와 선택된 Scene root다.
+ * @brief GLB 파일에서 읽은 이미지·재질·형상·부품 관계를 한데 모은 결과다.
  * @details
- * GltfLoader가 CPU 배열과 ID를 구성하고, AssetManager가 별도로 GPU 리소스를 업로드한다.
- * ModelResource는 GPU 객체를 직접 소유하지 않지만 각 MeshData의 shared_ptr은 GPU Mesh 수명에 참여한다.
- * 현재 loader는 선택한 Scene을 단일 root 트리로 제한하며 그 밖의 별도 Node 트리는 거부한다.
+ * GltfLoader는 우선 CPU 배열을 만든다. AssetManager가 이를 그래픽 카드에 올린다.
+ * 각 MeshData의 공유 참조는 GPU Mesh가 언제 해제될지 결정하는 데 참여한다.
+ * 현재는 선택한 장면이 최상위 부품 하나에서 시작하는 계층만 허용하며, 장면 밖의 별도 부품 묶음은 거부한다.
  */
 struct ModelResource
 {
-    /// GLB 순서로 보관한 Material 입력값.
+    /// 파일에 나온 순서대로 저장한 재질 입력값.
     std::vector<MaterialData> materials;
 
-    /// GLB 순서로 보관한 Mesh 데이터.
+    /// 파일에 나온 순서대로 저장한 형상 데이터.
     std::vector<MeshData> meshes;
 
-    /// GLB Node와 hierarchy 데이터.
+    /// 부품의 위치·부모·자식 관계 데이터.
     std::vector<NodeData> nodes;
 
-    /// GLB에서 디코딩한 이미지 데이터.
+    /// 파일에서 픽셀로 풀어 둔 이미지 데이터.
     std::vector<TextureData> textures;
 
-    /// 선택한 Scene의 root Node 원소 번호. 찾지 못했으면 -1.
+    /// 사용할 장면의 최상위 부품 번호. 없으면 -1이다.
     int rootNodeIndex = -1;
 };

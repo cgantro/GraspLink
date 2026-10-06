@@ -4,17 +4,17 @@ class Renderer;
 class Camera;
 
 /**
- * @brief RenderSystem이 현재 프레임에 사용할 Renderer와 Camera를 빌려 받는 World singleton이다.
+ * @brief 장면 그리기 시스템이 현재 프레임에 사용할 Renderer와 Camera를 찾는 전역 자료다.
  * @details
- * 이 포인터들은 소유권을 넘기지 않는 borrowed 참조다. ViewerApp이 Renderer와 Camera를 소유하고,
- * 종료 시 World와 이 Context를 먼저 정리한 뒤 소유 객체를 파괴해야 한다. 두 포인터 중 하나라도 null이면
- * RenderSystem은 해당 프레임의 draw를 건너뛴다. World 밖에 복사해 저장하거나 소유 객체보다 오래 보관하지 않는다.
+ * Renderer는 Mesh의 삼각형을 GPU에 그리라는 OpenGL 명령을 보내고 Camera는 화면에서 볼 위치와 원근을 정한다.
+ * 이 포인터들은 객체를 빌려 가리킬 뿐 수명을 관리하지 않는다. ViewerApp이 두 객체를 소유하므로 장면과 이 자료를 먼저 없애야 한다.
+ * 둘 중 하나라도 nullptr이면 장면 그리기 시스템은 해당 프레임의 그리기를 건너뛴다. 이 포인터를 소유 객체보다 오래 보관하지 않는다.
  */
 struct RenderContext
 {
-    /// OpenGL draw 명령을 처리하는 ViewerApp 소유 객체의 비소유 포인터.
+    /// Entity의 Mesh를 GPU에 그리는 Renderer를 빌려 가리킨다. 이 포인터는 수명을 연장하지 않는다.
     Renderer* renderer = nullptr;
 
-    /// 현재 프레임의 View/Projection 행렬을 제공하는 ViewerApp 소유 객체의 비소유 포인터.
+    /// 장면 좌표를 카메라 좌표와 화면 투영 좌표로 바꾸는 Camera를 빌려 가리킨다. 장면 그리기 중에는 계속 살아 있어야 한다.
     Camera* camera = nullptr;
 };

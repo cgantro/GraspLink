@@ -10,16 +10,17 @@ namespace grasplink::gui
 {
 
 /**
- * @brief ECS Collider 설정의 화면 투영선을 깊이 검사 없이 표시한다.
- * @details Jolt 내부 Shape를 조회하지 않는 근사 표시다. PIMPL이 World query와 화면 선 캐시를
- * 소유하므로 빌린 flecs::world보다 먼저 파괴해야 한다. ImGui context나 OpenGL backend는 소유하지 않는다.
+ * @brief 물리 계산에 쓰는 단순 물체의 모양을 화면 위 선으로 보여준다.
+ * @details 장면 물체에 붙인 Collider 설정은 접촉 판정에 쓸 모양과 크기를 지정한다. Flecs World가 장면 물체와 이 설정을 저장하고 ColliderOverlay는 그 값과 Scene 위치를 읽어 상자·구·원기둥 같은 화면 선으로 바꾼다.
+ * 화면 선은 설정된 충돌 모양을 확인하기 위한 근사 표시이며, Jolt가 실제 접촉 계산에 사용하는 세부 형상과 다를 수 있다.
+ * Flecs World에서 물체를 조회하므로 이 객체보다 World가 오래 살아야 한다. GUI 상태나 OpenGL 자원은 소유하지 않고 호출자가 시작한 ImGui 프레임에 선을 추가한다.
  */
 class ColliderOverlay
 {
 public:
     /**
-     * @brief World의 Collider·World 변환 조회를 준비한다.
-     * @param world Collider 설정과 World 변환을 읽을 World. Overlay보다 오래 살아 있어야 한다.
+     * @brief 물체의 충돌 모양 설정과 Scene 위치를 읽을 World에 연결한다.
+     * @param world 물체와 Collider 설정 및 World 행렬을 저장한다. 이 참조를 사용하는 Overlay보다 오래 살아야 한다.
      */
     explicit ColliderOverlay(flecs::world& world);
     ~ColliderOverlay();
@@ -28,11 +29,12 @@ public:
     ColliderOverlay& operator=(const ColliderOverlay&) = delete;
 
     /**
-     * @brief 활성 ImGui 프레임 안에서 설정 Collider의 캐시된 투영선을 그린다.
-     * @param camera 이번 호출에서만 빌릴 Camera. 참조를 저장하지 않는다.
-     * @param visible false면 선 캐시를 비우고, 다음 첫 표시 때 즉시 갱신한다.
-     * @details 첫 표시·화면 크기 변경 때와 100 ms마다 다시 투영한다. Camera가 이동해도 다음 갱신까지
-     * 이전 화면 선을 사용한다. 전경 draw list를 사용해 가려진 형상도 보이며 OpenGL 호출은 직접 하지 않는다.
+     * @brief 활성 ImGui 프레임에 충돌 모양을 화면 선으로 그린다.
+     * @param camera Scene 위치를 화면 픽셀로 바꾸는 데 쓰며 호출이 끝나면 보관하지 않는 Camera 참조다.
+     * @param visible false이면 저장한 선을 지운다. 다시 켤 때 새 Scene의 물체에서 선을 계산한다.
+     * @details 카메라는 원근 투영으로 앞뒤 거리를 화면 크기에 반영한다. 카메라 뒤쪽의 점은 화면 앞에 있는 것처럼 잘못 나타날 수 있어 선을 만들 때 건너뛴다.
+     * 화면 선 좌표는 매번 다시 구하는 비용을 줄이려고 최대 100 ms 재사용한다. 그동안 카메라를 움직이면 선이 잠시 이전 위치에 보일 수 있다.
+     * 선은 화면 맨 앞에 그리므로 벽이나 로봇에 가려진 충돌 모양도 확인할 수 있다. OpenGL 명령은 직접 실행하지 않는다.
      */
     void Draw(const Camera& camera, bool visible);
 

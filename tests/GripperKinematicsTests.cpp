@@ -49,7 +49,7 @@ void RequireSamePose(const GripperKinematicState& actual,
 void CheckReferencePoses()
 {
     GripperKinematics calculator(models::robotiq::kTwoF85);
-    // 기준: 여섯 관절의 mimic 부호와 -Z Local 축. 각도는 rad, quaternion은 [w,x,y,z].
+    // 기대값은 여섯 관절의 연동 회전 부호와 각 관절의 Local -Z 회전축을 사용한다. 관절각 단위는 rad이고 회전 quaternion 성분 순서는 [w,x,y,z]다.
     constexpr std::array<double, 6> signs{1.0, -1.0, 1.0, -1.0, -1.0, 1.0};
     for (double fraction : {0.0, 0.5, 1.0})
     {
@@ -87,7 +87,7 @@ void CheckContinuousInputAndRejectedState()
     state.mode = GripperMode::Moving;
     RequireSamePose(calculator.Update(state), continuous, "raw feedback and activation do not change pose");
 
-    // Update가 반환한 참조를 유지해 거부 직후의 저장값을 검사한다. 새 정상 Update로 덮어쓰지 않는다.
+    // 마지막 Update()가 반환한 내부 상태 참조를 보관해 입력이 거부된 직후에도 값이 바뀌지 않았는지 확인한다. 검사용 정상 Update를 다시 호출해 결과를 덮어쓰지 않는다.
     const auto& retained = calculator.Update(state);
     const GripperKinematicState before = retained;
     const auto reject = [&](const GripperState& invalid, const std::string& label)
@@ -120,7 +120,7 @@ void CheckNonunitAxis()
     const auto& pose = calculator.Update(ClosureState(0.5));
     const double halfAngle = 0.7929 * 0.25;
     const double sine = std::sin(halfAngle);
-    // (2,-3,6)의 길이는 7. 축의 크기는 회전각에 영향을 주지 않는다.
+    // 회전축 (2,-3,6)의 길이는 7이지만 quaternion 정규화 후에는 방향만 남는다. 축 벡터의 크기가 달라도 같은 회전각을 적용해야 한다.
     RequireQuaternion(pose.jointLocalRotations[0],
         {std::cos(halfAngle), sine * 2.0 / 7.0, sine * -3.0 / 7.0, sine * 6.0 / 7.0},
         1.0e-12, "arbitrary axis is normalized");

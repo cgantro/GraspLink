@@ -18,7 +18,7 @@ Entity Scene::CreateEntity(const std::string& name)
             : m_World.entity(name.c_str());
 
 
-    // 좌표: 부모 기준 Local. 기본 위치·회전은 원점, 크기 배율은 단위값이다.
+    // 새 Entity의 위치와 회전은 부모 기준 원점에서 시작하고, 크기 배율은 축마다 1인 상태로 시작한다.
     entity
         .set<Position, Local>(
             Position{0.0F, 0.0F, 0.0F})
@@ -30,7 +30,7 @@ Entity Scene::CreateEntity(const std::string& name)
             Scale{1.0F})
 
 
-        // TransformSystemModule이 Local 값과 누적 World 행렬을 갱신할 저장 공간.
+        // TransformSystemModule이 Entity 자체 행렬과 조상 변환을 누적한 Scene 행렬을 저장할 공간을 미리 붙인다.
         .set<TransformMatrix, Local>(
             TransformMatrix{})
 
@@ -58,7 +58,7 @@ flecs::entity Scene::GetSceneRoot() const
 
 void Scene::InitRoot()
 {
-    // root는 계층 경계다. Local TRS 없이 자손의 기준 World 행렬을 둔다.
+    // root는 Scene 소속 자손을 묶는 부모다. 자체 위치·회전·크기(Local TRS)는 없고, 자손이 누적 변환을 시작할 항등 Scene 행렬만 가진다.
     m_SceneRoot =
         m_World.entity("SceneRoot").add<SceneRootTag>();
 }
@@ -72,7 +72,7 @@ void Scene::CleanupRoot()
     }
 
 
-    // Flecs가 ChildOf 자손과 Component를 함께 제거한다. 외부 handle은 무효가 된다.
+    // Flecs는 ChildOf 관계로 연결된 모든 자손 Entity와 Component를 함께 제거한다. 이 계층을 가리키던 외부 handle도 더는 유효하지 않다.
     m_SceneRoot.destruct();
 
     m_SceneRoot =

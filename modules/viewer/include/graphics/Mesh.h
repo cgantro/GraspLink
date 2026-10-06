@@ -12,33 +12,28 @@ class VertexBuffer;
 class IndexBuffer;
 
 /**
- * @brief 정점 속성과 삼각형 연결 정보를 GPU에 올려 그리기에 제공한다.
+ * @brief Mesh는 삼각형 모델의 꼭짓점 자료와 삼각형마다 이을 꼭짓점 번호를 GPU에 올려 그릴 형상을 만든다.
  * @details
- * 정점은 위치만 있는 점이 아니라 법선과 UV 같은 표면 속성도 함께 가진다. 이 Mesh는 Vertex 구조체를
- * 정점마다 연속 저장하는 배치를 사용한다. VertexArray는 각 attribute의 위치·크기·byte 간격을 기억하고,
- * VertexBuffer는 위치/법선/UV 값을 보관하며, IndexBuffer는 어떤 정점 세 개가 삼각형 하나를 이룰지
- * 번호로 보관한다. index 배열은 정점을 재사용해 저장량을 줄이고, 면마다 법선이나 UV가 달라야 할 때는
- * 정점을 나누어 저장한다. 현재 Shader에서 위치는 모델 변환으로 World 좌표가 되고, 법선은 조명 방향과
- * 비교되어 표면 밝기에 영향을 주며, UV는 Base Color texture를 읽는 위치가 된다. 이 타입은 CPU 배열을
- * 생성 중 GPU buffer에 복사하므로 업로드 뒤 원본 배열의 수명과 독립적이다. GPU 자원을 파괴하는 마지막
- * 참조의 해제 시점에는 해당 OpenGL context가 현재 스레드에서 유효해야 한다.
- * Vertex에는 tangent도 있지만 현재 attribute 설정과 Shader 입력에 연결하지 않아 그 값은 렌더링에
- * 쓰이지 않는다. 따라서 현재 경로는 tangent 기반 normal mapping을 수행하지 않는다.
+ * Vertex(정점)는 삼각형 한 모서리의 위치와 표면 방향, 색상 Texture(표면 이미지)에서 읽을 좌표를 담은 자료다. Mesh는 여러 정점을 연속된 Vertex 구조체 배열로 저장한다.
+ * VertexArray Object(VAO)는 각 속성의 byte 형식과 정점 사이 간격을 기억한다. VertexBuffer Object(VBO)는 위치·방향·이미지 좌표의 실제 byte를 GPU에 보관한다.
+ * IndexBuffer는 삼각형마다 연결할 정점 번호를 보관한다. 세 번호가 삼각형 하나를 만들고 여러 삼각형이 같은 정점을 함께 쓸 수 있어 저장량이 줄어든다.
+ * 인접 면이 서로 다른 표면 방향이나 이미지 좌표를 가져야 하면 같은 위치라도 정점을 따로 저장한다. Shader는 정점을 장면 좌표로 바꾸고 표면 방향으로 빛을 계산하며 이미지 좌표로 기본색을 읽는다.
+ * 생성 중 CPU 배열을 GPU로 복사하므로 그 뒤 원본을 해제해도 된다. GPU 자원을 만들거나 마지막으로 해제할 때 GPU 명령 실행 환경(context)이 현재 스레드에서 활성화되어 있어야 한다.
+ * tangent는 표면을 따라가는 방향이지만 GPU 정점 형식과 Shader에 연결하지 않는다. 따라서 표면 이미지로 울퉁불퉁한 요철을 표현하는 normal mapping은 현재 없다.
  */
 class Mesh final
 {
 public:
     /**
-     * @brief CPU 정점·index 배열을 GPU에 복사하고 정점 입력 형식을 설정한다.
+     * @brief CPU 꼭짓점과 연결 번호를 GPU에 복사하고 각 값의 읽는 방법을 설정한다.
      * @param vertices Vertex 배열 주소. 생성 중 복사하므로 호출자가 이후에도 보관할 필요는 없다.
      * @param vertexCount vertices의 Vertex 원소 개수이며 byte 수가 아니다.
      * @param indices 삼각형을 구성하는 정점 번호 배열 주소.
      * @param indexCount indices의 uint32 원소 개수이며 byte 수가 아니다.
      * @throws std::invalid_argument 배열 주소가 null이거나 해당 원소 개수가 0인 경우.
      * @throws std::runtime_error 정점 배열의 byte 크기가 VertexBuffer가 받는 범위를 넘는 경우.
-     * @details 각 index 값은 vertices 안의 유효한 정점 번호여야 한다. 렌더러는 draw 시작 위치도 index
-     * 원소 단위로 받으며, glDrawElements에는 uint32 원소 크기를 곱한 byte offset을 전달한다. 이 생성자는
-     * 개별 index 범위나 삼각형을 이루는 개수인지를 검사하지 않으므로 호출자가 올바른 데이터를 제공해야 한다.
+     * @details 각 연결 번호는 vertices 배열 안의 꼭짓점 번호여야 한다. 그리기 시작 위치는 번호 개수로 지정하지만 GPU에는 번호 하나의 byte 크기(4 byte)를 곱한 주소를 전달한다.
+     * 이 생성자는 번호가 유효한지, 번호 개수가 삼각형을 이루도록 3의 배수인지 검사하지 않으므로 호출자가 맞는 배열을 제공해야 한다.
      */
     Mesh(
         const Vertex* vertices,
@@ -46,27 +41,27 @@ public:
         const std::uint32_t* indices,
         std::uint32_t indexCount);
 
-    /** @brief 소유한 OpenGL 객체를 해제한다. 해당 객체를 만든 유효한 GL context가 필요하다. */
+    /** @brief 소유한 GPU 형상 데이터를 해제한다. 현재 스레드에서 OpenGL 실행 환경(context)이 활성화되어야 한다. */
     ~Mesh();
 
     Mesh(const Mesh&) = delete;
     Mesh& operator=(const Mesh&) = delete;
 
     /**
-     * @brief 이 Mesh의 VAO를 연결해 다음 draw가 사용할 정점 형식과 EBO를 선택한다.
-     * @details VAO는 데이터 자체가 아니라 attribute의 읽는 법과 EBO 연결을 기억한다. 호출자는 draw 뒤
-     * UnBind를 호출해 현재 VAO를 해제해야 한다.
+     * @brief 이 Mesh의 VAO와 삼각형 연결 번호가 든 EBO를 현재 그리기 설정으로 선택한다.
+     * @details VAO는 정점 위치·법선·이미지 좌표를 어디서 어떻게 읽을지 기억하는 객체다. EBO는 삼각형을 이룰 정점 번호를 저장한다.
+     * 그리기가 끝나면 UnBind로 현재 선택을 해제한다. GPU 배열은 남아 다음 그리기에서 다시 쓴다.
      */
     void Bind() const;
 
-    /** @brief 현재 VAO를 해제한다. */
+    /** @brief 현재 선택된 정점 읽기 설정을 해제한다. GPU 데이터는 유지된다. */
     void UnBind() const;
 
-    /** @brief EBO에 저장된 index 원소 개수를 반환한다. 단위: index 개수. */
+    /** @brief GPU의 연결 번호 배열에 저장된 꼭짓점 번호 개수를 반환한다. */
     std::uint32_t GetIndexCount() const;
 
     /**
-     * @brief Local 원점 중심의 정육면체 Mesh를 만든다.
+     * @brief Mesh 기준 좌표의 (0,0,0)을 중심으로 정육면체를 만든다.
      * @param sideLengthMeters 한 변 길이 [m]. 유한한 양수여야 한다.
      * @return 각 면의 법선과 UV 경계를 유지하도록 면마다 정점을 나눈 Mesh. 삼각형은 12개다.
      * @throws std::invalid_argument 변 길이가 유한하지 않거나 0 이하인 경우.
@@ -74,12 +69,12 @@ public:
     static std::unique_ptr<Mesh> CreateCube(float sideLengthMeters = 1.0F);
 
 private:
-    // VAO는 location별 형식과 EBO 연결을 저장하며, 실제 정점과 index 데이터는 아래 buffer가 가진다.
+    // 화면 그리기 때 읽을 속성 형식과 꼭짓점 연결 번호 배열을 기억한다. 실제 데이터는 아래 GPU 배열에 있다.
     std::unique_ptr<VertexArray> vertexArray_;
 
-    // VBO에는 Vertex 배열의 연속된 byte가 들어간다. attribute stride는 이 구조체 크기다.
+    // 정점 구조체의 byte 복사본을 GPU에 둔다. 다음 정점까지의 간격은 Vertex 구조체 크기다.
     std::unique_ptr<VertexBuffer> vertexBuffer_;
 
-    // EBO에는 uint32 정점 번호가 들어가며 draw 시 GL_TRIANGLES가 세 번호씩 삼각형으로 읽는다.
+    // GPU에는 32-bit 꼭짓점 번호가 있다. 그리기 명령은 번호 세 개씩 묶어 삼각형을 만든다.
     std::unique_ptr<IndexBuffer> indexBuffer_;
 };

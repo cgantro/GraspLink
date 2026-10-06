@@ -28,7 +28,7 @@ Colliders ConfiguredShapes()
     grasplink::physics::CollisionShapeDescription hull;
     hull.type = grasplink::physics::CollisionShapeType::ConvexHull;
     hull.localTransform.position = {1.1F, 0.0F, 0.0F};
-    // 세 축에 두께가 있는 8개 꼭짓점 [m]. 투영된 외곽선도 화면 안에서 확인할 수 있게 배치한다.
+    // 세 방향 모두 두께가 있는 상자의 여덟 꼭짓점을 [m] 단위로 지정한다. 카메라에 투영한 외곽선이 화면 안에 나타나도록 위치시킨다.
     for (int corner = 0; corner < 8; ++corner)
         hull.pointsMeters.push_back({(corner & 1) ? 0.25F : -0.25F,
             (corner & 2) ? 0.25F : -0.25F, (corner & 4) ? 0.25F : -0.25F});
@@ -50,10 +50,10 @@ void RequireControllerUnchanged(const GripperState& actual, const GripperState& 
 }
 
 /**
- * @brief 숨김 OpenGL 창에서 분리된 GUI 수명·패널·Collider 투영을 함께 검증한다.
- * @details 전경 draw list의 정점을 검사해 선 표시·숨김과 Scene 교체 후 캐시 갱신을 확인한다.
- * 패널을 읽기만 하는 프레임은 Controller 명령이나 시간 진행을 만들지 않아야 한다.
- * Window는 GUI보다, Flecs World는 SceneManager와 Overlay보다 오래 살아 있도록 선언한다.
+ * @brief 화면 뒤에서 실행한 GUI 프레임에서도 패널 입력과 충돌 모양 선이 기대대로 처리되는지 확인한다.
+ * @details draw list는 ImGui가 현재 프레임에 화면에 그릴 점과 선을 담는 목록이다. 이 시험은 ColliderOverlay가 그리는 선을 검사해 표시·숨김과 Scene 교체 뒤 새 물체를 다시 읽는 동작을 확인한다.
+ * 그리퍼 상태를 읽기만 한 프레임은 Controller 명령이나 시뮬레이션 시간 진행을 만들지 않아야 한다.
+ * Window는 GUI 연결보다 오래 살아야 하고 Flecs World는 SceneManager와 Overlay보다 오래 살아야 한다.
  */
 int main()
 {
@@ -79,7 +79,7 @@ int main()
 
         Camera camera({0.0F, 2.0F, 5.0F}, {0.0F, 0.0F, 0.0F}, 960.0F / 720.0F);
         grasplink::gui::GuiModule gui(window);
-        // 테스트가 실행 위치의 사용자 ImGui 배치를 읽거나 저장하지 않게 한다.
+        // 테스트 실행 위치에 사용자의 ImGui 설정 파일을 읽거나 기록하지 않도록 임시 설정 경로를 사용한다.
         ImGui::GetIO().IniFilename = nullptr;
         grasplink::gui::GripperPanel gripperPanel;
         grasplink::gui::PhysicsDebugPanel physicsPanel;
@@ -102,7 +102,7 @@ int main()
             gripperPanel.Draw(controller);
             physicsPanel.Draw();
             overlay.Draw(camera, visible);
-            // 패널은 각 창의 draw list를 쓴다. 전경 정점은 Overlay 선에서만 생성된다.
+            // 일반 패널은 각 창 안에 그려진다. ColliderOverlay의 선은 물체에 가려지지 않도록 화면 맨 앞의 별도 목록에만 추가한다.
             const int foregroundVertices = ImGui::GetForegroundDrawList()->VtxBuffer.Size;
             (void)gui.WantsMouse();
             (void)gui.WantsKeyboard();
@@ -113,7 +113,7 @@ int main()
         };
 
         Require(drawFrame(true) > 0, "configured shapes generate foreground wire lines");
-        // 형상별로 캐시를 비우고 다시 표시해 네 투영 경로가 각각 선을 만드는지 확인한다.
+        // 충돌 선은 성능을 위해 잠시 저장해 둔다. 표시를 껐다가 다시 켜면 옛 선이 남지 않고 상자·원기둥·구·볼록 껍질이 각각 새 선을 만드는지 확인한다.
         for (const auto& shape : ConfiguredShapes().shapes)
         {
             collider.set(Colliders{{shape}});
@@ -125,7 +125,7 @@ int main()
         scenes.OnUpdate(0.0F);
         TransformSystemModule::UpdateWorldTransforms(world);
         Require(!collider.IsValid(), "scene replacement removes the configured collider");
-        // 숨김→표시 전환은 100 ms를 기다리지 않고 새 Scene의 빈 query로 캐시를 갱신해야 한다.
+        // 숨김 상태에서 Scene을 바꾸면 이전 물체의 선 자료를 버려야 한다. 다시 켤 때는 100 ms 주기를 기다리지 않고 새 Scene의 충돌 설정을 읽어 선을 만든다.
         Require(drawFrame(false) == 0, "replacement scene hidden frame remains empty");
         Require(drawFrame(true) == 0, "replacement scene does not draw stale collider lines");
         std::cout << "GUI composition, collider visibility and scene replacement checks passed\n";

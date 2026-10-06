@@ -60,7 +60,7 @@ void ValidateLocalTransform(const Entity& entity)
     const glm::vec3 scale = entity.GetLocalScale();
     if (!IsFinite(position) || !IsFinite(rotation) || !IsFinite(scale))
         throw std::invalid_argument("GripperTransformAdapter: non-finite bind transform");
-    // 직접 ECS 접근으로 영 quaternion이 들어온 계층도 bind 연결 시 거부한다.
+    // 일반 setter를 거치지 않고 ECS에서 직접 기록한 값도 검사한다. 영 quaternion은 방향을 나타낼 수 없으므로 bind 계층 연결을 거부한다.
     (void)Rotation{rotation};
     if (!IsUnitScale(scale))
         throw std::invalid_argument("GripperTransformAdapter: gripper hierarchy requires unit scale");
@@ -96,7 +96,7 @@ GripperTransformAdapter::GripperTransformAdapter(
 
     ValidateLocalTransform(gripperRoot_);
 
-    // 사양에 적힌 이름만 모은다. 그 외 authored mesh/link node는 원본 변환을 그대로 유지한다.
+    // 모델 사양에 있는 관절 이름만 검색 대상으로 삼는다. 메시와 link처럼 관절이 아닌 authored node는 저장된 변환을 그대로 유지한다.
     std::unordered_set<std::string> wantedNames;
     wantedNames.reserve(specification.jointCount);
     for (std::size_t i = 0; i < specification.jointCount; ++i)
@@ -140,7 +140,7 @@ GripperTransformAdapter::GripperTransformAdapter(
         if (binding.ancestry.empty() || binding.ancestry.back() != gripperRoot_)
             throw std::runtime_error("GripperTransformAdapter: joint is outside the Gripper root: " + name);
 
-        // Node 22 Gripper의 non-identity matrix는 root Local TRS에 남긴다. 관절 bind 회전만 별도로 저장한다.
+        // 이 GLB에서는 Node 22 Gripper에 비항등 장착 변환이 있으므로 이를 root의 Local TRS에 둔다. 관절별 bind 회전만 따로 저장해 개폐 delta와 합성한다.
         const glm::dquat rawBindRotation{binding.entity.GetLocalRotation()};
         const double rawBindLengthSquared = glm::dot(rawBindRotation, rawBindRotation);
         if (!std::isfinite(rawBindLengthSquared) || rawBindLengthSquared <= 0.0)
@@ -165,7 +165,7 @@ void GripperTransformAdapter::Apply(
     if (!gripperRoot_.IsValid())
         throw std::runtime_error("GripperTransformAdapter: Gripper Scene has been removed");
 
-    // 먼저 모든 handle과 부모 경로를 확인한다. 한 관절만 재부모화된 상태에서 일부 pose를 쓰지 않는다.
+    // 먼저 모든 관절 handle과 생성 시 저장한 부모 경로가 유지되는지 확인한다. 하나라도 재부모화되었으면 일부 관절에만 새 자세를 쓰지 않고 전체 적용을 중단한다.
     for (const JointBinding& binding : joints_)
         if (!IsSameHierarchy(binding.entity, binding.ancestry))
             throw std::runtime_error("GripperTransformAdapter: Gripper hierarchy changed or was removed");
@@ -181,13 +181,13 @@ void GripperTransformAdapter::Apply(
             throw std::invalid_argument("GripperTransformAdapter: zero or invalid delta rotation");
         const glm::dquat delta = glm::normalize(rawDelta);
 
-        // local pose = authored bind * joint-local delta. 곱의 오른쪽에 delta를 둬 bind 기준 축을 따른다.
+        // 최종 Local 회전은 GLB에 저장된 bind 회전에 관절 Local delta를 오른쪽으로 곱한 값이다. 이 순서는 delta 축을 bind 기준으로 해석한다.
         const glm::dquat bind = glm::normalize(ToDoubleQuaternion(joints_[i].bindRotation));
         const glm::dquat result = glm::normalize(bind * delta);
         preparedRotations_[i] = Rotation{glm::quat{result}};
     }
 
-    // quaternion 검증·정규화를 모두 마친 후 Local 회전만 쓴다. Euler 변환 경계를 만들지 않는다.
+    // 모든 quaternion을 먼저 검증하고 정규화한 뒤에야 관절 Local 회전을 쓴다. Euler 각으로 바꾸지 않아 중간 변환에서 생길 수 있는 특이점도 피한다.
     for (std::size_t i = 0; i < joints_.size(); ++i)
         joints_[i].entity.SetLocalRotation(preparedRotations_[i]);
 }

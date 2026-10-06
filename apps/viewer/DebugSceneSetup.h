@@ -16,26 +16,26 @@ struct RobotSpecification;
 }
 }
 
-/** @brief physicsDemo 옵션이 켜졌을 때만 사용하는 시각/물리 데모 구성 함수. */
+/** @brief Viewer의 physicsDemo 실행에서만 사용하는 화면 및 물리 시험 장면 구성 함수다. */
 namespace viewer_debug
 {
 /**
- * @brief 활성 Scene에 낙하 확인용 Dynamic Box 50개를 만든다.
- * @param scene Entity와 ECS Collider 설정을 소유하는 활성 Scene.
- * @param shader Box가 공유할 렌더 Shader.
- * @details Mesh와 Material은 모든 Box가 공유한다. ECS에 RigidBody/Colliders 설정을 붙이며 실제 Jolt
- * Body 생성과 계산 결과의 Entity 반영은 PhysicsSystemModule이 담당한다.
- * @throws std::runtime_error shader가 비어 있는 경우.
+ * @brief 활성 Scene에 중력으로 떨어지는 동작을 보기 위한 움직이는 Box 50개를 만든다.
+ * @param scene Entity와 ECS 충돌 설정을 저장하는 활성 Scene.
+ * @param shader 모든 Box가 화면에 그려질 때 공유하는 Shader.
+ * @details 모든 상자는 같은 GPU 모양과 표면 설정을 공유한다. 여기서는 Flecs에 움직임 종류와 상자 충돌 모양을 저장한다.
+ * PhysicsSystemModule이 그 설정에서 Jolt 물체를 만들고 중력·충돌 계산 뒤 나온 위치를 장면 물체에 반영한다.
+ * @throws std::runtime_error 화면에 Box를 그릴 Shader가 비어 있는 경우.
  */
 void CreatePhysicsBoxes(Scene& scene, const std::shared_ptr<Shader>& shader);
 
 /**
- * @brief 첫 관절만 30°로 움직이는 데모 명령을 제출한다.
- * @param controller 명령을 받을 Controller.
- * @param specification 관절 수를 확인하는 로봇 사양.
- * @return Controller의 MoveJoint 명령 수락 결과.
- * @details 나머지 목표각은 0 rad, 속도/가속도 배율은 1이다. 이 함수는 명령만 제출하며 실제 움직임은
- * 이후 Fixed Update에서 진행된다.
+ * @brief 로봇 첫 관절을 30°로 이동시키는 Controller 명령을 제출한다.
+ * @param controller 목표 자세를 받을 로봇 Controller.
+ * @param specification 목표 배열 크기에 사용할 관절 수를 제공하는 모델 사양.
+ * @return Controller가 이동 명령을 받아들였는지 나타내는 결과.
+ * @details 첫 관절 외의 목표각은 모두 0 rad이고 속도·가속도 배율은 1이다. 이 함수는 목표만 제출한다.
+ * Controller가 이후 매 고정 시간 간격에서 실제 관절 회전을 갱신한다.
  */
 grasplink::robotics::Result StartRobotMotion(grasplink::robotics::IRobotController& controller,
     const grasplink::robotics::models::RobotSpecification& specification);

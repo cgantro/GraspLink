@@ -8,20 +8,18 @@ namespace grasplink::gui
 {
 
 /**
- * @brief Gripper 조작 요청과 Controller 상태를 ImGui 패널로 표시한다.
- * @details 요청 개폐율·속도 입력과 마지막 명령 결과만 보관한다. Controller는 Draw 동안만 빌리며
- * 저장하거나 소유하지 않는다. GUI 입력은 Controller 명령으로 전달하고 실제 움직임과 상태 갱신은
- * Controller가 담당한다. raw 요청값은 장치 code이며 거리·속도·힘의 물리 단위가 아니다.
+ * @brief 그리퍼를 얼마나 열거나 닫을지 조작하고 Controller가 보고한 상태를 보여준다.
+ * @details 패널은 요청한 개폐 비율과 속도, 마지막 명령의 성공 여부만 저장한다. Controller는 Draw()가 실행되는 동안만 빌려 쓰며 패널이 소유하지 않는다.
+ * GUI 조작은 Controller에 명령으로 전달되고 실제 손가락 이동과 상태 변경은 Controller가 수행한다. raw 요청값은 장치가 쓰는 정수 명령 코드이므로 거리·속도·힘의 물리 단위가 아니다.
  */
 class GripperPanel
 {
 public:
     /**
-     * @brief 이번 프레임의 Gripper 입력을 받아 명령을 요청하고 상태를 표시한다.
-     * @param gripper 이번 호출에 사용할 Controller. 포인터나 참조를 멤버에 저장하지 않는다.
-     * @details GuiModule::BeginFrame과 EndFrame 사이에 호출한다. 연속 closureFraction은
-     * 유효한 [0,1] 값일 때 백분율로 표시한다. 자유공간 동작만 제공하며 접촉 정지·adaptive grasp는
-     * 지원하지 않는다는 기존 안내를 유지한다.
+     * @brief 현재 프레임의 사용자 입력을 Controller 명령으로 보내고 상태를 화면에 그린다.
+     * @param gripper 이번 호출 중에만 사용하는 Controller 참조. 패널은 이 참조를 저장하지 않는다.
+     * @details GuiModule::BeginFrame()과 EndFrame() 사이에 호출한다. Controller의 개폐 비율이 0에서 1 사이이면 백분율로 보여 준다.
+     * 현재는 물체에 닿지 않은 상태에서 여닫기만 지원하며, 접촉 시 멈추거나 물체 모양에 맞춰 잡는 동작은 지원하지 않는다고 안내한다.
      */
     void Draw(::grasplink::robotics::IGripperController& gripper);
 

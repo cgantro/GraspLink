@@ -19,7 +19,7 @@ namespace grasplink::gui
 {
 namespace
 {
-/** @brief World 형상을 투영한 화면 픽셀 선과 layer 색을 저장한다. */
+/** @brief Scene 좌표의 Collider 형상을 화면에 그릴 두 픽셀 점과 충돌 그룹 색을 저장한다. */
 struct ScreenLine
 {
     ImVec2 from;
@@ -27,31 +27,31 @@ struct ScreenLine
     ImU32 color = IM_COL32_WHITE;
 };
 
-/** @brief 설정 Shape의 Body-local 위치·회전을 행렬로 바꾼다. 크기는 Shape 치수 [m]에서 읽는다. */
+/** @brief Body 원점에서 측정한 설정 Shape의 위치와 회전을 행렬로 바꾼다. 형상의 크기는 별도의 Shape 치수 [m]에서 읽는다. */
 glm::mat4 LocalShapeMatrix(const grasplink::physics::Transform& transform)
 {
     return glm::translate(glm::mat4{1.0F}, transform.position) *
         glm::mat4_cast(glm::normalize(transform.rotation));
 }
 
-/** @brief World 점을 ImGui 화면 픽셀로 투영하고 Camera 뒤의 점은 제외한다. */
+/** @brief Scene 좌표의 점을 ImGui 화면 픽셀로 옮기고 카메라 뒤에 있는 점은 그릴 수 없어 제외한다. */
 bool Project(const glm::vec3& position, const glm::mat4& viewProjection,
     const ImVec2& displaySize, ImVec2& result)
 {
     const glm::vec4 clip = viewProjection * glm::vec4{position, 1.0F};
-    // Camera 뒤나 투영 분모가 너무 작은 점을 거른다. near plane과 교차하는 선은 자르지 않는다.
-    // 경계 부근에서는 일부 선이 생략되거나 화면 밖으로 크게 늘어날 수 있다.
+    // clip.w가 0에 가깝거나 음수면 화면 좌표로 안정적으로 바꿀 수 없으므로 제외한다. 가까운 평면(near plane)을 가로지르는 선 자체는 잘라내지 않는다.
+    // 따라서 이 경계 주변의 선 일부는 생략되거나 화면 바깥으로 길게 늘어날 수 있다.
     if (clip.w <= 0.001F)
         return false;
 
-    // Clip 좌표를 w로 나눠 NDC [-1,1]로 바꾸고 y축을 뒤집어 ImGui 화면 픽셀로 옮긴다.
+    // 원근 나눗셈으로 clip 좌표를 정규화 장치 좌표(NDC, 축별 -1..1)로 바꾼다. ImGui 화면은 y가 아래로 증가하므로 y축 방향을 뒤집어 픽셀 좌표로 변환한다.
     const glm::vec3 ndc = glm::vec3{clip} / clip.w;
     result = {((ndc.x + 1.0F) * 0.5F) * displaySize.x,
         ((1.0F - ndc.y) * 0.5F) * displaySize.y};
     return true;
 }
 
-/** @brief Shape-local 선의 두 끝점을 World로 옮겨 화면 선 캐시에 넣는다. */
+/** @brief Shape 자체 좌표로 주어진 선의 양 끝점을 Scene 좌표와 화면 픽셀로 변환해 캐시에 추가한다. */
 void DrawLine(std::vector<ScreenLine>& lines, const glm::vec3& from, const glm::vec3& to,
     const glm::mat4& shapeWorld, const glm::mat4& viewProjection,
     const ImVec2& displaySize, ImU32 color)
@@ -65,12 +65,12 @@ void DrawLine(std::vector<ScreenLine>& lines, const glm::vec3& from, const glm::
         lines.push_back({screenFrom, screenTo, color});
 }
 
-/** @brief 설정 Box의 12개 모서리를 화면 선으로 만든다. */
+/** @brief ECS에 설정한 Box의 여덟 꼭짓점을 만들고 열두 모서리를 화면 선으로 그린다. */
 void DrawBox(std::vector<ScreenLine>& lines, const grasplink::physics::CollisionShapeDescription& shape,
     const glm::mat4& entityWorld, const glm::mat4& viewProjection,
     const ImVec2& displaySize, ImU32 color)
 {
-    // 설정된 반쪽 크기로 8 꼭짓점을 만들고 12개 모서리를 World→ViewProjection→화면으로 변환한다.
+    // 중심에서 각 축으로 뻗는 반쪽 크기로 여덟 꼭짓점을 만든다. 각 모서리는 Entity와 Shape 변환, 카메라 투영을 거쳐 화면 선이 된다.
     const glm::mat4 world = entityWorld * LocalShapeMatrix(shape.localTransform);
     std::array<glm::vec3, 8> corners;
     for (unsigned int i = 0; i < corners.size(); ++i)
@@ -86,13 +86,13 @@ void DrawBox(std::vector<ScreenLine>& lines, const grasplink::physics::Collision
                     viewProjection, displaySize, color);
 }
 
-/** @brief Local Y축 Cylinder의 위·아래 원과 세로선을 화면에 투영한다. */
+/** @brief 높이 축이 Shape의 Y축인 Cylinder를 위·아래 원과 세로 선분으로 근사해 화면에 투영한다. */
 void DrawCylinder(std::vector<ScreenLine>& lines, const grasplink::physics::CollisionShapeDescription& shape,
     const glm::mat4& entityWorld, const glm::mat4& viewProjection,
     const ImVec2& displaySize, ImU32 color)
 {
     constexpr int Segments = 24;
-    // Cylinder 축은 Local Y. 위·아래 원과 일정 간격의 세로 모서리로 원통을 선 근사한다.
+    // 설정된 원통의 축은 Shape의 Y축이다. 위·아래 원 둘레와 일정 간격의 세로 선을 이어 원통의 외곽을 보여 준다.
     const glm::mat4 world = entityWorld * LocalShapeMatrix(shape.localTransform);
     for (int i = 0; i < Segments; ++i)
     {
@@ -111,13 +111,13 @@ void DrawCylinder(std::vector<ScreenLine>& lines, const grasplink::physics::Coll
     }
 }
 
-/** @brief 설정 Sphere를 직교하는 세 원으로 근사해 화면에 투영한다. */
+/** @brief Sphere의 설정 반지름을 서로 직각인 세 원으로 표현해 화면에 투영한다. */
 void DrawSphere(std::vector<ScreenLine>& lines, const grasplink::physics::CollisionShapeDescription& shape,
     const glm::mat4& entityWorld, const glm::mat4& viewProjection,
     const ImVec2& displaySize, ImU32 color)
 {
     constexpr int Segments = 24;
-    // 서로 직교하는 세 원으로 구의 설정 반지름을 읽기 쉽게 표시한다.
+    // 세 원은 각기 다른 평면에 놓이며 구의 설정 반지름을 알아보기 쉽게 보여 주는 2D 근사다.
     const glm::mat4 world = entityWorld * LocalShapeMatrix(shape.localTransform);
     for (int plane = 0; plane < 3; ++plane)
     {
@@ -142,7 +142,7 @@ void DrawSphere(std::vector<ScreenLine>& lines, const grasplink::physics::Collis
     }
 }
 
-/** @brief Hull 설정 정점의 투영 윤곽을 만든다. 실제 3D hull 모서리는 조회하지 않는다. */
+/** @brief Hull에 입력된 정점을 화면에 투영한 다음 2D 바깥 윤곽선을 만든다. 실제 3D 면이나 모서리 정보는 사용하지 않는다. */
 void DrawConvexHull(std::vector<ScreenLine>& lines, const grasplink::physics::CollisionShapeDescription& shape,
     const glm::mat4& entityWorld, const glm::mat4& viewProjection,
     const ImVec2& displaySize, ImU32 color)
@@ -158,7 +158,7 @@ void DrawConvexHull(std::vector<ScreenLine>& lines, const grasplink::physics::Co
     }
     if (points.size() < 3) return;
 
-    // 투영된 점의 2D 바깥 윤곽을 연결한다. 실제 3D convex hull의 모서리를 복원하지 않는다.
+    // 투영된 점들을 둘러싸는 2D 볼록 윤곽을 연결한다. 이는 카메라 화면에서의 외곽선이며 3D 볼록 껍질의 실제 모서리를 복원하지 않는다.
     std::sort(points.begin(), points.end(), [](const ImVec2& a, const ImVec2& b)
         { return a.x == b.x ? a.y < b.y : a.x < b.x; });
     auto cross = [](const ImVec2& a, const ImVec2& b, const ImVec2& c)
@@ -183,7 +183,7 @@ void DrawConvexHull(std::vector<ScreenLine>& lines, const grasplink::physics::Co
         lines.push_back({hull[i], hull[(i + 1) % hull.size()], color});
 }
 
-/** @brief 패널 범례와 같은 Collision layer 색을 반환한다. */
+/** @brief PhysicsDebugPanel의 범례와 같은 색을 충돌 그룹마다 선택한다. */
 ImU32 LayerColor(grasplink::physics::CollisionLayer layer)
 {
     switch (layer)
@@ -201,10 +201,10 @@ glm::mat4 AsMatrix(const TransformMatrix& matrix)
     return static_cast<const glm::mat4&>(matrix);
 }
 
-/** @brief Entity World 행렬에서 Physics Body 원점의 위치·회전만 추출한다. */
+/** @brief Entity의 누적 World 행렬에서 물리 Body 원점의 Scene 위치와 회전만 추출한다. */
 glm::mat4 PhysicsTransform(const glm::mat4& world)
 {
-    // Body pose처럼 위치·회전만 사용한다. Collider 크기는 설정된 [m] 값이며 Entity scale은 적용하지 않는다.
+    // 물리 Body 변환에는 위치와 회전만 반영한다. Collider 치수는 이미 [m]로 설정되어 있어 Entity 계층의 크기 배율은 적용하지 않는다.
     glm::vec3 scale{1.0F};
     glm::quat rotation{1.0F, 0.0F, 0.0F, 0.0F};
     glm::vec3 position{0.0F};
@@ -218,7 +218,7 @@ glm::mat4 PhysicsTransform(const glm::mat4& world)
 
 struct ColliderOverlay::Impl
 {
-    // ECS 설정 Collider와 최신 World 행렬을 읽는다. Jolt가 실제 생성한 Shape의 변형/축약 결과는 조회하지 않는다.
+    // ECS에 지정된 Collider 형상과 최신 World 행렬을 읽어 선을 만든다. Jolt가 내부에서 최적화하거나 바꾼 실제 충돌 형상은 읽지 않는다.
     flecs::query<const RigidBody, const Colliders, const TransformMatrix> colliderQuery;
     std::vector<ScreenLine> collisionLines;
     std::chrono::steady_clock::time_point nextCollisionRefresh{};
@@ -244,8 +244,8 @@ struct ColliderOverlay::Impl
                 cachedDisplaySize = displaySize;
                 nextCollisionRefresh = now + std::chrono::milliseconds(100);
             }
-            // Screen 좌표를 캐시하므로 Camera 이동도 다음 갱신까지 이전 투영을 쓴다.
-            // Foreground draw list는 깊이 버퍼를 검사하지 않아 가려진 Collider 선도 보인다.
+            // 픽셀 좌표를 캐시하므로 카메라가 움직여도 다음 갱신 전까지는 이전 위치의 선을 표시한다.
+            // 전경 draw list는 깊이 버퍼를 확인하지 않으므로 다른 물체 뒤에 가려진 Collider 선도 화면에 나타난다.
             ImDrawList* drawList = ImGui::GetForegroundDrawList();
             for (const ScreenLine& line : collisionLines)
                 drawList->AddLine(line.from, line.to, line.color, 1.5F);
@@ -260,7 +260,8 @@ struct ColliderOverlay::Impl
     void RefreshCollisionLines(const Camera& camera)
     {
         collisionLines.clear();
-        // Camera 투영 × View로 World 좌표를 clip 좌표로 보낸다. Entity scale은 PhysicsTransform에서 제외한다.
+        // View와 Projection 행렬을 차례로 적용해 Scene 좌표를 화면 투영 전 좌표로 옮긴다.
+        // PhysicsTransform에서 제외한 Entity 크기 배율은 이 선에도 적용하지 않는다.
         const glm::mat4 viewProjection = camera.GetProjectionMatrix() * camera.GetViewMatrix();
         const ImVec2 displaySize = ImGui::GetIO().DisplaySize;
         colliderQuery.each([&](flecs::entity, const RigidBody& rigidBody,

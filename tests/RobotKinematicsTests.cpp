@@ -19,7 +19,7 @@ void RequireToolPosition(
     const std::array<double, 3>& expectedMeters,
     const std::string& label)
 {
-    // jointRadians는 rad, expectedMeters는 로봇 Base 기준 m. 단일 관절 회전으로 축 부호와 링크 누적 순서를 확인한다.
+    // 입력 관절각은 rad, 기대 위치는 로봇 기준점(Base)에서 잰 m 단위다. 관절을 하나씩 회전시켜 축 방향의 부호와 링크 변환이 누적되는 순서를 확인한다.
     state.jointPositionRadians.assign(jointRadians.begin(), jointRadians.end());
     const auto& result = kinematics.Update(state);
     Require(result.toolFrameValid, label + ": ToolFrame should be valid");
@@ -66,13 +66,13 @@ int main()
             {0.0, 0.7915, 0.691}, "J5 positive quarter turn");
         RequireToolPosition(kinematics, state, {0, 0, 0, 0, 0, quarterTurn},
             {0.0, 1.015, 0.9145}, "J6 positive quarter turn");
-        // 기준값: 별도 3×3 축 회전 행렬로 구한 Base 기준 위치 [m]. 1e-9 m 비교는 이 계산 경로의 double 결과를 점검한다.
+        // 독립적으로 만든 3×3 축 회전 행렬로 로봇 기준 위치 [m]를 계산해 기대값으로 사용한다. 1e-9 m 오차는 double 정밀도 계산 결과가 바뀌었는지 확인한다.
         RequireToolPosition(kinematics, state, {0.45, -0.4, 0.3, 0.5, -0.2, 0.7},
             {0.26702766609490924, 1.0867538528236094, 0.60173049560973602}, "mixed pose");
 
         state.jointPositionRadians.assign(6, 0.0);
         const auto& zeroResult = kinematics.Update(state);
-        // 관절 피벗도 Base 기준 [m]. 1e-12는 같은 사양 상수를 쓰는 계산에서 피벗 누적 변경을 감지한다.
+        // 관절 회전 중심도 로봇 기준 [m] 좌표로 확인한다. 1e-12 허용 오차는 동일한 사양 상수로 계산할 때 피벗 위치 누적 순서가 바뀌는 회귀를 찾는다.
         RequireNear(zeroResult.linkPosesInBaseFrame.front().positionMeters.y, 0.1985, 1e-12,
             "first joint base-frame pivot");
         RequireNear(zeroResult.linkPosesInBaseFrame.back().positionMeters.z, 0.85475, 1e-12,

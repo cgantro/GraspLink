@@ -2,7 +2,7 @@
 #type vertex
 #version 330 core
 
-// 위치만 받는 바닥 mesh를 World 공간 기준 격자로 렌더링한다.
+// Mesh는 삼각형 정점과 연결 번호를 모은 형상이다. 이 바닥 Mesh는 위치만 받아 장면 전체 기준 격자로 그린다.
 
 layout(location = 0) in vec3 a_Position;
 
@@ -21,14 +21,14 @@ void main()
     v_WorldPosition = worldPosition.xyz;
     v_LightSpacePosition = u_LightSpaceMatrix * worldPosition;
 
-    // Grid 선은 World XZ에 고정하고, 표시는 Robot과 같은 camera → clip 경로를 따른다.
+    // 격자는 장면의 XZ 평면에 고정한다. 화면에 그릴 때는 Robot Mesh와 같은 카메라 변환을 거친다.
     gl_Position = u_Projection * u_View * worldPosition;
 }
 
 #type fragment
 #version 330 core
 
-// 보간된 World 위치에서 XZ 격자를 계산하고 Robot shader와 같은 광원 깊이 texture를 참조한다.
+// 삼각형 안에서 보간한 World 위치로 XZ 격자선을 만들고 광원 기준 투영 깊이를 저장한 그림자 이미지를 함께 읽는다.
 
 in vec3 v_WorldPosition;
 in vec4 v_LightSpacePosition;
@@ -41,8 +41,7 @@ float GridLine(vec2 position, float scale)
 {
     vec2 coord = position / scale;
 
-    // fract로 주기적인 셀 경계를 만든다. fwidth는 화면 한 pixel의 좌표 변화량이므로
-    // 이를 기준으로 선 경계를 부드럽게 계산해 원거리 격자의 aliasing을 줄인다.
+    // 반복되는 셀 경계에서 선을 만든다. fwidth는 화면 한 픽셀에 해당하는 좌표 변화를 알려주므로 그 크기에 맞춰 선 가장자리를 부드럽게 해 멀리 있는 격자가 깜빡이는 현상을 줄인다.
     vec2 derivative = fwidth(coord);
 
     vec2 grid =
@@ -56,7 +55,7 @@ float GridLine(vec2 position, float scale)
 
 float CalculateShadow(vec4 lightSpacePosition)
 {
-    // 광원 Clip 좌표를 w로 나눠 texture 좌표와 저장된 깊이의 0..1 범위에 맞춘다.
+    // 광원 기준 Clip 좌표를 w로 나누고 0~1 범위로 바꿔 그림자 이미지 위치와 투영 깊이로 사용한다. 실제 광원까지의 거리와는 다르다.
     vec3 projCoords = lightSpacePosition.xyz / lightSpacePosition.w;
 
     projCoords = projCoords * 0.5 + 0.5;
@@ -70,7 +69,7 @@ float CalculateShadow(vec4 lightSpacePosition)
 
     float currentDepth = projCoords.z;
 
-    // Grid는 법선을 입력받지 않으므로 Robot shader의 각도 의존 bias 대신 작은 고정 깊이 bias를 쓴다.
+    // 격자 정점에는 법선이 없어 각도별 보정을 할 수 없으므로 작은 고정 여유값으로 깊이 오차를 보정한다.
     float bias = 0.0003;
 
     vec2 texelSize = 1.0 / vec2(textureSize(u_ShadowMap, 0));
@@ -91,7 +90,7 @@ float CalculateShadow(vec4 lightSpacePosition)
         }
     }
 
-    // 5x5 PCF 표본의 가림 비율: 0=빛, 1=완전한 그림자.
+    // 주변 5×5 깊이 표본 중 가려진 비율이다. 0은 빛을 받음, 1은 완전히 가려짐이다.
     return shadow / 25.0;
 }
 
@@ -99,7 +98,7 @@ void main()
 {
     vec2 position = v_WorldPosition.xz;
 
-    // 좌표/단위: World XZ의 간격은 m 기준. 보조선은 0.10 m, 주선은 0.50 m마다 반복한다.
+    // 간격은 장면 좌표의 XZ 평면에서 재며 단위는 m다. 보조선은 0.10 m, 주선은 0.50 m마다 반복한다.
     float minor = GridLine(position, 0.10);
     float major = GridLine(position, 0.50);
 

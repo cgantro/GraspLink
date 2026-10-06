@@ -27,14 +27,15 @@ AssetManager::AssetManager()
 
 void AssetManager::UploadModel(ModelResource& model)
 {
-    // 각 단계는 뒤 단계의 ResourceID 참조를 해석할 수 있도록 순서대로 실행한다.
+    // 이미지, 재질, 형상 순서로 올린다. 뒤에 처리할 데이터가 앞서 만든 자원을 번호로 찾기 때문이다.
 
     for (const TextureData& textureData : model.textures)
     {
         if (textures_.find(textureData.uniqueID) != textures_.end()) continue;
         if (textureData.pixels.empty()) continue;
 
-        // 현재 runtime에서 색상 입력으로 쓰는 baseColor texture이므로 sRGB로 저장한다.
+        // 현재 업로드 경로는 모델의 모든 texture 항목을 sRGB 형식으로 만든다. 화면용 재질에는 기본색 이미지만 연결한다.
+        // 다른 종류의 이미지를 실제 재질 입력으로 연결하려면 용도에 맞는 색 공간 처리가 필요하다.
         auto texture = Texture::Create2D(
             textureData.width,
             textureData.height,
@@ -56,8 +57,7 @@ void AssetManager::UploadModel(ModelResource& model)
 
         if (materialData.baseColorTexture.IsValid())
         {
-            // 미지정 Material은 PrefabFactory가 기본 Material을 고른다. 지정 참조의 누락은
-            // 손상된 자산 연결이므로 기본 색으로 숨기지 않고 실패시킨다.
+            // 재질 번호 자체가 없는 표면은 PrefabFactory가 기본 Material을 선택한다. 여기서는 재질이 기본색 Texture를 지정했으므로 업로드 결과가 없으면 잘못된 참조로 처리한다.
             const auto textureIterator = textures_.find(materialData.baseColorTexture);
             if (textureIterator == textures_.end())
                 throw std::runtime_error("Base color texture was not uploaded");
@@ -82,7 +82,7 @@ void AssetManager::UploadModel(ModelResource& model)
         if (meshData.indices.empty())
             throw std::runtime_error("Cannot upload mesh without indices: " + meshData.name);
 
-        // Mesh/OpenGL draw count가 uint32_t 기반이므로 narrowing 전에 범위를 검증한다.
+        // GPU 그리기 API가 32-bit 원소 개수를 받으므로, 변환 과정에서 큰 값이 잘리지 않게 먼저 범위를 확인한다.
         if (meshData.vertices.size() > std::numeric_limits<std::uint32_t>::max())
             throw std::runtime_error("Mesh vertex count exceeds uint32_t range");
         if (meshData.indices.size() > std::numeric_limits<std::uint32_t>::max())
@@ -94,7 +94,7 @@ void AssetManager::UploadModel(ModelResource& model)
             meshData.indices.data(),
             static_cast<std::uint32_t>(meshData.indices.size()));
 
-        // ModelResource도 Mesh를 공유해 PrefabFactory가 Entity로 복사한 뒤에도 자원 수명을 잇는다.
+        // ModelResource도 GPU 형상을 공유한다. PrefabFactory가 같은 참조를 Entity에 복사해도 모델이 형상을 계속 보유한다.
         meshData.gpuMesh = gpuMesh;
         meshes_.emplace(meshData.uniqueID, std::move(gpuMesh));
     }
@@ -121,7 +121,7 @@ std::shared_ptr<Material> AssetManager::GetDefaultMaterial() const
 
 void AssetManager::Clear()
 {
-    // 캐시 소유권만 놓는다. ModelResource/Entity가 참조 중이면 GPU 객체는 그쪽 수명에 남는다.
+    // 이 캐시가 가진 참조만 놓는다. 모델이나 장면이 계속 사용 중인 GPU 객체는 그 참조가 사라질 때까지 유지된다.
     meshes_.clear();
     materials_.clear();
     textures_.clear();

@@ -30,7 +30,7 @@ void RequireMatrix(const glm::mat4& actual, const glm::mat4& expected, const std
 void RequireQuaternion(const glm::quat& actual, const glm::quat& expected, const std::string& label)
 {
     RequireNear(glm::length(actual), 1.0, kTolerance, label + " unit length");
-    // 같은 방향의 q와 -q를 모두 허용한다. 저장 부호보다 회전 방향을 검사한다.
+    // q와 -q는 성분 부호만 다르고 같은 공간 회전을 나타낸다. 저장된 부호가 아니라 실제 회전 방향이 같은지 확인한다.
     RequireNear(std::abs(glm::dot(actual, glm::normalize(expected))), 1.0, kTolerance,
         label + " orientation");
 }
@@ -67,7 +67,8 @@ void CheckDefaultsAndNormalization(Scene& scene)
     RequireQuaternionComponents(entity.GetLocalRotation(), kIdentity, "Scene rotation default");
 
     const glm::quat expected = glm::quat(glm::vec3{0.3F, -0.7F, 0.5F});
-    // 제곱합을 float로 바로 계산하면 overflow 또는 underflow가 생기는 입력도 같은 방향이어야 한다.
+    // 성분 제곱합을 float로 바로 구하면 큰 값은 overflow, 작은 값은 underflow할 수 있다.
+    // 그런 입력도 원래 방향을 유지한 길이 1의 quaternion으로 정규화되어야 한다.
     for (const float magnitude : {7.0F, 1.0e30F, 1.0e-30F})
     {
         const glm::quat input = expected * magnitude;
@@ -99,7 +100,7 @@ void CheckComposition()
     const glm::vec3 position{0.8F, -1.2F, 0.4F};
     const glm::vec3 scale{1.5F, 0.7F, 2.0F};
     const float halfPi = std::acos(-1.0F) * 0.5F;
-    // Euler의 pitch 특이 자세 양쪽에서도 quaternion이 나타내는 전체 방향을 그대로 행렬에 반영한다.
+    // Euler 각은 pitch가 특정 자세에 가까우면 축 표현이 불안정해질 수 있다. 그 양쪽 자세에서도 quaternion이 나타내는 회전을 행렬로 바꿀 때 방향이 유지되는지 확인한다.
     for (const float pitch : {halfPi - 1.0e-5F, halfPi, halfPi + 1.0e-5F})
     {
         const glm::quat rotation = glm::quat(glm::vec3{0.4F, pitch, -0.8F});
@@ -172,7 +173,8 @@ void CheckCorruptedComponent()
     const glm::mat4 localBefore = entity.GetHandle().get<TransformMatrix, Local>();
     for (const glm::quat& invalid : InvalidRotations())
     {
-        // mutable ECS 접근은 생성자 검증을 우회한다. 합성 단계가 거부해 행렬 캐시에 NaN을 남기지 않아야 한다.
+        // 수정 가능한 ECS Component에 직접 쓰면 Rotation 생성자의 입력 검사를 거치지 않는다.
+        // 행렬 합성 단계가 잘못된 값을 거부해 World 행렬에 NaN이 저장되지 않는지 확인한다.
         Rotation& stored = entity.GetHandle().get_mut<Rotation, Local>();
         stored.w = invalid.w;
         stored.x = invalid.x;

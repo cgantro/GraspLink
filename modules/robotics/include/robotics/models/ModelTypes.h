@@ -14,10 +14,10 @@ struct Vec3
     double z = 0.0;
 };
 
-/** @brief 회전축 방향을 나타내는 Vec3 별칭. 단위와 기준 frame은 사용하는 필드가 정한다. */
+/** @brief 3차원 회전축 방향을 저장하기 위한 Vec3 별칭이다. 방향 벡터에는 길이 단위가 없으며 기준 좌표계는 이 별칭을 담은 필드가 정한다. */
 using Axis3 = Vec3;
 
-/** @brief w, x, y, z 순서의 회전 사원수. 기본값은 회전이 없는 항등 회전이다. */
+/** @brief 3차원 회전 방향을 네 숫자로 저장하는 quaternion이다. 성분 순서는 w, x, y, z이며 (1,0,0,0)은 회전하지 않는 방향이다. */
 struct QuaternionWxyz
 {
     double w = 1.0;
@@ -27,7 +27,7 @@ struct QuaternionWxyz
 };
 
 /**
- * @brief 위치와 회전을 함께 나타내는 강체 pose.
+ * @brief 물체의 위치와 회전을 한 묶음으로 나타낸다.
  * @details 위치 단위는 meter다. 기준 frame은 해당 pose 필드의 계약이 정한다.
  */
 struct Pose3

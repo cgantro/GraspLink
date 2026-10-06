@@ -19,8 +19,8 @@ include(CTest)
 # Robotics
 # ============================================================
 #
-# Robot/Gripper model + Hardware/Simulation backend contract.
-# Viewer/Flecs/GLM에 의존하지 않는 robotics domain library다.
+# 이 라이브러리는 로봇과 그리퍼 모델 사양, 하드웨어·시뮬레이션 backend의 공통 계약을 제공한다.
+# Viewer, Flecs, GLM에 의존하지 않으므로 화면이나 ECS가 없는 로봇 코드에서도 사용할 수 있다.
 #
 add_library(grasplink_robotics STATIC
   modules/robotics/src/backends/simulation/SimRobotController.cpp
@@ -57,19 +57,16 @@ target_sources(grasplink_robotics PUBLIC
 # Physics
 # ============================================================
 #
-# Jolt Physics dependency를 먼저 준비한다.
+# Jolt Physics 의존성을 먼저 구성한다. 아래 물리 라이브러리가 링크할 Jolt target이 이 단계에서 만들어진다.
 #
-# 중요:
-# add_library(grasplink_physics ...)보다 먼저 Jolt target이 생성되어 있어야
-# 아래 target_link_libraries(... Jolt)가 정상적으로 동작한다.
+# 따라서 이 설정은 add_library(grasplink_physics ...)보다 앞에 있어야 이후 target_link_libraries(... Jolt)가 링크할 대상을 찾을 수 있다.
 #
 grasplink_add_physics_dependencies()
 
 
-# Physics library 자체를 먼저 만든다.
+# 물리 라이브러리 target을 먼저 만든다.
 #
-# target_sources(), target_include_directories(),
-# target_link_libraries()는 모두 이 add_library 이후에 호출해야 한다.
+# target_sources(), target_include_directories(), target_link_libraries()는 이 add_library 호출 뒤에 실행해야 설정이 해당 라이브러리에 적용된다.
 #
 add_library(grasplink_physics STATIC
   modules/physics/src/PhysicsWorld.cpp
@@ -123,14 +120,13 @@ option(
 
 if(GRASPLINK_BUILD_GRAPHICS)
 
-  # OpenGL / GLFW / Flecs / TinyGLTF 등의
-  # Viewer 전용 dependency를 준비한다.
+  # Viewer가 사용하는 OpenGL, GLFW, Flecs, TinyGLTF 등의 외부 의존성을 구성한다.
   grasplink_add_graphics_dependencies()
 
-  # OpenGL 관련 공통 graphics library 생성.
+  # Viewer와 앱이 공유할 OpenGL 그래픽 라이브러리 target을 만든다.
   grasplink_add_graphics_library()
 
-  # UI backend는 GUI 모듈 의존성으로 별도 구성.
+  # ImGui UI backend는 공통 그래픽 코드와 분리해 GUI 모듈 의존성으로 구성한다.
   grasplink_add_gui_dependencies()
 
 
@@ -296,7 +292,7 @@ if(GRASPLINK_BUILD_GRAPHICS)
   # Runtime Assets
   # ----------------------------------------------------------
   #
-  # 실행 파일 옆에 Shader / GLB 파일을 복사한다.
+  # 실행 파일이 자산을 찾을 수 있도록 Shader와 GLB 파일을 실행 파일 디렉터리에 복사한다.
   #
   add_custom_command(
     TARGET grasplink_simulator

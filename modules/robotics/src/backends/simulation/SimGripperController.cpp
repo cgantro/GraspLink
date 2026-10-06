@@ -120,7 +120,7 @@ Result SimGripperController::Command(const GripperCommand& command)
     if (!state_.activated)
         return Failure(ErrorCode::Busy, "SimGripperController: not activated");
 
-    // 모든 raw 범위를 먼저 확인한다. 거부된 명령은 snapshot과 현재 목표를 그대로 둔다.
+    // 위치·속도·힘 raw code 범위를 전부 확인한 뒤 요청을 받아들인다. 하나라도 잘못되면 현재 상태 복사본(snapshot)과 이동 목표를 바꾸지 않는다.
     if (command.positionRequest < specification_->positionRequestMin ||
         command.positionRequest > specification_->positionRequestMax ||
         command.speedRequest < specification_->speedRequestMin ||
@@ -181,7 +181,7 @@ void SimGripperController::Update(double dtSeconds)
         return;
     }
 
-    // 연속 위치는 master 각속도를 nominal closed 각도로 나눠 진행한다. raw 정수는 관절 계산에 재입력하지 않는다.
+    // 연속 개폐 비율은 master 관절의 각속도로 진행하며 기준 닫힘 각도와 시간으로 변화량을 정한다. 관절 계산에 8-bit raw 위치를 다시 넣지 않아 정수 반올림이 운동에 반복 전달되지 않는다.
     const double maximumClosureStep = masterVelocityRadiansPerSecond_ * dtSeconds /
         specification_->nominalMasterClosedRadians;
     const double remaining = targetClosureFraction_ - state_.closureFraction;
