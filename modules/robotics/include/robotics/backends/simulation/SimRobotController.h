@@ -1,6 +1,7 @@
 #pragma once
 
 #include "robotics/core/IRobotController.h"
+#include "robotics/backends/simulation/detail/LinearPathPlanner.h"
 #include "robotics/kinematics/RobotInverseKinematics.h"
 #include "robotics/models/RobotSpecification.h"
 
@@ -150,13 +151,7 @@ public:
     bool RestoreCollisionSafeState(const JointVector& safePositionRadians);
 
 private:
-    struct LinearPathPoint
-    {
-        JointVector joints;
-        CartesianPose tcpPose{};
-        // 이전 표본부터의 TCP/관절 속도 상한으로 계산한 최소 계획 시간 [s]이며 실제 IK의 속도 검사가 필요하면 더 늦게 진행한다.
-        double durationSeconds = 0.0;
-    };
+    using LinearPathPoint = detail::LinearPathPoint;
 
     void RefreshTcp();
     void UpdateLinear(double dtSeconds);

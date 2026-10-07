@@ -73,18 +73,9 @@ Result IkFailure(const kinematics::IkResult& result)
     return Failure(code, result.message);
 }
 
-kinematics::IkOptions LinearIkOptions()
-{
-    kinematics::IkOptions options;
-    // 경로 계획 표본 사이가 멀어져도 실제 TCP는 지정한 직선에서 벗어나지 않도록 기본 IK보다 엄격한 오차를 유지한다.
-    options.positionToleranceMeters = 1e-7;
-    options.orientationToleranceRadians = 1e-6;
-    return options;
-}
-
 kinematics::IkOptions RuntimeLinearIkOptions()
 {
-    kinematics::IkOptions options = LinearIkOptions();
+    kinematics::IkOptions options = detail::PathIkOptions();
     // 특이 자세에서 관절을 재배치하는 보조 IK에 완화한 오차를 사용해 반복 횟수를 제한한다.
     options.positionToleranceMeters = 1e-6;
     options.orientationToleranceRadians = 1e-5;
@@ -380,7 +371,6 @@ Result SimRobotController::MoveLinear(const LinearMoveCommand& command)
 
 Result SimRobotController::MoveLinearPath(const LinearPathMoveCommand& command)
 {
-    using namespace kinematics::detail;
     if (!connected_)
         return Failure(ErrorCode::NotConnected, "SimRobotController: not connected");
     if (command.targetPoses.empty() ||
@@ -392,83 +382,31 @@ Result SimRobotController::MoveLinearPath(const LinearPathMoveCommand& command)
     if (!specification_->hasToolFrame)
         return Failure(ErrorCode::Unsupported, "SimRobotController: missing ToolFrame for TCP motion");
 
-    std::vector<Pose3> targets;
-    targets.reserve(command.targetPoses.size());
-    try
-    {
-        for (const auto& pose : command.targetPoses)
-            targets.push_back(FromCartesian(pose));
-    }
-    catch (const std::invalid_argument&)
-    {
-        return Failure(ErrorCode::InvalidCommand, "SimRobotController: invalid TCP target");
-    }
-
-    const Pose3 start = FromCartesian(inverse_.EvaluateTcp(state_.jointPositionRadians));
-    const auto options = LinearIkOptions();
-    Pose3 segmentStart = start;
-    bool hasMotion = false;
-    for (const Pose3& end : targets)
-    {
-        hasMotion = hasMotion || Length(Subtract(end.positionMeters, segmentStart.positionMeters)) > options.positionToleranceMeters ||
-            Length(RotationError(end.rotation, segmentStart.rotation)) > options.orientationToleranceRadians;
-        segmentStart = end;
-    }
-    if (!hasMotion)
+    detail::LinearPathPlan plan;
+    const auto result = detail::LinearPathPlanner::Build(
+        command,
+        *specification_,
+        state_.jointPositionRadians,
+        inverse_.EvaluateTcp(state_.jointPositionRadians),
+        [this](const CartesianPose& target, const JointVector& start, const kinematics::IkOptions& options,
+            bool& collisionBlocked, kinematics::IkResult& ikFailure)
+        {
+            return SolveCollisionFreeIk(target, start, options, collisionBlocked, ikFailure);
+        },
+        [this](const CartesianPose& target, const JointVector& start)
+        {
+            // 표본 상한 초과와 도달 불가를 구분하는 끝점 검사는 기존 동작처럼 충돌 필터를 적용하지 않는다.
+            return inverse_.Solve(target, start);
+        },
+        plan);
+    if (!result)
+        return result;
+    if (!plan.hasMotion)
         return MoveJoint({state_.jointPositionRadians, 1.0, 1.0});
 
-    std::vector<LinearPathPoint> candidate;
-    candidate.reserve(64);
-    candidate.push_back({state_.jointPositionRadians, ToCartesian(start), 0.0});
-    double plannedLinearVelocity = 0.0;
-    double plannedAngularVelocity = 0.0;
-    std::size_t totalIntervals = 0;
-    segmentStart = start;
-    for (const Pose3& end : targets)
-    {
-        const double distance = Length(Subtract(end.positionMeters, segmentStart.positionMeters));
-        const double rotation = Length(RotationError(end.rotation, segmentStart.rotation));
-        const double intervals = std::max({1.0, std::ceil(distance / 0.01), std::ceil(rotation / 0.05)});
-        if (!std::isfinite(intervals) || intervals > 4096.0 || totalIntervals + intervals > 4096.0)
-        {
-            const auto endpoint = inverse_.Solve(ToCartesian(end), candidate.back().joints);
-            if (!endpoint)
-                return IkFailure(endpoint);
-            return Failure(ErrorCode::InvalidCommand, "SimRobotController: linear path exceeds 4096 intervals");
-        }
-        const std::size_t count = static_cast<std::size_t>(intervals);
-        totalIntervals += count;
-        const double positionStep = distance / static_cast<double>(count);
-        const double rotationStep = rotation / static_cast<double>(count);
-        for (std::size_t i = 1; i <= count; ++i)
-        {
-            const double fraction = static_cast<double>(i) / static_cast<double>(count);
-            const Pose3 targetPose = Interpolate(segmentStart, end, fraction);
-            bool collisionBlocked = false;
-            kinematics::IkResult ikFailure;
-            auto solution = SolveCollisionFreeIk(ToCartesian(targetPose), candidate.back().joints,
-                options, collisionBlocked, ikFailure);
-            if (!solution)
-                return collisionBlocked ?
-                    Failure(ErrorCode::EnvironmentContact, "SimRobotController: no collision-free IK solution for the TCP path") :
-                    IkFailure(ikFailure);
-            double duration = std::max(
-                RequiredTimeForVelocity(positionStep, command.maxLinearVelocityMetersPerSecond),
-                RequiredTimeForVelocity(rotationStep, command.maxAngularVelocityRadiansPerSecond));
-            for (std::size_t joint = 0; joint < specification_->jointCount; ++joint)
-                duration = std::max(duration, RequiredTimeForVelocity(
-                    solution->jointPositionRadians[joint] - candidate.back().joints[joint],
-                    specification_->joints[joint].maxVelocityRadiansPerSecond));
-            if (!std::isfinite(duration))
-                return Failure(ErrorCode::InvalidCommand, "SimRobotController: path duration exceeds numeric range");
-            candidate.push_back({solution->jointPositionRadians, ToCartesian(targetPose),
-                std::max(duration, 1e-6)});
-            plannedLinearVelocity = std::max(plannedLinearVelocity, positionStep / duration);
-            plannedAngularVelocity = std::max(plannedAngularVelocity, rotationStep / duration);
-        }
-        segmentStart = end;
-    }
-
+    auto& candidate = plan.points;
+    const double plannedLinearVelocity = plan.plannedLinearVelocity;
+    const double plannedAngularVelocity = plan.plannedAngularVelocity;
     linearVelocityLimit_ = command.maxLinearVelocityMetersPerSecond;
     angularVelocityLimit_ = command.maxAngularVelocityRadiansPerSecond;
     linearAccelerationLimit_ = command.maxLinearAccelerationMetersPerSecondSquared;

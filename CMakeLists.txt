@@ -45,6 +45,7 @@ target_link_libraries(grasplink_diagnostics PUBLIC Threads::Threads)
 #
 add_library(grasplink_robotics STATIC
   modules/robotics/src/backends/simulation/SimRobotController.cpp
+  modules/robotics/src/backends/simulation/detail/LinearPathPlanner.cpp
   modules/robotics/src/backends/simulation/SimGripperController.cpp
   modules/robotics/src/kinematics/RobotKinematics.cpp
   modules/robotics/src/kinematics/RobotInverseKinematics.cpp
@@ -67,6 +68,7 @@ target_sources(grasplink_robotics PUBLIC
   modules/robotics/include/robotics/models/robotiq/TwoF85.h
 
   modules/robotics/include/robotics/backends/simulation/SimRobotController.h
+  modules/robotics/include/robotics/backends/simulation/detail/LinearPathPlanner.h
   modules/robotics/include/robotics/backends/simulation/SimGripperController.h
 
   modules/robotics/include/robotics/runtime/FixedControlLoop.h

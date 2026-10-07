@@ -1,0 +1,154 @@
+#include "robotics/backends/simulation/detail/LinearPathPlanner.h"
+
+#include "robotics/kinematics/detail/PoseMath.h"
+
+#include <algorithm>
+#include <cmath>
+#include <string>
+#include <utility>
+
+namespace grasplink::robotics::backends::simulation::detail
+{
+namespace
+{
+// 위치 1cm 또는 자세 0.05rad 이하 간격으로 목표를 나눈다. 간격을 좁히면 경로 추종 정확도와 함께 표본마다 수행하는 IK 비용도 늘어난다.
+constexpr double kPositionSampleSpacingMeters = 0.01;
+constexpr double kOrientationSampleSpacingRadians = 0.05;
+// 한 명령의 동기 계획 시간과 저장할 경로 표본 수가 무제한으로 커지지 않게 한다.
+constexpr std::size_t kMaximumPathIntervals = 4096;
+
+using namespace kinematics::detail;
+
+Result Failure(ErrorCode code, std::string message)
+{
+    return {code, std::move(message)};
+}
+
+double RequiredTimeForVelocity(double displacement, double maximumVelocity)
+{
+    return std::abs(displacement) / maximumVelocity;
+}
+
+Result IkFailure(const kinematics::IkResult& result)
+{
+    using kinematics::IkStatus;
+    ErrorCode code = ErrorCode::IkDidNotConverge;
+    switch (result.status)
+    {
+    case IkStatus::Success: return Result::Success();
+    case IkStatus::InvalidInput: code = ErrorCode::InvalidCommand; break;
+    case IkStatus::MissingToolFrame: code = ErrorCode::Unsupported; break;
+    case IkStatus::Unreachable: code = ErrorCode::Unreachable; break;
+    case IkStatus::JointLimitReached: code = ErrorCode::JointLimitReached; break;
+    case IkStatus::DidNotConverge: break;
+    }
+    return Failure(code, result.message);
+}
+} // namespace
+
+Result LinearPathPlanner::Build(
+    const LinearPathMoveCommand& command,
+    const models::RobotSpecification& specification,
+    const JointVector& startJoints,
+    const CartesianPose& startTcp,
+    const CollisionAwareIkSolver& solveCollisionFreeIk,
+    const EndpointReachabilitySolver& solveEndpointReachability,
+    LinearPathPlan& plan)
+{
+    if (command.targetPoses.empty() ||
+        !std::isfinite(command.maxLinearVelocityMetersPerSecond) || command.maxLinearVelocityMetersPerSecond <= 0.0 ||
+        !std::isfinite(command.maxAngularVelocityRadiansPerSecond) || command.maxAngularVelocityRadiansPerSecond <= 0.0 ||
+        !std::isfinite(command.maxLinearAccelerationMetersPerSecondSquared) || command.maxLinearAccelerationMetersPerSecondSquared <= 0.0 ||
+        !std::isfinite(command.maxAngularAccelerationRadiansPerSecondSquared) || command.maxAngularAccelerationRadiansPerSecondSquared <= 0.0)
+        return Failure(ErrorCode::InvalidCommand, "SimRobotController: invalid linear path or motion limits");
+
+    std::vector<Pose3> targets;
+    targets.reserve(command.targetPoses.size());
+    try
+    {
+        for (const auto& pose : command.targetPoses)
+            targets.push_back(FromCartesian(pose));
+    }
+    catch (const std::invalid_argument&)
+    {
+        return Failure(ErrorCode::InvalidCommand, "SimRobotController: invalid TCP target");
+    }
+
+    const Pose3 start = FromCartesian(startTcp);
+    const auto options = PathIkOptions();
+    Pose3 segmentStart = start;
+    LinearPathPlan candidatePlan;
+    for (const Pose3& end : targets)
+    {
+        candidatePlan.hasMotion = candidatePlan.hasMotion ||
+            Length(Subtract(end.positionMeters, segmentStart.positionMeters)) > options.positionToleranceMeters ||
+            Length(RotationError(end.rotation, segmentStart.rotation)) > options.orientationToleranceRadians;
+        segmentStart = end;
+    }
+    if (!candidatePlan.hasMotion)
+    {
+        plan = std::move(candidatePlan);
+        return Result::Success();
+    }
+
+    candidatePlan.points.reserve(64);
+    candidatePlan.points.push_back({startJoints, ToCartesian(start), 0.0});
+    std::size_t totalIntervals = 0;
+    segmentStart = start;
+    for (const Pose3& end : targets)
+    {
+        const double distance = Length(Subtract(end.positionMeters, segmentStart.positionMeters));
+        const double rotation = Length(RotationError(end.rotation, segmentStart.rotation));
+        const double intervals = std::max({1.0,
+            std::ceil(distance / kPositionSampleSpacingMeters),
+            std::ceil(rotation / kOrientationSampleSpacingRadians)});
+        // 표본 수 초과는 먼저 끝점만 풀어 도달 불가와 계획 해상도 한도 초과를 서로 다른 오류로 반환한다.
+        if (!std::isfinite(intervals) || intervals > static_cast<double>(kMaximumPathIntervals) ||
+            totalIntervals > kMaximumPathIntervals ||
+            intervals > static_cast<double>(kMaximumPathIntervals - totalIntervals))
+        {
+            const auto endpoint = solveEndpointReachability(ToCartesian(end), candidatePlan.points.back().joints);
+            if (!endpoint)
+                return IkFailure(endpoint);
+            return Failure(ErrorCode::InvalidCommand, "SimRobotController: linear path exceeds 4096 intervals");
+        }
+
+        const std::size_t count = static_cast<std::size_t>(intervals);
+        totalIntervals += count;
+        const double positionStep = distance / static_cast<double>(count);
+        const double rotationStep = rotation / static_cast<double>(count);
+        for (std::size_t i = 1; i <= count; ++i)
+        {
+            const double fraction = static_cast<double>(i) / static_cast<double>(count);
+            const Pose3 targetPose = Interpolate(segmentStart, end, fraction);
+            bool collisionBlocked = false;
+            kinematics::IkResult ikFailure;
+            auto solution = solveCollisionFreeIk(ToCartesian(targetPose), candidatePlan.points.back().joints,
+                options, collisionBlocked, ikFailure);
+            if (!solution)
+                return collisionBlocked ?
+                    Failure(ErrorCode::EnvironmentContact, "SimRobotController: no collision-free IK solution for the TCP path") :
+                    IkFailure(ikFailure);
+
+            double duration = std::max(
+                RequiredTimeForVelocity(positionStep, command.maxLinearVelocityMetersPerSecond),
+                RequiredTimeForVelocity(rotationStep, command.maxAngularVelocityRadiansPerSecond));
+            for (std::size_t joint = 0; joint < specification.jointCount; ++joint)
+                duration = std::max(duration, RequiredTimeForVelocity(
+                    solution->jointPositionRadians[joint] - candidatePlan.points.back().joints[joint],
+                    specification.joints[joint].maxVelocityRadiansPerSecond));
+            if (!std::isfinite(duration))
+                return Failure(ErrorCode::InvalidCommand, "SimRobotController: path duration exceeds numeric range");
+            candidatePlan.points.push_back({solution->jointPositionRadians, ToCartesian(targetPose),
+                std::max(duration, 1e-6)});
+            candidatePlan.plannedLinearVelocity = std::max(candidatePlan.plannedLinearVelocity, positionStep / duration);
+            candidatePlan.plannedAngularVelocity = std::max(candidatePlan.plannedAngularVelocity, rotationStep / duration);
+        }
+        segmentStart = end;
+    }
+
+    plan = std::move(candidatePlan);
+    return Result::Success();
+}
+
+} // namespace grasplink::robotics::backends::simulation::detail
