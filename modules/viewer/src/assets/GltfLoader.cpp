@@ -126,6 +126,13 @@ void RequireFinite(const glm::quat& value)
     }
 }
 
+float CheckedFloat(double value, const char* error)
+{
+    if (!std::isfinite(value) || std::abs(value) > std::numeric_limits<float>::max())
+        throw std::runtime_error(error);
+    return static_cast<float>(value);
+}
+
 // 정점 위치와 법선은 세 실수로 읽는다. 현재 렌더러는 접선 속성을 사용하지 않는다.
 std::vector<glm::vec3> ReadVec3FloatAccessor(
     const tinygltf::Model& model,
@@ -437,13 +444,8 @@ void ReadNodeTransform(
         {
             for (int row = 0; row < 4; ++row)
             {
-                const double value = source.matrix[column * 4 + row];
-                if (!std::isfinite(value) ||
-                    std::abs(value) > std::numeric_limits<float>::max())
-                {
-                    throw std::runtime_error("glTF node matrix contains a non-finite value");
-                }
-                matrix[column][row] = static_cast<float>(value);
+                matrix[column][row] = CheckedFloat(source.matrix[column * 4 + row],
+                    "glTF node matrix contains a non-finite value");
             }
         }
 
@@ -508,52 +510,28 @@ void ReadNodeTransform(
 
     if (source.translation.size() == 3)
     {
-        for (const double value : source.translation)
-        {
-            if (!std::isfinite(value) ||
-                std::abs(value) > std::numeric_limits<float>::max())
-            {
-                throw std::runtime_error("glTF node translation contains a non-finite value");
-            }
-        }
         destination.translation = glm::vec3{
-            static_cast<float>(source.translation[0]),
-            static_cast<float>(source.translation[1]),
-            static_cast<float>(source.translation[2])};
+            CheckedFloat(source.translation[0], "glTF node translation contains a non-finite value"),
+            CheckedFloat(source.translation[1], "glTF node translation contains a non-finite value"),
+            CheckedFloat(source.translation[2], "glTF node translation contains a non-finite value")};
     }
 
     if (source.scale.size() == 3)
     {
-        for (const double value : source.scale)
-        {
-            if (!std::isfinite(value) ||
-                std::abs(value) > std::numeric_limits<float>::max())
-            {
-                throw std::runtime_error("glTF node scale contains a non-finite value");
-            }
-        }
         destination.scale = glm::vec3{
-            static_cast<float>(source.scale[0]),
-            static_cast<float>(source.scale[1]),
-            static_cast<float>(source.scale[2])};
+            CheckedFloat(source.scale[0], "glTF node scale contains a non-finite value"),
+            CheckedFloat(source.scale[1], "glTF node scale contains a non-finite value"),
+            CheckedFloat(source.scale[2], "glTF node scale contains a non-finite value")};
     }
 
     if (source.rotation.size() == 4)
     {
         // Quaternion은 회전을 네 숫자로 나타내며 yaw/pitch 같은 세 축 회전각과 다른 표현이다. 파일의 [x,y,z,w] 순서를 GLM 생성자의 (w,x,y,z)로 옮긴다.
-        for (const double value : source.rotation)
-        {
-            if (!std::isfinite(value) ||
-                std::abs(value) > std::numeric_limits<float>::max())
-            {
-                throw std::runtime_error("glTF node rotation contains a non-finite value");
-            }
-        }
         const glm::quat quaternion{
-            static_cast<float>(source.rotation[3]),
-            static_cast<float>(source.rotation[0]),
-            static_cast<float>(source.rotation[1]),
-            static_cast<float>(source.rotation[2])};
+            CheckedFloat(source.rotation[3], "glTF node rotation contains a non-finite value"),
+            CheckedFloat(source.rotation[0], "glTF node rotation contains a non-finite value"),
+            CheckedFloat(source.rotation[1], "glTF node rotation contains a non-finite value"),
+            CheckedFloat(source.rotation[2], "glTF node rotation contains a non-finite value")};
 
         const double quaternionLength = std::sqrt(
             static_cast<double>(quaternion.x) * quaternion.x +

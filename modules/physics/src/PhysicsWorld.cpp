@@ -676,12 +676,16 @@ std::vector<ContactSnapshot> PhysicsWorld::GetContacts() const
 
 PhysicsConstraintHandle PhysicsWorld::CreateFixedConstraint(PhysicsBodyHandle anchor, PhysicsBodyHandle object)
 {
-    if (GetBodyMotionType(anchor) != BodyMotionType::Kinematic || GetBodyMotionType(object) != BodyMotionType::Dynamic)
+    auto& bodyInterface = impl_->physicsSystem.GetBodyInterface();
+    const JPH::BodyID anchorID = impl_->RequireBodyID(anchor);
+    const JPH::BodyID objectID = impl_->RequireBodyID(object);
+    if (bodyInterface.GetMotionType(anchorID) != JPH::EMotionType::Kinematic ||
+        bodyInterface.GetMotionType(objectID) != JPH::EMotionType::Dynamic)
         throw std::invalid_argument("Fixed grasp requires a kinematic anchor and a dynamic object.");
 
     JPH::Ref<JPH::TwoBodyConstraint> constraint;
     {
-        const JPH::BodyID ids[]{ToBodyID(anchor), ToBodyID(object)};
+        const JPH::BodyID ids[]{anchorID, objectID};
         JPH::BodyLockMultiWrite lock(impl_->physicsSystem.GetBodyLockInterface(), ids, 2);
         JPH::Body* first = lock.GetBody(0);
         JPH::Body* second = lock.GetBody(1);
@@ -699,7 +703,7 @@ PhysicsConstraintHandle PhysicsWorld::CreateFixedConstraint(PhysicsBodyHandle an
     const std::uint64_t id = impl_->nextConstraint++;
     impl_->constraints.emplace(id, Impl::FixedBinding{anchor, object, constraint});
     impl_->physicsSystem.AddConstraint(constraint.GetPtr());
-    impl_->physicsSystem.GetBodyInterface().ActivateBody(ToBodyID(object));
+    bodyInterface.ActivateBody(objectID);
     return {id, impl_->worldToken};
 }
 
