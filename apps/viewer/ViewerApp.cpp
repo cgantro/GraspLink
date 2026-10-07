@@ -3,7 +3,7 @@
 #include "ViewerRobotCollisionGuard.h"
 
 #include "Camera.h"
-#include "DebugSceneSetup.h"
+#include "PickPlaceScenario.h"
 #include "Entity.h"
 #include "OrbitCameraController.h"
 #include "RenderContext.h"
@@ -24,6 +24,7 @@
 #include "gui/panels/PhysicsDebugPanel.h"
 #include "gui/overlays/ColliderOverlay.h"
 #include "simulation/SimulationSceneBuilder.h"
+#include "simulation/RandomScenario.h"
 #include "simulation/robotics/GripperColliders.h"
 #include "simulation/robotics/GripperGraspAdapter.h"
 #include "simulation/robotics/RobotPhysicsAdapter.h"
@@ -371,8 +372,8 @@ void ViewerApp::InitPhysics(const Entity& robotRoot, Entity& floorEntity)
     // GUI의 보라색 선은 ECS에 지정한 shape를 깊이 가림 없이 그린 근사다. 화면 Mesh나 Jolt가 최종 생성한 hull을 직접 보여 주지는 않는다.
     grasplink::simulation::ConfigureTwoF85Colliders(
         *m_Scene, robotRoot, m_RobotModel);
-    m_GraspBox = std::make_unique<Entity>(viewer_debug::CreateGraspBox(*m_Scene, m_RobotShader));
-    m_PlacementArea = std::make_unique<Entity>(viewer_debug::CreatePlacementArea(*m_Scene, m_RobotShader));
+    m_GraspBox = std::make_unique<Entity>(grasplink::viewer::pick_place::CreateGraspBox(*m_Scene, m_RobotShader));
+    m_PlacementArea = std::make_unique<Entity>(grasplink::viewer::pick_place::CreatePlacementArea(*m_Scene, m_RobotShader));
     // Physics Body를 만들기 전에 첫 FK 자세와 계층 World 행렬을 계산해 화면 Entity와 Kinematic 목표를 같은 위치에 맞춘다.
     ApplyControllerPoses();
     TransformSystemModule::UpdateWorldTransforms(m_World);
@@ -517,12 +518,14 @@ void ViewerApp::MainLoop()
                 simulationController.GetStateView(), *m_RobotController, graspState.grasped, boxPose);
             if (m_PickPlaceMission.ConsumeSuccessEvent())
             {
-                const auto nextPosition = viewer_debug::RandomGraspBoxPosition();
-                const auto nextGoalPosition = viewer_debug::RandomPlacementAreaPosition();
+                const auto nextPosition = grasplink::simulation::scenario::SampleBoxPosition();
+                const auto nextGoalPosition = grasplink::simulation::scenario::SamplePlacementPosition();
                 m_GraspBox->SetLocalPosition({nextPosition[0], nextPosition[1], nextPosition[2]});
-                m_GraspBox->SetLocalRotation(glm::angleAxis(viewer_debug::RandomPlanarRotationRadians(), glm::vec3{0.0F, 1.0F, 0.0F}));
+                m_GraspBox->SetLocalRotation(glm::angleAxis(
+                    grasplink::simulation::scenario::SamplePlanarRotation(), glm::vec3{0.0F, 1.0F, 0.0F}));
                 m_PlacementArea->SetLocalPosition({nextGoalPosition[0], nextGoalPosition[1], nextGoalPosition[2]});
-                m_PlacementArea->SetLocalRotation(glm::angleAxis(viewer_debug::RandomPlanarRotationRadians(), glm::vec3{0.0F, 1.0F, 0.0F}));
+                m_PlacementArea->SetLocalRotation(glm::angleAxis(
+                    grasplink::simulation::scenario::SamplePlanarRotation(), glm::vec3{0.0F, 1.0F, 0.0F}));
                 TransformSystemModule::UpdateWorldTransforms(m_World);
                 const glm::mat4 boxTransform = m_GraspBox->GetWorldMatrix();
                 const auto boxHandle = m_PhysicsSystemModule->GetBodyHandle(m_GraspBox->GetHandle());

@@ -68,7 +68,7 @@ HCR-12A collider는 GLB 재질 메시의 삼각형 연결로 나눈 부품별로
 
 Floor의 `plane.glb` Mesh와 Static Box Collider는 하나의 model root Entity가 소유한다. GLB 평면은 root scale 3으로 X/Z ±3 m 범위이며, Collider도 half-extents `{3, 0.02, 3}` m로 맞춘다. Collider 윗면은 수치 오차 방지를 위해 시각 평면보다 5 mm 위에 둔다. GLB를 Jolt triangle mesh로 변환하지 않는다.
 
-`apps/viewer`의 `DebugSceneSetup`은 미션에서 사용할 상자와 더 넓은 배치 목표를 만든다. 작업 성공 뒤 두 물체의 위치와 yaw 회전을 다시 무작위로 정한다. 별도의 50개 낙하 상자 데모나 자동 관절 동작 옵션은 없다.
+`apps/viewer`의 `PickPlaceScenario`는 미션에서 사용할 상자와 더 넓은 배치 목표의 시각·물리 Entity를 만든다. 위치와 yaw 회전 표본은 `grasplink::simulation::scenario`에서 생성하며, 같은 seed와 함수 호출 순서를 주면 같은 표본을 다시 만들 수 있다. 별도의 50개 낙하 상자 데모나 자동 관절 동작 옵션은 없다.
 
 `GuiModule`은 ImGui context·GLFW/OpenGL backend와 프레임·입력 capture 수명을 관리한다. `ViewerApp`이 `BeginFrame`과 `EndFrame` 사이에 `GripperPanel`, `PhysicsDebugPanel`, `ColliderOverlay`를 명시적으로 호출한다. `PhysicsDebugPanel`은 `Show configured colliders` 체크박스 상태를 보관하고 `ColliderOverlay`가 ECS shape의 Box 외곽선과 Convex Hull 투영을 layer별 색으로 표시한다. Overlay는 World query와 화면 선 캐시를 소유하며 Camera는 Draw 동안만 빌린다. 첫 표시·resize 때 즉시 갱신하고 이후 100 ms 간격으로 캐시를 갱신한다. Jolt 내부 shape를 조회하거나 깊이를 검사하지 않으며 Camera 이동도 다음 갱신 전까지 이전 투영으로 보일 수 있다.
 

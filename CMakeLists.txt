@@ -184,6 +184,7 @@ target_link_libraries(grasplink_model_data PUBLIC glm::glm PRIVATE tinygltf)
 target_compile_definitions(grasplink_model_data PRIVATE GLM_ENABLE_EXPERIMENTAL)
 
 add_library(grasplink_simulation STATIC
+  modules/simulation/src/RandomScenario.cpp
   modules/simulation/src/SimulationSceneBuilder.cpp
   modules/simulation/src/robotics/CollisionGeometry.cpp
   modules/simulation/src/robotics/GripperColliders.cpp
@@ -209,6 +210,7 @@ target_compile_definitions(grasplink_application PRIVATE GLM_ENABLE_EXPERIMENTAL
 
 if(BUILD_TESTING)
   grasplink_add_test(grasplink_pick_place_mission_tests PickPlaceMission tests/PickPlaceMissionTests.cpp grasplink_application GTEST_DISCOVERY)
+  grasplink_add_test(grasplink_random_scenario_tests RandomScenario tests/RandomScenarioTests.cpp grasplink_simulation GTEST_DISCOVERY)
   grasplink_add_test(grasplink_gltf_tests GltfLoader tests/GltfLoaderTests.cpp grasplink_model_data)
   target_compile_definitions(grasplink_gltf_tests PRIVATE GRASPLINK_TEST_ASSET_DIR="${CMAKE_SOURCE_DIR}/assets")
 
@@ -307,7 +309,7 @@ if(GRASPLINK_BUILD_GRAPHICS)
     apps/viewer/main.cpp
     apps/viewer/ViewerApp.cpp
     apps/viewer/ViewerRobotCollisionGuard.cpp
-    apps/viewer/DebugSceneSetup.cpp
+    apps/viewer/PickPlaceScenario.cpp
   )
 
   add_executable(grasplink_simulator
