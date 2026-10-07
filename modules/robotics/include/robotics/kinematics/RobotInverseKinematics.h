@@ -92,9 +92,6 @@ public:
     [[nodiscard]] CartesianPose EvaluateTcp(const JointVector& jointPositionRadians);
 
 private:
-    [[nodiscard]] IkResult SolveFromSeed(const CartesianPose& targetInBase,
-        const JointVector& seed, const IkOptions& options);
-
     const models::RobotSpecification& specification_;
     RobotKinematics forward_;
     models::Pose3 tcpInToolFrame_;

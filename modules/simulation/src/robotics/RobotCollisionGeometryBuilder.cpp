@@ -133,14 +133,8 @@ std::vector<grasplink::physics::CollisionShapeDescription> BuildLinkShapes(
 {
     using Shape = grasplink::physics::CollisionShapeDescription;
     std::vector<Shape> shapes;
-    const auto jointIterator = std::find_if(model.nodes.begin(), model.nodes.end(),
-        [&](const NodeData& node) { return &node == &jointNode; });
-    const auto linkIterator = std::find_if(model.nodes.begin(), model.nodes.end(),
-        [&](const NodeData& node) { return &node == &linkNode; });
-    if (jointIterator == model.nodes.end() || linkIterator == model.nodes.end()) return shapes;
-
-    const std::size_t jointIndex = static_cast<std::size_t>(jointIterator - model.nodes.begin());
-    const std::size_t linkIndex = static_cast<std::size_t>(linkIterator - model.nodes.begin());
+    const std::size_t jointIndex = static_cast<std::size_t>(&jointNode - model.nodes.data());
+    const std::size_t linkIndex = static_cast<std::size_t>(&linkNode - model.nodes.data());
     // 메시 정점을 GLB 좌표에서 이 Link를 움직이는 joint 원점 좌표로 바꾼다. 실행 중 FK로 계산한 관절 자세는 별도 proxy Entity에 적용한다.
     const glm::mat4 jointInverse = glm::inverse(nodeTransforms[jointIndex]);
 

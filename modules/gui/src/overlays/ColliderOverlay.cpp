@@ -196,11 +196,6 @@ ImU32 LayerColor(grasplink::physics::CollisionLayer layer)
     return IM_COL32_WHITE;
 }
 
-glm::mat4 AsMatrix(const TransformMatrix& matrix)
-{
-    return static_cast<const glm::mat4&>(matrix);
-}
-
 /** @brief Entity의 누적 World 행렬에서 물리 Body 원점의 Scene 위치와 회전만 추출한다. */
 glm::mat4 PhysicsTransform(const glm::mat4& world)
 {
@@ -236,12 +231,11 @@ struct ColliderOverlay::Impl
         if (visible)
         {
             const auto now = std::chrono::steady_clock::now();
-            const ImVec2 displaySize = viewportSize;
-            const bool resized = displaySize.x != cachedDisplaySize.x || displaySize.y != cachedDisplaySize.y;
+            const bool resized = viewportSize.x != cachedDisplaySize.x || viewportSize.y != cachedDisplaySize.y;
             if (!wasVisible || resized || now >= nextCollisionRefresh)
             {
-                RefreshCollisionLines(camera, displaySize);
-                cachedDisplaySize = displaySize;
+                RefreshCollisionLines(camera, viewportSize);
+                cachedDisplaySize = viewportSize;
                 nextCollisionRefresh = now + std::chrono::milliseconds(100);
             }
             // 픽셀 좌표를 캐시하므로 카메라가 움직여도 다음 갱신 전까지는 이전 위치의 선을 표시한다.
@@ -266,7 +260,7 @@ struct ColliderOverlay::Impl
         colliderQuery.each([&](flecs::entity, const RigidBody& rigidBody,
             const Colliders& colliders, const TransformMatrix& matrix)
         {
-            const glm::mat4 entityWorld = PhysicsTransform(AsMatrix(matrix));
+            const glm::mat4 entityWorld = PhysicsTransform(static_cast<const glm::mat4&>(matrix));
             const ImU32 color = LayerColor(rigidBody.collisionLayer);
             for (const auto& shape : colliders.shapes)
             {

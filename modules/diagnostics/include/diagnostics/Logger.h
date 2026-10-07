@@ -13,8 +13,8 @@
 namespace grasplink::diagnostics
 {
 /**
- * @brief 로그 기록의 심각도를 나타낸다.
- * @details 대기열이 가득 차면 Error 기록이 수치·성능·Debug·Info 기록을 밀어내고 들어갈 수 있다.
+ * @brief 로그 메시지의 중요도를 나타낸다.
+ * @details 큐가 가득 찼을 때 Error 로그는 Metric, Debug, Info 로그를 밀어내고 보존될 수 있다.
  */
 enum class LogLevel
 {
@@ -25,8 +25,8 @@ enum class LogLevel
 };
 
 /**
- * @brief Logger의 출력 파일과 제한된 기록 대기열 크기를 설정한다.
- * @details 출력 경로는 프로세스의 현재 작업 디렉터리를 기준으로 한다. 대기열 용량이 작을수록 메모리는 덜 쓰지만 기록이 더 많이 버려질 수 있다.
+ * @brief Logger의 출력 파일과 대기열 크기를 설정한다.
+ * @details 상대 경로는 프로세스의 현재 작업 디렉터리를 기준으로 한다. 대기열 용량은 생성 시 1 이상으로 보정한다.
  */
 struct LoggerOptions
 {
@@ -35,10 +35,9 @@ struct LoggerOptions
 };
 
 /**
- * @brief 로그, 수치와 성능 기록을 전용 작업 스레드에서 JSON Lines 파일로 저장한다.
- * @details 호출 스레드는 소유한 문자열과 수치만 제한된 대기열에 넣으며 파일 접근은 소비자 스레드만 수행한다.
- * 대기열이 가득 차면 새 기록을 버리고 누락 수를 세므로 제어 tick이 파일 쓰기 때문에 멈추지 않는다.
- * Shutdown은 이미 받은 기록을 파일에 쓰도록 모두 시도한 뒤 작업 스레드를 기다린다.
+ * @brief 로그와 semantic metric을 별도 작업 스레드에서 JSON Lines 파일로 기록한다.
+ * @details 호출 스레드는 레코드를 제한된 대기열에 넣고 바로 돌아온다. 대기열이 차면 낮은 우선순위 레코드를 버리며,
+ * Shutdown은 이미 받은 레코드를 모두 기록한 뒤 작업 스레드가 끝날 때까지 기다린다.
  */
 class Logger final
 {
@@ -50,33 +49,31 @@ public:
     Logger& operator=(const Logger&) = delete;
 
     /**
-     * @brief 분류와 메시지를 가진 로그 기록을 대기열에 추가한다.
-     * @param level 기록의 심각도다.
-     * @param category 오류가 발생한 시스템이나 기능의 이름이다.
-     * @param message 파일에 저장할 소유 문자열이다.
+     * @brief 분류와 메시지를 로그 대기열에 추가한다.
+     * @param level 메시지의 중요도다.
+     * @param category 로그를 발생시킨 시스템이나 기능의 이름이다.
+     * @param message 파일에 기록할 메시지다.
      */
     void Write(LogLevel level, const std::string& category, const std::string& message) noexcept;
 
     /**
-     * @brief 단위가 명시된 수치 기록을 대기열에 추가한다.
+     * @brief 이름과 단위를 가진 수치 metric을 대기열에 추가한다.
      * @param name 측정값의 이름이다.
-     * @param value 기록할 숫자다. NaN과 Infinity는 JSON에서 null로 저장한다.
-     * @param unit value에 적용되는 단위 문자열이다.
+     * @param value 기록할 수치다. NaN과 Infinity는 JSON에서 null로 저장한다.
+     * @param unit 값에 적용되는 단위 문자열이다.
      */
     void RecordMetric(const std::string& name, double value, const std::string& unit) noexcept;
 
-    /** @brief 한 번의 작업이 걸린 시간을 나노초 단위로 대기열에 추가한다. */
-
-    /** @brief 대기 중인 기록을 파일에 반영할 때까지 기다린다. */
+    /** @brief 대기 중인 레코드가 모두 파일에 반영될 때까지 기다린다. */
     void Flush() noexcept;
 
-    /** @brief 새 기록을 중단하고 남은 기록을 저장한 뒤 소비자 스레드를 종료한다. */
+    /** @brief 새 레코드 수신을 멈추고 남은 레코드를 기록한 뒤 작업 스레드를 종료한다. */
     void Shutdown() noexcept;
 
-    /** @brief 제한된 대기열에서 공간이 없어 버린 기록의 누적 개수를 반환한다. */
+    /** @brief 대기열이 가득 차거나 종료 후 도착해 버린 레코드의 누적 수를 반환한다. */
     [[nodiscard]] std::uint64_t GetDroppedRecordCount() const noexcept;
 
-    /** @brief 파일을 열거나 기록하고 반영하는 중 확인한 오류의 누적 개수를 반환한다. */
+    /** @brief 파일 열기, 쓰기 또는 flush에 실패한 누적 횟수를 반환한다. */
     [[nodiscard]] std::uint64_t GetWriteFailureCount() const noexcept;
 
 private:
@@ -88,14 +85,14 @@ private:
 
     struct Record
     {
-        RecordKind kind = RecordKind::Log;
-        LogLevel level = LogLevel::Info;
-        std::int64_t timestampMilliseconds = 0;
-        std::uint64_t threadId = 0;
+        RecordKind kind;
+        LogLevel level;
+        std::int64_t timestampMilliseconds;
+        std::uint64_t threadId;
         std::string name;
         std::string message;
         std::string unit;
-        double value = 0.0;
+        double value;
     };
 
     void Enqueue(Record record) noexcept;

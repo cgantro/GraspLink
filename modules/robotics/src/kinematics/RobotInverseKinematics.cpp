@@ -114,7 +114,7 @@ CartesianPose DampedLeastSquaresIk::EvaluateTcp(const JointVector& jointPosition
     return ToCartesian(Compose(forward_.Update(jointPositionRadians).toolFrameInBaseFrame, tcpInToolFrame_));
 }
 
-IkResult DampedLeastSquaresIk::SolveFromSeed(const CartesianPose& targetInBase, const JointVector& currentSeed, const IkOptions& options)
+IkResult DampedLeastSquaresIk::SolveSingleSeed(const CartesianPose& targetInBase, const JointVector& currentSeed, const IkOptions& options)
 {
     IkResult result;
     result.positionErrorMeters = std::numeric_limits<double>::infinity();
@@ -248,7 +248,7 @@ IkResult DampedLeastSquaresIk::SolveFromSeed(const CartesianPose& targetInBase, 
 IkResult DampedLeastSquaresIk::Solve(
     const CartesianPose& targetInBase, const JointVector& currentSeed, const IkOptions& options)
 {
-    IkResult best = SolveFromSeed(targetInBase, currentSeed, options);
+    IkResult best = SolveSingleSeed(targetInBase, currentSeed, options);
     if (best.Ok() || (best.status != IkStatus::DidNotConverge && best.status != IkStatus::JointLimitReached))
         return best;
 
@@ -271,7 +271,7 @@ IkResult DampedLeastSquaresIk::Solve(
     // 첫 시드가 막힌 경우에만 HCR의 어깨·팔꿈치·손목 자세를 반사해 제한된 대체 시드를 검사한다.
     for (const auto& alternate : BuildAlternativeIkSeeds(currentSeed, specification_))
     {
-        IkResult candidate = SolveFromSeed(targetInBase, alternate, options);
+        IkResult candidate = SolveSingleSeed(targetInBase, alternate, options);
         if (candidate.Ok())
         {
             const double jointDistance = distanceFromSeed(candidate.jointPositionRadians);
@@ -287,9 +287,4 @@ IkResult DampedLeastSquaresIk::Solve(
     return best;
 }
 
-IkResult DampedLeastSquaresIk::SolveSingleSeed(
-    const CartesianPose& targetInBase, const JointVector& seed, const IkOptions& options)
-{
-    return SolveFromSeed(targetInBase, seed, options);
-}
 }

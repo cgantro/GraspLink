@@ -10,14 +10,9 @@ namespace grasplink::gui
 {
 namespace
 {
-glm::dquat Orientation(const std::array<double, 4>& xyzw)
-{
-    return glm::normalize(glm::dquat{xyzw[3], xyzw[0], xyzw[1], xyzw[2]});
-}
-
 double YawDegrees(const std::array<double, 4>& xyzw)
 {
-    const glm::dquat rotation = Orientation(xyzw);
+    const glm::dquat rotation = glm::normalize(glm::dquat{xyzw[3], xyzw[0], xyzw[1], xyzw[2]});
     return glm::degrees(std::atan2(2.0 * (rotation.w * rotation.y + rotation.x * rotation.z),
         1.0 - 2.0 * (rotation.y * rotation.y + rotation.z * rotation.z)));
 }
@@ -63,8 +58,7 @@ RobotPanelActions RobotPanel::DrawContents(const RobotPanelView& view)
         ImGui::EndTable();
     }
     ImGui::TextUnformatted("Angle values are current joint positions, not travel percentages.");
-    const bool canStart = view.mission.canStart;
-    if (canStart && ImGui::Button("Run random pick and place"))
+    if (view.mission.canStart && ImGui::Button("Run random pick and place"))
         actions.start = true;
     if (view.mission.paused)
     {

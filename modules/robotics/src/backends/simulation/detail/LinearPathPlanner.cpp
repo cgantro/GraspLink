@@ -9,12 +9,6 @@
 
 namespace grasplink::robotics::backends::simulation::detail
 {
-namespace
-{
-using namespace kinematics::detail;
-
-} // namespace
-
 Result LinearPathPlanner::Build(
     const LinearPathMoveCommand& command,
     const models::RobotSpecification& specification,
@@ -25,9 +19,7 @@ Result LinearPathPlanner::Build(
     LinearPathPlan& plan,
     const SimulationMotionPolicy& policy)
 {
-    const Result validation = ValidateLinearPathCommand(command);
-    if (!validation)
-        return validation;
+    using namespace kinematics::detail;
 
     std::vector<Pose3> targets;
     targets.reserve(command.targetPoses.size());

@@ -44,12 +44,7 @@ void Logger::Write(LogLevel level, const std::string& category, const std::strin
 {
     try
     {
-        Record record;
-        record.kind = RecordKind::Log;
-        record.level = level;
-        record.name = category;
-        record.message = message;
-        Enqueue(std::move(record));
+        Enqueue({RecordKind::Log, level, 0, 0, category, message});
     }
     catch (...)
     {
@@ -61,12 +56,7 @@ void Logger::RecordMetric(const std::string& name, double value, const std::stri
 {
     try
     {
-        Record record;
-        record.kind = RecordKind::Metric;
-        record.name = name;
-        record.value = value;
-        record.unit = unit;
-        Enqueue(std::move(record));
+        Enqueue({RecordKind::Metric, LogLevel::Info, 0, 0, name, {}, unit, value});
     }
     catch (...)
     {

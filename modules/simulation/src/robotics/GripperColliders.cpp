@@ -191,8 +191,6 @@ void ConfigureTwoF85Colliders(Scene& scene, const Entity& robotRoot, const Model
         Entity sceneAncestor = rootEntity;
         while (modelAncestor != gripperIndex)
         {
-            if (!IsUnitScale(sceneAncestor.GetLocalScale()))
-                throw std::invalid_argument("TwoF85 scene joint ancestry has non-unit scale.");
             const int parentIndex = model.nodes[modelAncestor].parentIndex;
             if (parentIndex < 0 || !sceneAncestor)
                 throw std::invalid_argument("TwoF85 joint is outside the Gripper hierarchy.");

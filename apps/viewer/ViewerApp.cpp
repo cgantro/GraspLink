@@ -496,22 +496,17 @@ void ViewerApp::MainLoop()
             const glm::mat4 robotBaseWorld = m_RobotRoot->GetWorldMatrix();
             const glm::mat4 worldToRobotBase = glm::inverse(robotBaseWorld);
             const glm::quat worldToRobotBaseRotation = glm::inverse(RotationFromWorldMatrix(robotBaseWorld));
-            const glm::mat4 boxWorldMatrix = m_GraspBox->GetWorldMatrix();
-            const glm::vec3 boxInRobotBase(worldToRobotBase * boxWorldMatrix[3]);
-            const glm::quat boxRotationWorld = RotationFromWorldMatrix(boxWorldMatrix);
-            const glm::quat boxRotationInRobotBase = glm::normalize(worldToRobotBaseRotation * boxRotationWorld);
-            const glm::mat4 placementWorldMatrix = m_PlacementArea->GetWorldMatrix();
-            const glm::vec3 placementInRobotBase(worldToRobotBase * placementWorldMatrix[3]);
-            const glm::quat placementRotationWorld = RotationFromWorldMatrix(placementWorldMatrix);
-            const glm::quat placementRotationInRobotBase = glm::normalize(worldToRobotBaseRotation * placementRotationWorld);
-            grasplink::robotics::CartesianPose boxPose;
-            boxPose.positionMeters = {boxInRobotBase.x, boxInRobotBase.y, boxInRobotBase.z};
-            boxPose.orientationXyzw = {boxRotationInRobotBase.x, boxRotationInRobotBase.y,
-                boxRotationInRobotBase.z, boxRotationInRobotBase.w};
-            grasplink::robotics::CartesianPose placementPose;
-            placementPose.positionMeters = {placementInRobotBase.x, placementInRobotBase.y + 0.020, placementInRobotBase.z};
-            placementPose.orientationXyzw = {placementRotationInRobotBase.x, placementRotationInRobotBase.y,
-                placementRotationInRobotBase.z, placementRotationInRobotBase.w};
+            const auto toRobotBasePose = [&](const glm::mat4& worldMatrix, float heightOffset)
+            {
+                const glm::vec3 position(worldToRobotBase * worldMatrix[3]);
+                const glm::quat orientation = glm::normalize(
+                    worldToRobotBaseRotation * RotationFromWorldMatrix(worldMatrix));
+                return grasplink::robotics::CartesianPose{
+                    {position.x, position.y + heightOffset, position.z},
+                    {orientation.x, orientation.y, orientation.z, orientation.w}};
+            };
+            const auto boxPose = toRobotBasePose(m_GraspBox->GetWorldMatrix(), 0.0F);
+            const auto placementPose = toRobotBasePose(m_PlacementArea->GetWorldMatrix(), 0.020F);
             const float sidebarX = displayWidth - sidebarWidth;
             ImGui::SetNextWindowPos(ImVec2(sidebarX, 0.0F), ImGuiCond_Always);
             ImGui::SetNextWindowSize(ImVec2(sidebarWidth, displayHeight), ImGuiCond_Always);

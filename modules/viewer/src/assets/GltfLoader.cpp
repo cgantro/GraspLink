@@ -126,30 +126,33 @@ void RequireFinite(const glm::quat& value)
     }
 }
 
-// 정점은 삼각형 꼭짓점 자료다. 이 함수는 각 정점의 3개 실수로 된 위치 또는 표면 수직 방향(법선)을 읽는다.
+// 정점 위치와 법선은 세 실수로, 접선은 네 실수로 읽고 접선의 w 부호는 사용하지 않는다.
 std::vector<glm::vec3> ReadVec3FloatAccessor(
     const tinygltf::Model& model,
-    int accessorIndex)
+    int accessorIndex,
+    bool tangent = false)
 {
     const tinygltf::Accessor& accessor = model.accessors.at(accessorIndex);
-    if (accessor.type != TINYGLTF_TYPE_VEC3 ||
+    if (accessor.type != (tangent ? TINYGLTF_TYPE_VEC4 : TINYGLTF_TYPE_VEC3) ||
         accessor.componentType != TINYGLTF_COMPONENT_TYPE_FLOAT)
     {
-        throw std::runtime_error("Expected FLOAT VEC3 ACCESSOR");
+        throw std::runtime_error(tangent
+            ? "Expected FLOAT VEC4 tangent accessor"
+            : "Expected FLOAT VEC3 ACCESSOR");
     }
 
-    constexpr std::size_t kElementSize = sizeof(float) * 3U;
-    const AccessorView view = GetAccessorView(model, accessorIndex, kElementSize);
+    const AccessorView view = GetAccessorView(
+        model, accessorIndex, sizeof(float) * (tangent ? 4U : 3U));
 
     std::vector<glm::vec3> result(view.count);
 
     for (std::size_t i = 0; i < view.count; ++i)
     {
         const unsigned char* source = view.data + i * view.stride;
-        float values[3]{};
+        float values[4]{};
 
         // 파일의 값 시작 주소가 C++ float 정렬에 맞는다고 가정하지 않고 byte를 복사한다.
-        std::memcpy(values, source, sizeof(values));
+        std::memcpy(values, source, sizeof(float) * (tangent ? 4U : 3U));
         result[i] = glm::vec3{values[0], values[1], values[2]};
         RequireFinite(result[i]);
     }
@@ -186,36 +189,6 @@ std::vector<glm::vec2> ReadVec2FloatAccessor(
     return result;
 }
 
-// tangent는 표면을 따라가는 방향이다. 여기서는 x/y/z만 저장하며 네 번째 w의 방향 부호는 버려 normal mapping에 필요한 전체 방향을 보존하지 않는다.
-std::vector<glm::vec3> ReadTangentAccessor(
-    const tinygltf::Model& model,
-    int accessorIndex)
-{
-    const tinygltf::Accessor& accessor = model.accessors.at(accessorIndex);
-
-    if (accessor.type != TINYGLTF_TYPE_VEC4 ||
-        accessor.componentType != TINYGLTF_COMPONENT_TYPE_FLOAT)
-    {
-        throw std::runtime_error("Expected FLOAT VEC4 tangent accessor");
-    }
-
-    constexpr std::size_t kElementSize = sizeof(float) * 4U;
-    const AccessorView view = GetAccessorView(model, accessorIndex, kElementSize);
-
-    std::vector<glm::vec3> result(view.count);
-
-    for (std::size_t i = 0; i < view.count; ++i)
-    {
-        const unsigned char* source = view.data + i * view.stride;
-        float values[4]{};
-        std::memcpy(values, source, sizeof(values));
-        result[i] = glm::vec3{values[0], values[1], values[2]};
-        RequireFinite(result[i]);
-    }
-
-    return result;
-}
-
 // 파일에서 읽을 값 주소가 C++ 타입 T의 정렬 경계에 맞는다고 가정하지 않고 복사한다.
 // glTF 파일이 요구하는 별도의 정렬 조건은 여기서 검사하지 않는다.
 template<typename T>
@@ -243,22 +216,17 @@ std::vector<std::uint32_t> ReadIndices(
     if (accessor.type != TINYGLTF_TYPE_SCALAR)
         throw std::runtime_error("Index Accessor must be SCALAR");
 
-    std::size_t componentSize = 0;
-
-    switch (accessor.componentType)
+    if (accessor.componentType != TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE &&
+        accessor.componentType != TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT &&
+        accessor.componentType != TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT)
     {
-    case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE:
-        componentSize = sizeof(std::uint8_t);
-        break;
-    case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT:
-        componentSize = sizeof(std::uint16_t);
-        break;
-    case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT:
-        componentSize = sizeof(std::uint32_t);
-        break;
-    default:
         throw std::runtime_error("Unsupported glTF index component type");
     }
+    const std::size_t componentSize = accessor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE
+        ? sizeof(std::uint8_t)
+        : accessor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT
+            ? sizeof(std::uint16_t)
+            : sizeof(std::uint32_t);
 
     const AccessorView view = GetAccessorView(model, accessorIndex, componentSize);
     std::vector<std::uint32_t> result;
@@ -267,22 +235,11 @@ std::vector<std::uint32_t> ReadIndices(
     for (std::size_t i = 0; i < view.count; ++i)
     {
         const unsigned char* source = view.data + i * view.stride;
-        std::uint32_t value = 0;
-
-        switch (accessor.componentType)
-        {
-        case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE:
-            value = ReadScalar<std::uint8_t>(source);
-            break;
-        case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT:
-            value = ReadScalar<std::uint16_t>(source);
-            break;
-        case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT:
-            value = ReadScalar<std::uint32_t>(source);
-            break;
-        default:
-            throw std::runtime_error("Unsupported glTF index type");
-        }
+        const std::uint32_t value = accessor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE
+            ? ReadScalar<std::uint8_t>(source)
+            : accessor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT
+                ? ReadScalar<std::uint16_t>(source)
+                : ReadScalar<std::uint32_t>(source);
 
         if (value >= vertexCount)
             throw std::runtime_error("glTF index exceeds vertex Count");
@@ -431,7 +388,7 @@ MeshData ConvertMesh(
         const auto tangentIterator = primitive.attributes.find("TANGENT");
         if (tangentIterator != primitive.attributes.end())
         {
-            tangents = ReadTangentAccessor(model, tangentIterator->second);
+            tangents = ReadVec3FloatAccessor(model, tangentIterator->second, true);
             if (tangents.size() != vertexCount)
                 throw std::runtime_error("TANGENT count does not match POSITION count");
         }

@@ -146,9 +146,6 @@ GripperTransformAdapter::GripperTransformAdapter(
         if (!std::isfinite(rawBindLengthSquared) || rawBindLengthSquared <= 0.0)
             throw std::invalid_argument("GripperTransformAdapter: invalid bind rotation: " + name);
         const glm::dquat bindRotation = glm::normalize(rawBindRotation);
-        const double lengthSquared = glm::dot(bindRotation, bindRotation);
-        if (!std::isfinite(lengthSquared) || lengthSquared <= 0.0)
-            throw std::invalid_argument("GripperTransformAdapter: invalid bind rotation: " + name);
         binding.bindRotation = ToModelQuaternion(bindRotation);
         joints_.push_back(std::move(binding));
     }

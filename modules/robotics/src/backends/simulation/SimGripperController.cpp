@@ -241,8 +241,6 @@ void SimGripperController::Update(double dtSeconds)
 
     if (IsAtTarget())
     {
-        state_.closureFraction = targetClosureFraction_;
-        UpdateRawPosition();
         state_.goToActive = false;
         state_.mode = GripperMode::Idle;
         state_.objectStatus = GripperObjectStatus::AtRequestedPosition;

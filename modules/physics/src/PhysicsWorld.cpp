@@ -723,9 +723,9 @@ bool PhysicsWorld::IsConstraintValid(PhysicsConstraintHandle handle) const
 
 void PhysicsWorld::DestroyConstraint(PhysicsConstraintHandle handle)
 {
-    if (!IsConstraintValid(handle))
+    const auto entry = impl_->constraints.find(handle.value);
+    if (!handle.IsValid() || handle.worldToken != impl_->worldToken || entry == impl_->constraints.end())
         return;
-    auto entry = impl_->constraints.find(handle.value);
     const PhysicsBodyHandle object = entry->second.object;
     impl_->physicsSystem.RemoveConstraint(entry->second.constraint.GetPtr());
     impl_->constraints.erase(entry);
@@ -751,11 +751,7 @@ Transform PhysicsWorld::GetBodyTransform(
         .GetBodyInterface()
         .GetPositionAndRotation(bodyID, position, rotation);
 
-    Transform result;
-    result.position = ToGlmPosition(position);
-    result.rotation = ToGlmRotation(rotation);
-
-    return result;
+    return {ToGlmPosition(position), ToGlmRotation(rotation)};
 }
 
 
@@ -833,13 +829,9 @@ void PhysicsWorld::SetBodyTransform(
     impl_->contactCollector.RemoveBody(handle.value);
 
     // 모델 Body 원점의 World 자세를 그대로 전달한다. 무게중심(COM) 차이를 여기서 다시 더하면 Jolt의 내부 보정과 겹쳐 위치가 어긋난다.
-    impl_->physicsSystem
-        .GetBodyInterface()
-        .SetPositionAndRotation(
-            ToBodyID(handle),
-            ToJoltPosition(transform.position),
-            ToJoltRotation(glm::normalize(transform.rotation)),
-            JPH::EActivation::Activate);
+    impl_->physicsSystem.GetBodyInterface().SetPositionAndRotation(
+        ToBodyID(handle), ToJoltPosition(transform.position),
+        ToJoltRotation(glm::normalize(transform.rotation)), JPH::EActivation::Activate);
     if (GetBodyMotionType(handle) == BodyMotionType::Dynamic)
     {
         impl_->physicsSystem.GetBodyInterface().SetLinearAndAngularVelocity(
@@ -866,10 +858,8 @@ void PhysicsWorld::MoveKinematic(
 
     const JPH::BodyID bodyID = ToBodyID(handle);
 
-    const JPH::EMotionType motionType =
-        impl_->physicsSystem
-            .GetBodyInterface()
-            .GetMotionType(bodyID);
+    auto& bodyInterface = impl_->physicsSystem.GetBodyInterface();
+    const JPH::EMotionType motionType = bodyInterface.GetMotionType(bodyID);
 
     if (motionType != JPH::EMotionType::Kinematic)
     {
@@ -878,13 +868,10 @@ void PhysicsWorld::MoveKinematic(
     }
 
     // 목표 자세 역시 모델 Body 원점 기준이다. Jolt가 무게중심(COM) 이동을 내부에서 처리하고 목표와 시간 간격으로 필요한 속도를 계산한다.
-    impl_->physicsSystem
-        .GetBodyInterface()
-        .MoveKinematic(
-            bodyID,
-            ToJoltPosition(targetTransform.position),
-            ToJoltRotation(glm::normalize(targetTransform.rotation)),
-            static_cast<float>(fixedDeltaSeconds));
+    bodyInterface.MoveKinematic(
+        bodyID, ToJoltPosition(targetTransform.position),
+        ToJoltRotation(glm::normalize(targetTransform.rotation)),
+        static_cast<float>(fixedDeltaSeconds));
 }
 
 

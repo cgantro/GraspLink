@@ -76,8 +76,6 @@ void GripperPanel::DrawContents(grasplink::robotics::IGripperController& gripper
     {
         GripperCommand command;
         command.positionRequest = position;
-        command.speedRequest = 255;
-        command.forceRequest = 128;
         lastGripperResult = gripper.Command(command);
         hasGripperResult = true;
     };

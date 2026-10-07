@@ -76,7 +76,7 @@ double TrapezoidDistanceFraction(double timeFraction, double rampTimeFraction)
     }
     return std::clamp(integratedSpeed / (1.0 - ramp), 0.0, 1.0);
 }
-} // ?듬챸 ?ㅼ엫?ㅽ럹?댁뒪
+} // namespace
 
 SimRobotController::SimRobotController(const models::RobotSpecification& specification, models::Pose3 tcpInToolFrame)
     : specification_(&specification), inverse_(specification, tcpInToolFrame)
@@ -669,4 +669,4 @@ bool SimRobotController::RestoreCollisionSafeState(const JointVector& safePositi
     return true;
 }
 
-} // grasplink::robotics::backends::simulation ?ㅼ엫?ㅽ럹?댁뒪
+} // namespace

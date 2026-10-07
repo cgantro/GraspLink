@@ -107,12 +107,6 @@ bool HasSupportedPhysicsParents(flecs::entity entity, BodyMotionType motionType)
                 std::abs(rotation.z / length) > tolerance)
                 return false;
         }
-        if (parent.has<Scale, Local>())
-        {
-            const glm::vec3 scale = parent.get<Scale, Local>();
-            if (!IsFinite(scale) || glm::any(glm::greaterThan(glm::abs(scale - glm::vec3{1}), glm::vec3{tolerance})))
-                return false;
-        }
     }
     return true;
 }
