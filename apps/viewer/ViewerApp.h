@@ -1,6 +1,8 @@
 ﻿#pragma once
 
 #include "robotics/runtime/FixedControlLoop.h"
+#include "diagnostics/Logger.h"
+#include "diagnostics/Profiler.h"
 #include "assets/GraphicsTypes.h"
 
 #include <flecs.h>
@@ -37,6 +39,7 @@ namespace grasplink::gui
 {
 class GuiModule;
 class GripperPanel;
+class RobotPanel;
 class PhysicsDebugPanel;
 class ColliderOverlay;
 }
@@ -45,6 +48,12 @@ namespace grasplink::simulation
 {
 class PhysicsSystemModule;
 class RobotPhysicsAdapter;
+class GripperGraspAdapter;
+}
+
+namespace grasplink::viewer
+{
+class ViewerRobotCollisionGuard;
 }
 
 /**
@@ -74,6 +83,8 @@ public:
 
 private:
     ViewerOptions m_Options;
+    grasplink::diagnostics::Logger m_Logger;
+    grasplink::diagnostics::Profiler m_Profiler;
     bool Init();
 
     // Window와 OpenGL Context를 만든 뒤, 이 Context를 필요로 하는 GPU 자원과 ECS 및 Scene을 초기화한다.
@@ -149,9 +160,21 @@ private:
     // ECS의 물리 설정을 Jolt Body에 연결하고 고정 시간 간격의 물리 step을 실행한다.
     std::unique_ptr<grasplink::simulation::PhysicsSystemModule> m_PhysicsSystemModule;
 
+    // 물리 계산에서 확인한 손가락 접촉을 개폐 정지에 반영하고, 양쪽 손가락이 같은 물체를 잡으면 물리 제약의 생성과 해제를 관리한다.
+    std::unique_ptr<grasplink::simulation::GripperGraspAdapter> m_GripperGraspAdapter;
+
+    // Controller가 제안한 자세와 매 고정 tick의 실제 자세를 Environment와 검사한다. 빌린 객체보다 먼저 해제한다.
+    std::unique_ptr<grasplink::viewer::ViewerRobotCollisionGuard> m_RobotCollisionGuard;
+
     // ImGui backend, 조작 패널, 디버그 패널과 Collider overlay의 수명을 앱이 함께 관리한다.
     std::unique_ptr<grasplink::gui::GuiModule> m_GuiModule;
     std::unique_ptr<grasplink::gui::GripperPanel> m_GripperPanel;
+    std::unique_ptr<grasplink::gui::RobotPanel> m_RobotPanel;
     std::unique_ptr<grasplink::gui::PhysicsDebugPanel> m_PhysicsDebugPanel;
     std::unique_ptr<grasplink::gui::ColliderOverlay> m_ColliderOverlay;
+
+    // GUI가 장면 속 로봇 기준점과 파지 상자의 World 위치를 매 프레임 읽는다. wrapper는 Entity를 소유하지 않는다.
+    std::unique_ptr<Entity> m_RobotRoot;
+    std::unique_ptr<Entity> m_GraspBox;
+    std::unique_ptr<Entity> m_PlacementArea;
 };

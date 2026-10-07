@@ -1,5 +1,7 @@
 ﻿#include "ViewerApp.h"
 
+#include "ViewerRobotCollisionGuard.h"
+
 #include "Camera.h"
 #include "DebugSceneSetup.h"
 #include "Entity.h"
@@ -18,10 +20,12 @@
 #include "PhysicsWorld.h"
 #include "gui/GuiModule.h"
 #include "gui/panels/GripperPanel.h"
+#include "gui/panels/RobotPanel.h"
 #include "gui/panels/PhysicsDebugPanel.h"
 #include "gui/overlays/ColliderOverlay.h"
 #include "simulation/SimulationSceneBuilder.h"
 #include "simulation/robotics/GripperColliders.h"
+#include "simulation/robotics/GripperGraspAdapter.h"
 #include "simulation/robotics/RobotPhysicsAdapter.h"
 #include "simulation/systems/PhysicsSystemModule.h"
 
@@ -41,9 +45,13 @@
 #include "viewer/robotics/GripperTransformAdapter.h"
 
 #include <algorithm>
+#include <cmath>
+#include <glm/gtc/quaternion.hpp>
+#include <imgui.h>
 #include <chrono>
-#include <iostream>
 #include <memory>
+#include <limits>
+#include <stdexcept>
 
 namespace
 {
@@ -51,6 +59,7 @@ namespace
 // Viewer 창은 시작할 때 이 픽셀 크기로 요청한다. 실제 렌더 대상 크기는 DPI 배율에 따라 framebuffer에서 다시 읽는다.
 constexpr int kWindowWidth = 1280;
 constexpr int kWindowHeight = 720;
+constexpr float kControlSidebarWidth = 390.0F;
 
 // 로봇 제어기와 물리 시뮬레이션은 화면 프레임률과 관계없이 250 Hz, 즉 4 ms 간격으로 갱신한다.
 constexpr double kControlFrequencyHz = 250.0;
@@ -69,11 +78,62 @@ using SimRobotController = grasplink::robotics::backends::simulation::SimRobotCo
 using RobotTransformAdapter = grasplink::viewer::robotics::RobotTransformAdapter;
 using PhysicsWorld = grasplink::physics::PhysicsWorld;
 
+// World 행렬에는 Entity의 크기 변경도 들어가므로 축 길이를 제거한 뒤 회전만 quaternion으로 바꾼다.
+glm::quat RotationFromWorldMatrix(const glm::mat4& worldMatrix)
+{
+    glm::mat3 axes(worldMatrix);
+    for (int axis = 0; axis < 3; ++axis)
+        axes[axis] = glm::normalize(axes[axis]);
+    return glm::normalize(glm::quat_cast(axes));
+}
+
+/**
+ * @brief 열린 손끝 메시 두 개의 중심 사이를 Viewer에서 사용할 고정 TCP로 정한다.
+ * @details ToolFrame은 공구 장착면의 기준점이고 TCP는 공구에서 이동 목표를 지정할 작업점이다.
+ * 메시의 꼭짓점을 Gripper 기준 좌표로 옮겨 각 메시를 감싸는 상자의 중심을 구하고, 두 중심의 중점을 사용한다.
+ * 이 선택은 현재 GLB를 위한 명시적인 시뮬레이션 기준이며 제조사 TCP 보정값이 아니다. 손가락을 닫아도 TCP 보정값은 바꾸지 않는다.
+ * TCP의 방향은 Gripper의 축 방향으로 정하고, 위치와 방향을 ToolFrame 기준으로 바꿔 Controller에 전달한다.
+ */
+grasplink::robotics::models::Pose3 CalculateViewerTcp(const Entity& robotRoot, const ModelResource& model)
+{
+    const Entity tool = robotRoot.FindChildByNameRecursive("ToolFrame");
+    const Entity gripper = robotRoot.FindChildByNameRecursive("Gripper");
+    if (!tool.IsValid() || !gripper.IsValid())
+        throw std::runtime_error("ViewerApp: missing TCP reference frames");
+    const glm::mat4 worldToGripper = glm::inverse(gripper.GetWorldMatrix());
+    glm::vec3 midpoint(0.0F);
+    for (const char* name : {"LeftFingerTipMesh", "RightFingerTipMesh"})
+    {
+        const auto node = std::find_if(model.nodes.begin(), model.nodes.end(), [name](const NodeData& value) { return value.name == name; });
+        const Entity meshEntity = robotRoot.FindChildByNameRecursive(name);
+        if (node == model.nodes.end() || !meshEntity.IsValid() || node->meshIndex < 0 || static_cast<std::size_t>(node->meshIndex) >= model.meshes.size())
+            throw std::runtime_error("ViewerApp: missing TCP fingertip geometry");
+        const auto& vertices = model.meshes[static_cast<std::size_t>(node->meshIndex)].vertices;
+        if (vertices.empty())
+            throw std::runtime_error("ViewerApp: empty TCP fingertip geometry");
+        glm::vec3 minimum(std::numeric_limits<float>::max());
+        glm::vec3 maximum(std::numeric_limits<float>::lowest());
+        const glm::mat4 meshToGripper = worldToGripper * meshEntity.GetWorldMatrix();
+        for (const auto& vertex : vertices)
+        {
+            const glm::vec3 point(meshToGripper * glm::vec4(vertex.position, 1.0F));
+            minimum = glm::min(minimum, point);
+            maximum = glm::max(maximum, point);
+        }
+        midpoint += (minimum + maximum) * 0.25F;
+    }
+    const glm::mat4 gripperToTool = glm::inverse(tool.GetWorldMatrix()) * gripper.GetWorldMatrix();
+    const glm::vec3 position(gripperToTool * glm::vec4(midpoint, 1.0F));
+    const glm::quat orientation = glm::normalize(glm::quat_cast(glm::mat3(gripperToTool)));
+    return {{position.x, position.y, position.z}, {orientation.w, orientation.x, orientation.y, orientation.z}};
+}
+
 } // namespace
 
 
 ViewerApp::ViewerApp(ViewerOptions options)
-    : m_Options(options), m_ControlLoop(kControlFixedDeltaSeconds, kMaxFrameDeltaSeconds)
+    : m_Options(options), m_Profiler(m_Logger),
+      m_ControlLoop(kControlFixedDeltaSeconds, kMaxFrameDeltaSeconds)
 {
 }
 
@@ -86,11 +146,43 @@ ViewerApp::~ViewerApp()
 
 int ViewerApp::Run()
 {
-    if (!Init())
-        return -1;
+    try
+    {
+        if (!Init())
+        {
+            m_Logger.Write(grasplink::diagnostics::LogLevel::Error, "viewer.init", "Viewer 초기화에 실패했습니다.");
+            Shutdown();
+            return -1;
+        }
 
-    MainLoop();
-    return 0;
+        MainLoop();
+        Shutdown();
+        return 0;
+    }
+    catch (const std::exception& error)
+    {
+        try
+        {
+            m_Logger.Write(grasplink::diagnostics::LogLevel::Error, "viewer.run", error.what());
+        }
+        catch (...)
+        {
+        }
+        Shutdown();
+        throw;
+    }
+    catch (...)
+    {
+        try
+        {
+            m_Logger.Write(grasplink::diagnostics::LogLevel::Error, "viewer.run", "알 수 없는 예외가 발생했습니다.");
+        }
+        catch (...)
+        {
+        }
+        Shutdown();
+        throw;
+    }
 }
 
 
@@ -104,6 +196,7 @@ bool ViewerApp::Init()
     Entity robotRoot;
     Entity floorEntity;
     InitScene(robotRoot, floorEntity);
+    m_RobotRoot = std::make_unique<Entity>(robotRoot);
 
     if (!InitRobot(robotRoot))
         return false;
@@ -135,6 +228,7 @@ bool ViewerApp::InitViewer()
     m_Camera = std::make_unique<Camera>(kCameraPosition, kCameraTarget, aspectRatio);
     m_GuiModule = std::make_unique<grasplink::gui::GuiModule>(*m_Window);
     m_GripperPanel = std::make_unique<grasplink::gui::GripperPanel>();
+    m_RobotPanel = std::make_unique<grasplink::gui::RobotPanel>();
     m_PhysicsDebugPanel = std::make_unique<grasplink::gui::PhysicsDebugPanel>();
     m_ColliderOverlay = std::make_unique<grasplink::gui::ColliderOverlay>(m_World);
 
@@ -196,13 +290,15 @@ bool ViewerApp::InitRobot(const Entity& robotRoot)
     // 로봇 모델 사양에서 관절 수, 회전축, 허용 범위와 최대 속도를 가져온다.
     const auto& robotSpec = grasplink::robotics::models::hanwha::kHcr12a;
 
-    auto simController = std::make_unique<SimRobotController>(robotSpec);
+    // 모델 계층이 보관한 Local 변환을 합친 뒤 TCP를 정한다. World 변환의 역행렬을 사용하므로 로봇 전체 배치는 TCP 보정에 포함되지 않는다.
+    TransformSystemModule::UpdateWorldTransforms(m_World);
+    auto simController = std::make_unique<SimRobotController>(robotSpec, CalculateViewerTcp(robotRoot, m_RobotModel));
 
     const auto connectResult = simController->Connect();
 
     if (!connectResult)
     {
-        std::cerr << connectResult.message << '\n';
+        m_Logger.Write(grasplink::diagnostics::LogLevel::Error, "robot.connect", connectResult.message);
         return false;
     }
 
@@ -218,7 +314,7 @@ bool ViewerApp::InitRobot(const Entity& robotRoot)
         const auto moveResult = viewer_debug::StartRobotMotion(*m_RobotController, robotSpec);
         if (!moveResult)
         {
-            std::cerr << moveResult.message << '\n';
+            m_Logger.Write(grasplink::diagnostics::LogLevel::Error, "robot.demo_motion", moveResult.message);
             return false;
         }
     }
@@ -236,7 +332,7 @@ bool ViewerApp::InitGripper(const Entity& robotRoot)
         result = m_GripperController->Activate();
     if (!result)
     {
-        std::cerr << result.message << '\n';
+        m_Logger.Write(grasplink::diagnostics::LogLevel::Error, "gripper.initialize", result.message);
         return false;
     }
     m_GripperKinematics = std::make_unique<grasplink::robotics::kinematics::GripperKinematics>(specification);
@@ -249,7 +345,7 @@ bool ViewerApp::InitGripper(const Entity& robotRoot)
         const auto result = m_GripperController->Command({255, 255, 128});
         if (!result)
         {
-            std::cerr << result.message << '\n';
+            m_Logger.Write(grasplink::diagnostics::LogLevel::Error, "gripper.demo_command", result.message);
             return false;
         }
     }
@@ -259,7 +355,8 @@ bool ViewerApp::InitGripper(const Entity& robotRoot)
 
 void ViewerApp::ApplyControllerPoses()
 {
-    const auto& robotPose = m_RobotKinematics->Update(m_RobotController->GetState());
+    const auto& simulator = static_cast<const SimRobotController&>(*m_RobotController);
+    const auto& robotPose = m_RobotKinematics->Update(simulator.GetStateView());
     m_RobotTransformAdapter->Apply(robotPose);
     m_RobotPhysicsAdapter->Apply(robotPose);
     // 한 고정 tick에서 팔의 관절 자세와 그리퍼의 부모 기준 Local 회전을 함께 적용한다. 이어지는 World 변환 갱신으로 화면과 충돌 프록시가 같은 계층 자세를 얻는다.
@@ -280,17 +377,31 @@ void ViewerApp::InitPhysics(const Entity& robotRoot, Entity& floorEntity)
     // 그리퍼 본체와 여섯 관절에 Scene이 목표 자세를 정하는 Kinematic Body 설정을 만든다.
     // 충돌용 단순 형상은 원본 관절 Entity의 자식으로 두어 그 관절을 따라가게 한다.
     // GripperState에서 계산한 Local 회전을 원본 관절에 적용한 뒤 World 행렬을 갱신하면 자식인 충돌용 단순 형상도 함께 움직인다.
-    // 각 충돌 형상은 원본 관절의 자식이므로 따로 움직이는 adapter가 필요하지 않다. 현재 그리퍼 물리는 접촉 형상만 준비하며 접촉에 따른 정지와 파지는 구현하지 않는다.
+    // 각 충돌 형상은 원본 관절의 자식이므로 관절 자세를 전달하는 별도 adapter는 필요하지 않다. 접촉 정지와 물체 파지는 아래 GripperGraspAdapter가 물리 계산 결과를 받아 처리한다.
     // GUI의 보라색 선은 ECS에 지정한 shape를 깊이 가림 없이 그린 근사다. 화면 Mesh나 Jolt가 최종 생성한 hull을 직접 보여 주지는 않는다.
     grasplink::simulation::ConfigureTwoF85Colliders(
         *m_SceneManager->GetActiveScene(), robotRoot, m_RobotModel);
+    m_GraspBox = std::make_unique<Entity>(viewer_debug::CreateGraspBox(*m_SceneManager->GetActiveScene(), m_RobotShader));
+    m_PlacementArea = std::make_unique<Entity>(viewer_debug::CreatePlacementArea(*m_SceneManager->GetActiveScene(), m_RobotShader));
     if (m_Options.physicsDemo)
         viewer_debug::CreatePhysicsBoxes(
             *m_SceneManager->GetActiveScene(), m_RobotShader);
     // Physics Body를 만들기 전에 첫 FK 자세와 계층 World 행렬을 계산해 화면 Entity와 Kinematic 목표를 같은 위치에 맞춘다.
     ApplyControllerPoses();
     TransformSystemModule::UpdateWorldTransforms(m_World);
-    m_PhysicsSystemModule = std::make_unique<grasplink::simulation::PhysicsSystemModule>(m_World, *m_PhysicsWorld);
+    m_PhysicsSystemModule = std::make_unique<grasplink::simulation::PhysicsSystemModule>(
+        m_World, *m_PhysicsWorld, &m_Logger);
+    m_GripperGraspAdapter = std::make_unique<grasplink::simulation::GripperGraspAdapter>(
+        *m_PhysicsWorld, *m_PhysicsSystemModule,
+        static_cast<grasplink::robotics::backends::simulation::SimGripperController&>(*m_GripperController));
+    if (!m_GripperGraspAdapter->Bind(robotRoot))
+        throw std::runtime_error("ViewerApp: cannot bind gripper contact bodies");
+
+    m_RobotCollisionGuard = std::make_unique<grasplink::viewer::ViewerRobotCollisionGuard>(
+        static_cast<SimRobotController&>(*m_RobotController), *m_GripperController,
+        *m_RobotKinematics, *m_RobotTransformAdapter, *m_RobotPhysicsAdapter,
+        *m_GripperKinematics, *m_GripperTransformAdapter, m_World, *m_PhysicsWorld,
+        *m_PhysicsSystemModule, robotRoot);
 }
 
 
@@ -303,6 +414,7 @@ void ViewerApp::MainLoop()
 
     while (!m_Window->ShouldClose())
     {
+        auto frameProfile = m_Profiler.Measure("viewer.frame");
         const auto currentFrameTime = Clock::now();
         const double frameDeltaSeconds = m_Options.smokeTest ? 1.0 / 60.0
             : std::chrono::duration<double>(currentFrameTime - lastFrameTime).count();
@@ -321,15 +433,26 @@ void ViewerApp::MainLoop()
         // 고정 갱신에서는 Controller 상태를 읽어 FK를 계산하고 Entity 자세와 World 행렬을 만든 뒤 Jolt를 진행한다.
         // PhysicsSystem은 Kinematic Body의 목표 자세를 Jolt에 보내고, Dynamic Body가 계산한 결과를 ECS Local 값으로 되돌린다.
         // 물리 step 뒤 World 행렬을 다시 계산해야 다음 렌더가 부모와 자식의 최신 자세를 사용한다. 창이 최소화되어도 이 시뮬레이션 갱신은 계속된다.
-        m_ControlLoop.Advance(frameDeltaSeconds, [this](double fixedDeltaSeconds)
+        const std::size_t fixedTickCount = m_ControlLoop.Advance(frameDeltaSeconds, [this](double fixedDeltaSeconds)
         {
-            m_RobotController->Update(fixedDeltaSeconds);
-            m_GripperController->Update(fixedDeltaSeconds);
-            ApplyControllerPoses();
-            TransformSystemModule::UpdateWorldTransforms(m_World);
-            m_PhysicsSystemModule->Step(fixedDeltaSeconds);
-            TransformSystemModule::UpdateWorldTransforms(m_World);
+            m_Profiler.Trace("simulation.fixed_tick", [this, fixedDeltaSeconds]
+            {
+                // 열기·Reset·연결 해제 요청은 물리 계산 전에 파지 제약을 없애야 물체가 다음 계산부터 자유롭게 떨어진다.
+                m_GripperGraspAdapter->BeforePhysicsStep();
+                m_RobotCollisionGuard->CaptureSafeJointPose();
+                m_RobotController->Update(fixedDeltaSeconds);
+                m_GripperController->Update(fixedDeltaSeconds);
+                ApplyControllerPoses();
+                TransformSystemModule::UpdateWorldTransforms(m_World);
+                m_RobotCollisionGuard->RestoreSafePoseIfOverlapping();
+                m_PhysicsSystemModule->Step(fixedDeltaSeconds);
+                // Jolt가 이번 간격의 접촉을 모두 계산한 뒤 그리퍼에 결과를 돌려준다. 접촉 정지는 다음 고정 갱신부터 개폐 진행을 막는다.
+                m_GripperGraspAdapter->AfterPhysicsStep();
+                TransformSystemModule::UpdateWorldTransforms(m_World);
+            });
         });
+        m_Profiler.Metric("viewer.frame_delta", frameDeltaSeconds, "s");
+        m_Profiler.Metric("simulation.fixed_ticks_per_frame", static_cast<double>(fixedTickCount), "tick");
 
         // 최소화된 창은 framebuffer의 가로 또는 세로가 0일 수 있으므로, 이때 GPU 렌더링 단계만 건너뛴다.
         int framebufferWidth = 0;
@@ -341,23 +464,81 @@ void ViewerApp::MainLoop()
             continue;
 
         m_Renderer->Resize(framebufferWidth, framebufferHeight);
+        m_GuiModule->BeginFrame();
 
-        const float aspectRatio = static_cast<float>(framebufferWidth) / static_cast<float>(framebufferHeight);
+        const ImGuiIO& guiIo = ImGui::GetIO();
+        const float displayWidth = std::max(guiIo.DisplaySize.x, 1.0F);
+        const float displayHeight = std::max(guiIo.DisplaySize.y, 1.0F);
+        const float sidebarWidth = std::min(kControlSidebarWidth, displayWidth * 0.42F);
+        const float horizontalScale = static_cast<float>(framebufferWidth) / displayWidth;
+        const int sceneWidth = std::clamp(
+            static_cast<int>(std::lround((displayWidth - sidebarWidth) * horizontalScale)),
+            1, framebufferWidth);
+        const float aspectRatio = static_cast<float>(sceneWidth) / static_cast<float>(framebufferHeight);
         m_Camera->SetAspectRatio(aspectRatio);
+        m_Renderer->SetSceneViewport(0, 0, sceneWidth, framebufferHeight);
 
-        // 화면 주기 Scene 갱신과 World 행렬 계산을 마친 뒤 ECS가 저장한 collider 설정과 자세를 GUI overlay가 읽는다.
+        // Scene은 화면 왼쪽 viewport에 그린다. 오른쪽 ImGui sidebar는 같은 창 위에 고정 배치한다.
         m_Renderer->BeginFrame();
 
         m_SceneManager->OnUpdate(renderDeltaSeconds);
         TransformSystemModule::UpdateWorldTransforms(m_World);
         m_World.progress(renderDeltaSeconds);
-        m_GuiModule->BeginFrame();
-        m_GripperPanel->Draw(*m_GripperController);
-        m_PhysicsDebugPanel->Draw();
-        m_ColliderOverlay->Draw(*m_Camera, m_PhysicsDebugPanel->IsColliderVisible());
-        m_GuiModule->EndFrame();
-
+        const auto graspState = m_GripperGraspAdapter->GetState();
+        const glm::mat4 robotBaseWorld = m_RobotRoot->GetWorldMatrix();
+        const glm::mat4 worldToRobotBase = glm::inverse(robotBaseWorld);
+        const glm::quat worldToRobotBaseRotation = glm::inverse(RotationFromWorldMatrix(robotBaseWorld));
+        const glm::mat4 boxWorldMatrix = m_GraspBox->GetWorldMatrix();
+        const glm::vec3 boxInRobotBase(worldToRobotBase * boxWorldMatrix[3]);
+        const glm::quat boxRotationWorld = RotationFromWorldMatrix(boxWorldMatrix);
+        const glm::quat boxRotationInRobotBase = glm::normalize(worldToRobotBaseRotation * boxRotationWorld);
+        const glm::mat4 placementWorldMatrix = m_PlacementArea->GetWorldMatrix();
+        const glm::vec3 placementInRobotBase(worldToRobotBase * placementWorldMatrix[3]);
+        const glm::quat placementRotationWorld = RotationFromWorldMatrix(placementWorldMatrix);
+        const glm::quat placementRotationInRobotBase = glm::normalize(worldToRobotBaseRotation * placementRotationWorld);
+        grasplink::robotics::CartesianPose boxPose;
+        boxPose.positionMeters = {boxInRobotBase.x, boxInRobotBase.y, boxInRobotBase.z};
+        boxPose.orientationXyzw = {boxRotationInRobotBase.x, boxRotationInRobotBase.y,
+            boxRotationInRobotBase.z, boxRotationInRobotBase.w};
+        grasplink::robotics::CartesianPose placementPose;
+        placementPose.positionMeters = {placementInRobotBase.x, placementInRobotBase.y + 0.020, placementInRobotBase.z};
+        placementPose.orientationXyzw = {placementRotationInRobotBase.x, placementRotationInRobotBase.y,
+            placementRotationInRobotBase.z, placementRotationInRobotBase.w};
+        const float sidebarX = displayWidth - sidebarWidth;
+        ImGui::SetNextWindowPos(ImVec2(sidebarX, 0.0F), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(sidebarWidth, displayHeight), ImGuiCond_Always);
+        constexpr ImGuiWindowFlags sidebarFlags = ImGuiWindowFlags_NoTitleBar |
+            ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse |
+            ImGuiWindowFlags_NoSavedSettings;
+        ImGui::Begin("Robot controls", nullptr, sidebarFlags);
+        ImGui::TextUnformatted("GraspLink | HCR-12A");
+        ImGui::Separator();
+        m_RobotPanel->DrawContents(static_cast<SimRobotController&>(*m_RobotController), *m_GripperController,
+            graspState.grasped, boxPose, placementPose);
+        if (m_RobotPanel->ConsumeMissionSuccessEvent())
+        {
+            const auto nextPosition = viewer_debug::RandomGraspBoxPosition();
+            const auto nextGoalPosition = viewer_debug::RandomPlacementAreaPosition();
+            m_GraspBox->SetLocalPosition({nextPosition[0], nextPosition[1], nextPosition[2]});
+            m_GraspBox->SetLocalRotation(glm::angleAxis(viewer_debug::RandomPlanarRotationRadians(), glm::vec3{0.0F, 1.0F, 0.0F}));
+            m_PlacementArea->SetLocalPosition({nextGoalPosition[0], nextGoalPosition[1], nextGoalPosition[2]});
+            m_PlacementArea->SetLocalRotation(glm::angleAxis(viewer_debug::RandomPlanarRotationRadians(), glm::vec3{0.0F, 1.0F, 0.0F}));
+            TransformSystemModule::UpdateWorldTransforms(m_World);
+            const glm::mat4 boxTransform = m_GraspBox->GetWorldMatrix();
+            const auto boxHandle = m_PhysicsSystemModule->GetBodyHandle(m_GraspBox->GetHandle());
+            const glm::quat boxRotation = RotationFromWorldMatrix(boxTransform);
+            m_PhysicsWorld->SetBodyTransform(boxHandle, grasplink::physics::Transform{
+                glm::vec3(boxTransform[3]), boxRotation});
+            m_GripperGraspAdapter->Release();
+            m_RobotPanel->PrepareNextTask();
+        }
+        m_GripperPanel->DrawContents(*m_GripperController, &graspState);
+        m_PhysicsDebugPanel->DrawContents();
+        ImGui::End();
+        m_ColliderOverlay->Draw(*m_Camera, m_PhysicsDebugPanel->IsColliderVisible(),
+            ImVec2(displayWidth - sidebarWidth, displayHeight));
         m_Renderer->EndFrame();
+        m_GuiModule->EndFrame();
         m_Window->SwapBuffers();
         if (m_Options.smokeTest && ++renderedFrames >= 8)
             break;
@@ -371,6 +552,13 @@ void ViewerApp::Shutdown()
     m_ColliderOverlay.reset();
     m_PhysicsDebugPanel.reset();
     m_GripperPanel.reset();
+    m_RobotPanel.reset();
+    // 파지 제약은 연결된 Body와 PhysicsWorld를 빌려 쓰므로 Scene, Controller, 물리 시스템이 살아 있을 때 먼저 해제한다.
+    m_GripperGraspAdapter.reset();
+    // Controller가 guard를 참조하는 함수를 보관하므로 함수를 지운 뒤 빌린 객체보다 먼저 guard를 파괴한다.
+    if (m_RobotCollisionGuard)
+        m_RobotCollisionGuard->ClearControllerValidator();
+    m_RobotCollisionGuard.reset();
     // Scene Entity handle을 빌린 Adapter를 Scene보다 먼저 파괴해 소멸 처리 중 이미 삭제된 handle을 참조하지 않게 한다.
     m_RobotTransformAdapter.reset();
     m_GripperTransformAdapter.reset();
@@ -388,6 +576,9 @@ void ViewerApp::Shutdown()
 
     // Scene을 파괴하면 ECS 삭제 observer가 Jolt Body를 제거한다.
     // 따라서 SceneManager를 정리하는 동안 물리 시스템과 Jolt World를 유지한다.
+    m_RobotRoot.reset();
+    m_GraspBox.reset();
+    m_PlacementArea.reset();
     m_SceneManager.reset();
     m_PhysicsSystemModule.reset();
     m_GuiModule.reset();
@@ -406,4 +597,7 @@ void ViewerApp::Shutdown()
     m_Camera.reset();
     m_Renderer.reset();
     m_Window.reset();
+
+    m_Logger.Flush();
+    m_Logger.Shutdown();
 }

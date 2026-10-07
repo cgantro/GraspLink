@@ -16,6 +16,27 @@ include(CTest)
 
 
 # ============================================================
+# Diagnostics
+# ============================================================
+#
+# Logger와 Profiler는 domain/graphics 모듈과 독립된 비동기 기록 기능을 제공한다.
+#
+add_library(grasplink_diagnostics STATIC
+  modules/diagnostics/src/Logger.cpp
+  modules/diagnostics/src/Profiler.cpp
+  modules/diagnostics/include/diagnostics/Logger.h
+  modules/diagnostics/include/diagnostics/Profiler.h
+)
+
+target_include_directories(grasplink_diagnostics PUBLIC
+  modules/diagnostics/include
+)
+
+find_package(Threads REQUIRED)
+target_link_libraries(grasplink_diagnostics PUBLIC Threads::Threads)
+
+
+# ============================================================
 # Robotics
 # ============================================================
 #
@@ -26,6 +47,7 @@ add_library(grasplink_robotics STATIC
   modules/robotics/src/backends/simulation/SimRobotController.cpp
   modules/robotics/src/backends/simulation/SimGripperController.cpp
   modules/robotics/src/kinematics/RobotKinematics.cpp
+  modules/robotics/src/kinematics/RobotInverseKinematics.cpp
   modules/robotics/src/kinematics/GripperKinematics.cpp
 )
 
@@ -49,6 +71,8 @@ target_sources(grasplink_robotics PUBLIC
 
   modules/robotics/include/robotics/runtime/FixedControlLoop.h
   modules/robotics/include/robotics/kinematics/RobotKinematics.h
+  modules/robotics/include/robotics/kinematics/RobotInverseKinematics.h
+  modules/robotics/include/robotics/kinematics/detail/PoseMath.h
   modules/robotics/include/robotics/kinematics/GripperKinematics.h
 )
 
@@ -98,6 +122,19 @@ if(BUILD_TESTING)
   add_executable(grasplink_kinematics_tests tests/RobotKinematicsTests.cpp)
   target_link_libraries(grasplink_kinematics_tests PRIVATE grasplink_robotics)
   add_test(NAME RobotKinematics COMMAND grasplink_kinematics_tests)
+
+  add_executable(grasplink_inverse_kinematics_tests tests/RobotInverseKinematicsTests.cpp)
+  target_link_libraries(grasplink_inverse_kinematics_tests PRIVATE grasplink_robotics)
+  add_test(NAME RobotInverseKinematics COMMAND grasplink_inverse_kinematics_tests)
+
+  add_executable(grasplink_robot_motion_tests tests/RobotMotionTests.cpp)
+  target_link_libraries(grasplink_robot_motion_tests PRIVATE grasplink_robotics)
+  add_test(NAME RobotMotion COMMAND grasplink_robot_motion_tests)
+
+  add_executable(grasplink_robot_panel_motion_tests tests/RobotPanelMotionTests.cpp)
+  target_include_directories(grasplink_robot_panel_motion_tests PRIVATE modules/gui/include)
+  target_link_libraries(grasplink_robot_panel_motion_tests PRIVATE grasplink_robotics glm::glm)
+  add_test(NAME RobotPanelMotion COMMAND grasplink_robot_panel_motion_tests)
 
   add_executable(grasplink_gripper_runtime_tests tests/GripperRuntimeTests.cpp)
   target_link_libraries(grasplink_gripper_runtime_tests PRIVATE grasplink_robotics)
@@ -204,6 +241,7 @@ if(GRASPLINK_BUILD_GRAPHICS)
     modules/simulation/src/SimulationSceneBuilder.cpp
     modules/simulation/src/robotics/CollisionGeometry.cpp
     modules/simulation/src/robotics/GripperColliders.cpp
+    modules/simulation/src/robotics/GripperGraspAdapter.cpp
     modules/simulation/src/robotics/RobotPhysicsAdapter.cpp
     modules/simulation/src/systems/PhysicsSystemModule.cpp
     modules/simulation/include/simulation/SimulationSceneBuilder.h
@@ -211,6 +249,7 @@ if(GRASPLINK_BUILD_GRAPHICS)
     modules/simulation/include/simulation/components/RobotCollisionProxy.h
     modules/simulation/include/simulation/robotics/RobotPhysicsAdapter.h
     modules/simulation/include/simulation/robotics/GripperColliders.h
+    modules/simulation/include/simulation/robotics/GripperGraspAdapter.h
     modules/simulation/src/robotics/CollisionGeometry.h
     modules/simulation/include/simulation/systems/PhysicsSystemModule.h
   )
@@ -223,6 +262,7 @@ if(GRASPLINK_BUILD_GRAPHICS)
     grasplink_viewer
     grasplink_physics
     grasplink_robotics
+    grasplink_diagnostics
   )
 
   target_compile_definitions(grasplink_simulation PRIVATE
@@ -234,6 +274,8 @@ if(GRASPLINK_BUILD_GRAPHICS)
     modules/gui/include/gui/GuiModule.h
     modules/gui/src/panels/GripperPanel.cpp
     modules/gui/include/gui/panels/GripperPanel.h
+    modules/gui/src/panels/RobotPanel.cpp
+    modules/gui/include/gui/panels/RobotPanel.h
     modules/gui/src/panels/PhysicsDebugPanel.cpp
     modules/gui/include/gui/panels/PhysicsDebugPanel.h
     modules/gui/src/overlays/ColliderOverlay.cpp
@@ -262,11 +304,13 @@ if(GRASPLINK_BUILD_GRAPHICS)
   set(GRASPLINK_APP_SOURCES
     apps/viewer/main.cpp
     apps/viewer/ViewerApp.cpp
+    apps/viewer/ViewerRobotCollisionGuard.cpp
     apps/viewer/DebugSceneSetup.cpp
   )
 
   set(GRASPLINK_APP_HEADERS
     apps/viewer/ViewerApp.h
+    apps/viewer/ViewerRobotCollisionGuard.h
     apps/viewer/DebugSceneSetup.h
   )
 
@@ -285,6 +329,7 @@ if(GRASPLINK_BUILD_GRAPHICS)
     grasplink_viewer
     grasplink_robotics
     grasplink_physics
+    grasplink_diagnostics
   )
 
 
@@ -356,6 +401,12 @@ if(GRASPLINK_BUILD_GRAPHICS)
     target_link_libraries(grasplink_gripper_pose_tests PRIVATE grasplink_simulation)
     add_test(NAME GripperPoseIntegration COMMAND grasplink_gripper_pose_tests)
     set_tests_properties(GripperPoseIntegration PROPERTIES
+      WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" TIMEOUT 60)
+
+    add_executable(grasplink_gripper_grasp_tests tests/GripperGraspIntegrationTests.cpp)
+    target_link_libraries(grasplink_gripper_grasp_tests PRIVATE grasplink_simulation)
+    add_test(NAME GripperGraspIntegration COMMAND grasplink_gripper_grasp_tests)
+    set_tests_properties(GripperGraspIntegration PROPERTIES
       WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" TIMEOUT 60)
 
     add_test(NAME ViewerSmoke COMMAND grasplink_simulator --smoke-test)
