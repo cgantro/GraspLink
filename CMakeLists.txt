@@ -301,6 +301,25 @@ if(GRASPLINK_BUILD_GRAPHICS)
   )
 
 
+  add_library(grasplink_application STATIC
+    apps/viewer/PickPlaceMission.cpp
+    apps/viewer/PickPlaceMission.h
+  )
+
+  target_include_directories(grasplink_application PUBLIC
+    apps/viewer
+  )
+
+  target_link_libraries(grasplink_application PUBLIC
+    grasplink_robotics
+    glm::glm
+  )
+
+  target_compile_definitions(grasplink_application PRIVATE
+    GLM_ENABLE_EXPERIMENTAL
+  )
+
+
   # ----------------------------------------------------------
   # Simulator Application
   # ----------------------------------------------------------
@@ -329,6 +348,7 @@ if(GRASPLINK_BUILD_GRAPHICS)
 
   target_link_libraries(grasplink_simulator PRIVATE
     grasplink_gui
+    grasplink_application
     grasplink_simulation
     grasplink_viewer
     grasplink_robotics
@@ -365,6 +385,10 @@ if(GRASPLINK_BUILD_GRAPHICS)
   )
 
   if(BUILD_TESTING)
+    add_executable(grasplink_pick_place_mission_tests tests/PickPlaceMissionTests.cpp)
+    target_link_libraries(grasplink_pick_place_mission_tests PRIVATE grasplink_application)
+    add_test(NAME PickPlaceMission COMMAND grasplink_pick_place_mission_tests)
+
     add_executable(grasplink_gui_composition_tests tests/GuiCompositionTests.cpp)
     target_link_libraries(grasplink_gui_composition_tests PRIVATE grasplink_gui)
     add_test(NAME GuiComposition COMMAND grasplink_gui_composition_tests)

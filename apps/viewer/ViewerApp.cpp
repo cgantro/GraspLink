@@ -513,9 +513,22 @@ void ViewerApp::MainLoop()
         ImGui::Begin("Robot controls", nullptr, sidebarFlags);
         ImGui::TextUnformatted("GraspLink | HCR-12A");
         ImGui::Separator();
-        m_RobotPanel->DrawContents(static_cast<SimRobotController&>(*m_RobotController), *m_GripperController,
+        auto& simulationController = static_cast<SimRobotController&>(*m_RobotController);
+        const auto& stateForMission = simulationController.GetStateView();
+        m_PickPlaceMission.Update(stateForMission, *m_RobotController, *m_GripperController,
             graspState.grasped, boxPose, placementPose);
-        if (m_RobotPanel->ConsumeMissionSuccessEvent())
+        const auto& robotState = simulationController.GetStateView();
+        const auto mission = m_PickPlaceMission.Snapshot();
+        const grasplink::gui::RobotPanelMissionView missionView{mission.stageLabel, mission.lastMessage,
+            mission.completedCount, 2.0, 8.0, mission.paused, mission.missionSucceeded,
+            mission.autoRepeat, mission.hasResult, mission.lastRequestAccepted, mission.canStart};
+        const grasplink::gui::RobotPanelView robotPanelView{robotState,
+            simulationController.GetSpecification(), boxPose, placementPose, missionView};
+        const auto panelActions = m_RobotPanel->DrawContents(robotPanelView);
+        m_PickPlaceMission.ApplyActions({panelActions.start, panelActions.resume, panelActions.stop},
+            simulationController.GetStateView(),
+            *m_RobotController, *m_GripperController, graspState.grasped, boxPose, placementPose);
+        if (m_PickPlaceMission.ConsumeSuccessEvent())
         {
             const auto nextPosition = viewer_debug::RandomGraspBoxPosition();
             const auto nextGoalPosition = viewer_debug::RandomPlacementAreaPosition();
@@ -530,7 +543,7 @@ void ViewerApp::MainLoop()
             m_PhysicsWorld->SetBodyTransform(boxHandle, grasplink::physics::Transform{
                 glm::vec3(boxTransform[3]), boxRotation});
             m_GripperGraspAdapter->Release();
-            m_RobotPanel->PrepareNextTask();
+            m_PickPlaceMission.PrepareNextTask();
         }
         m_GripperPanel->DrawContents(*m_GripperController, &graspState);
         m_PhysicsDebugPanel->DrawContents();

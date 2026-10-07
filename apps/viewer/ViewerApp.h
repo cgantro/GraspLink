@@ -4,6 +4,8 @@
 #include "diagnostics/Logger.h"
 #include "diagnostics/Profiler.h"
 #include "assets/GraphicsTypes.h"
+#include "PickPlaceMission.h"
+#include "robotics/models/hanwha/Hcr12a.h"
 
 #include <flecs.h>
 #include <memory>
@@ -170,6 +172,7 @@ private:
     std::unique_ptr<grasplink::gui::GuiModule> m_GuiModule;
     std::unique_ptr<grasplink::gui::GripperPanel> m_GripperPanel;
     std::unique_ptr<grasplink::gui::RobotPanel> m_RobotPanel;
+    grasplink::viewer::PickPlaceMission m_PickPlaceMission{grasplink::robotics::models::hanwha::kHcr12a};
     std::unique_ptr<grasplink::gui::PhysicsDebugPanel> m_PhysicsDebugPanel;
     std::unique_ptr<grasplink::gui::ColliderOverlay> m_ColliderOverlay;
 
