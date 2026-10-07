@@ -6,6 +6,7 @@
 /Build/
 /CMakeBuild/
 
+logs/*
 # CMake generated files
 CMakeCache.txt
 CMakeScripts/
