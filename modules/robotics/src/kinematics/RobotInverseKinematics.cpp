@@ -18,6 +18,15 @@ using namespace detail;
 using SixVector = std::array<double, 6>;
 using SixMatrix = std::array<SixVector, 6>;
 
+constexpr std::size_t kMaximumDampingAttempts = 8;
+constexpr std::size_t kMaximumLineSearchSteps = 10;
+constexpr double kSingularSystemDampingGrowth = 10.0;
+constexpr double kRejectedStepDampingGrowth = 4.0;
+constexpr double kAcceptedStepDampingDecay = 0.5;
+constexpr double kMinimumDampingRatio = 0.01;
+// 6×6 DLS normal equation에서 pivot이 이보다 작으면 double 정밀도에서 불안정한 나눗셈으로 본다.
+constexpr double kNormalEquationPivotCutoff = 1e-24;
+
 bool Positive(double value) { return std::isfinite(value) && value > 0.0; }
 
 bool SolveSystem(SixMatrix matrix, SixVector right, SixVector& answer)
@@ -29,7 +38,8 @@ bool SolveSystem(SixMatrix matrix, SixVector right, SixVector& answer)
         for (std::size_t row = column + 1; row < 6; ++row)
             if (std::abs(matrix[row][column]) > std::abs(matrix[pivot][column]))
                 pivot = row;
-        if (!std::isfinite(matrix[pivot][column]) || std::abs(matrix[pivot][column]) <= 1e-24)
+        if (!std::isfinite(matrix[pivot][column]) ||
+            std::abs(matrix[pivot][column]) <= kNormalEquationPivotCutoff)
             return false;
         std::swap(matrix[pivot], matrix[column]);
         std::swap(right[pivot], right[column]);
@@ -171,7 +181,7 @@ IkResult DampedLeastSquaresIk::SolveFromSeed(const CartesianPose& targetInBase, 
 
         bool improved = false;
         boundaryBlocked = false;
-        for (int attempt = 0; attempt < 8 && !improved; ++attempt)
+        for (std::size_t attempt = 0; attempt < kMaximumDampingAttempts && !improved; ++attempt)
         {
             // Damped Least Squares는 Δq = Jᵀ (J Jᵀ + λ² I)⁻¹ e를 계산한다.
             // e는 위치·회전 오차이고 λ는 damping이다. λ²를 대각에 더하면 특이 자세에서도 역행렬 대신 안정적인 연립방정식을 풀 수 있지만 도달 가능한 해의 수렴을 보장하지는 않는다.
@@ -186,7 +196,7 @@ IkResult DampedLeastSquaresIk::SolveFromSeed(const CartesianPose& targetInBase, 
             SixVector taskStep{};
             if (!SolveSystem(normal, error.weighted, taskStep))
             {
-                damping *= 10.0;
+                damping *= kSingularSystemDampingGrowth;
                 continue;
             }
             JointVector jointStep(angles.size(), 0.0);
@@ -200,7 +210,7 @@ IkResult DampedLeastSquaresIk::SolveFromSeed(const CartesianPose& targetInBase, 
             if (!std::isfinite(largest))
                 return fail(IkStatus::DidNotConverge, "IK: non-finite numerical step");
             const double stepScale = largest > options.maxJointStepRadians ? options.maxJointStepRadians / largest : 1.0;
-            for (int line = 0; line < 10 && !improved; ++line)
+            for (std::size_t line = 0; line < kMaximumLineSearchSteps && !improved; ++line)
             {
                 const double fraction = stepScale * std::ldexp(1.0, -line);
                 JointVector candidate = angles;
@@ -219,12 +229,13 @@ IkResult DampedLeastSquaresIk::SolveFromSeed(const CartesianPose& targetInBase, 
                     // 오차가 실제로 줄었으면 damping을 낮춰 특이 자세 근처의 작은 변화율도 더 정확히 따른다.
                     // 초기값을 항상 하한으로 쓰면 홈 자세의 손목처럼 거의 겹친 축에서 필요한 관절 변화가 지나치게 억제되어 도달 가능한 목표도 반복 한도에 막힐 수 있다.
                     // 초기값의 1%를 하한으로 남기고 maxJointStepRadians와 오차 감소 검사를 유지해 큰 관절 변화는 계속 제한한다.
-                    damping = std::max(options.damping * 0.01, damping * 0.5);
+                    damping = std::max(options.damping * kMinimumDampingRatio,
+                        damping * kAcceptedStepDampingDecay);
                     improved = true;
                 }
             }
             if (!improved)
-                damping *= 4.0;
+                damping *= kRejectedStepDampingGrowth;
         }
         if (!improved)
             return fail(boundaryBlocked ? IkStatus::JointLimitReached : IkStatus::DidNotConverge,
