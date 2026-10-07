@@ -139,6 +139,113 @@ glm::dquat ClosestSquarePlacementOrientation(const glm::dquat& goalBoxOrientatio
     }
     return bestTcpOrientation;
 }
+
+robotics::CartesianPose MakeBoxTarget(const robotics::CartesianPose& boxPose, double heightOffset,
+    const std::array<double, 4>& orientation)
+{
+    robotics::CartesianPose target = boxPose;
+    target.orientationXyzw = orientation;
+    target.positionMeters[1] += heightOffset;
+    return target;
+}
+
+robotics::CartesianPose MakePlacementTarget(const robotics::CartesianPose& placementPose,
+    const std::array<double, 4>& placementBoxOrientation, const std::array<double, 4>& boxRotationOffsetInTool,
+    const std::array<double, 3>& boxOffsetInTool, double heightOffset)
+{
+    const glm::dquat boxRotationOffset{boxRotationOffsetInTool[3], boxRotationOffsetInTool[0],
+        boxRotationOffsetInTool[1], boxRotationOffsetInTool[2]};
+    const glm::dquat tcpOrientation = glm::normalize(
+        Orientation(placementBoxOrientation) * glm::inverse(boxRotationOffset));
+    const glm::dvec3 boxOffset = tcpOrientation *
+        glm::dvec3{boxOffsetInTool[0], boxOffsetInTool[1], boxOffsetInTool[2]};
+    robotics::CartesianPose target{};
+    target.orientationXyzw = QuaternionXyzw(tcpOrientation);
+    target.positionMeters = {placementPose.positionMeters[0] - boxOffset.x,
+        placementPose.positionMeters[1] + heightOffset - boxOffset.y,
+        placementPose.positionMeters[2] - boxOffset.z};
+    return target;
+}
+
+robotics::CartesianPose MakeAttachedBoxTarget(const robotics::CartesianPose& boxPose, double heightOffset,
+    const glm::dquat& tcpOrientation, const std::array<double, 3>& boxOffsetInTool)
+{
+    const glm::dvec3 boxOffset = tcpOrientation *
+        glm::dvec3{boxOffsetInTool[0], boxOffsetInTool[1], boxOffsetInTool[2]};
+    robotics::CartesianPose target{};
+    target.orientationXyzw = QuaternionXyzw(tcpOrientation);
+    target.positionMeters = {boxPose.positionMeters[0] - boxOffset.x,
+        boxPose.positionMeters[1] + heightOffset - boxOffset.y,
+        boxPose.positionMeters[2] - boxOffset.z};
+    return target;
+}
+
+robotics::CartesianPose MakeAttachedBoxPose(const robotics::CartesianPose& boxPose, double heightOffset,
+    const std::array<double, 4>& boxRotationOffsetInTool, const std::array<double, 3>& boxOffsetInTool)
+{
+    const glm::dquat rotationOffset{boxRotationOffsetInTool[3], boxRotationOffsetInTool[0],
+        boxRotationOffsetInTool[1], boxRotationOffsetInTool[2]};
+    const glm::dquat tcpOrientation = glm::normalize(
+        Orientation(boxPose.orientationXyzw) * glm::inverse(rotationOffset));
+    return MakeAttachedBoxTarget(boxPose, heightOffset, tcpOrientation, boxOffsetInTool);
+}
+
+bool MoveTo(const robotics::CartesianPose& pose, robotics::IRobotController& controller,
+    robotics::Result& lastResult, bool& hasResult)
+{
+    lastResult = controller.MoveLinear({pose, kLinearVelocityMetersPerSecond, kAngularVelocityRadiansPerSecond,
+        kLinearAccelerationMetersPerSecondSquared, kAngularAccelerationRadiansPerSecondSquared});
+    hasResult = true;
+    return lastResult.Ok();
+}
+
+bool MovePath(const std::array<robotics::CartesianPose, 6>& poses, std::size_t count,
+    robotics::IRobotController& controller, robotics::Result& lastResult, bool& hasResult)
+{
+    robotics::LinearPathMoveCommand command;
+    command.targetPoses.assign(poses.begin(), poses.begin() + count);
+    command.maxLinearVelocityMetersPerSecond = kLinearVelocityMetersPerSecond;
+    command.maxAngularVelocityRadiansPerSecond = kAngularVelocityRadiansPerSecond;
+    command.maxLinearAccelerationMetersPerSecondSquared = kLinearAccelerationMetersPerSecondSquared;
+    command.maxAngularAccelerationRadiansPerSecondSquared = kAngularAccelerationRadiansPerSecondSquared;
+    lastResult = controller.MoveLinearPath(command);
+    hasResult = true;
+    return lastResult.Ok();
+}
+
+bool CommandGripper(std::uint8_t position, robotics::IGripperController& gripper,
+    robotics::Result& lastResult, bool& hasResult)
+{
+    robotics::GripperCommand command;
+    command.positionRequest = position;
+    command.speedRequest = 255;
+    command.forceRequest = 128;
+    lastResult = gripper.Command(command);
+    hasResult = true;
+    return lastResult.Ok();
+}
+
+bool AlignWristOnly(const robotics::models::RobotSpecification& specification,
+    const robotics::RobotState& state, const std::array<double, 4>& targetOrientation, bool carryingBox,
+    const std::array<double, 3>& boxOffsetInTool, robotics::IRobotController& controller,
+    robotics::Result& lastResult, bool& hasResult)
+{
+    const std::optional<std::array<double, 3>> attachedOffset = carryingBox
+        ? std::optional<std::array<double, 3>>{boxOffsetInTool}
+        : std::nullopt;
+    const auto plan = robotics::planning::PlanWristOnlyTarget(
+        specification, state, targetOrientation, attachedOffset);
+    if (!plan)
+    {
+        lastResult = {robotics::ErrorCode::Unsupported,
+            "RobotPanel: wrist alignment needs another axis, exceeds a J6 limit, or moves the attached box over 20 mm"};
+        hasResult = true;
+        return false;
+    }
+    lastResult = controller.MoveJoint({plan->jointPositionRadians, 1.0, 1.0});
+    hasResult = true;
+    return lastResult.Ok();
+}
 }
 
 
@@ -165,99 +272,21 @@ void PickPlaceMission::Update(const robotics::RobotState& state, robotics::IRobo
     const robotics::CartesianPose& graspBoxPoseInBase,
     const robotics::CartesianPose& placementPoseInBase)
 {
-    const auto makeBoxTarget = [&](const robotics::CartesianPose& boxPose, double heightOffset,
-        const std::array<double, 4>& orientation)
-    {
-        robotics::CartesianPose target = boxPose;
-        target.orientationXyzw = orientation;
-        target.positionMeters[1] += heightOffset;
-        return target;
-    };
-    const auto makePlacementTarget = [&](double heightOffset)
-    {
-        robotics::CartesianPose target{};
-        const glm::dquat targetBoxOrientation = Orientation(placementBoxOrientationXyzw_);
-        const glm::dquat boxRotationOffset{boxRotationOffsetInTool_[3], boxRotationOffsetInTool_[0],
-            boxRotationOffsetInTool_[1], boxRotationOffsetInTool_[2]};
-        const glm::dquat targetTcpOrientation = glm::normalize(targetBoxOrientation * glm::inverse(boxRotationOffset));
-        const glm::dvec3 boxOffset = targetTcpOrientation *
-            glm::dvec3{boxOffsetInTool_[0], boxOffsetInTool_[1], boxOffsetInTool_[2]};
-        target.orientationXyzw = QuaternionXyzw(targetTcpOrientation);
-        target.positionMeters = {
-            placementPoseInBase.positionMeters[0] - boxOffset.x,
-            placementPoseInBase.positionMeters[1] + heightOffset - boxOffset.y,
-            placementPoseInBase.positionMeters[2] - boxOffset.z};
-        return target;
-    };
-    const auto makeAttachedBoxTarget = [&](const robotics::CartesianPose& boxPose, double heightOffset,
-        const glm::dquat& tcpOrientation)
-    {
-        robotics::CartesianPose target{};
-        const glm::dquat boxRotationOffset{boxRotationOffsetInTool_[3], boxRotationOffsetInTool_[0],
-            boxRotationOffsetInTool_[1], boxRotationOffsetInTool_[2]};
-        const glm::dvec3 boxOffset = tcpOrientation *
-            glm::dvec3{boxOffsetInTool_[0], boxOffsetInTool_[1], boxOffsetInTool_[2]};
-        target.orientationXyzw = QuaternionXyzw(tcpOrientation);
-        target.positionMeters = {boxPose.positionMeters[0] - boxOffset.x,
-            boxPose.positionMeters[1] + heightOffset - boxOffset.y,
-            boxPose.positionMeters[2] - boxOffset.z};
-        return target;
-    };
-    const auto makeAttachedBoxPose = [&](const robotics::CartesianPose& boxPose, double heightOffset)
-    {
-        const glm::dquat boxRotationOffset{boxRotationOffsetInTool_[3], boxRotationOffsetInTool_[0],
-            boxRotationOffsetInTool_[1], boxRotationOffsetInTool_[2]};
-        const glm::dquat tcpOrientation = glm::normalize(
-            Orientation(boxPose.orientationXyzw) * glm::inverse(boxRotationOffset));
-        return makeAttachedBoxTarget(boxPose, heightOffset, tcpOrientation);
-    };
-    const auto moveTo = [&](const robotics::CartesianPose& pose)
-    {
-        lastResult_ = controller.MoveLinear({pose, kLinearVelocityMetersPerSecond, kAngularVelocityRadiansPerSecond,
-            kLinearAccelerationMetersPerSecondSquared, kAngularAccelerationRadiansPerSecondSquared});
-        hasResult_ = true;
-        return lastResult_.Ok();
-    };
-    const auto movePath = [&](const std::array<robotics::CartesianPose, 6>& poses, std::size_t count)
-    {
-        robotics::LinearPathMoveCommand command;
-        command.targetPoses.assign(poses.begin(), poses.begin() + count);
-        command.maxLinearVelocityMetersPerSecond = kLinearVelocityMetersPerSecond;
-        command.maxAngularVelocityRadiansPerSecond = kAngularVelocityRadiansPerSecond;
-        command.maxLinearAccelerationMetersPerSecondSquared = kLinearAccelerationMetersPerSecondSquared;
-        command.maxAngularAccelerationRadiansPerSecondSquared = kAngularAccelerationRadiansPerSecondSquared;
-        lastResult_ = controller.MoveLinearPath(command);
-        hasResult_ = true;
-        return lastResult_.Ok();
-    };
+    const auto makeBoxTarget = [](const auto& boxPose, double height, const auto& orientation)
+        { return MakeBoxTarget(boxPose, height, orientation); };
+    const auto makePlacementTarget = [&](double height)
+        { return MakePlacementTarget(placementPoseInBase, placementBoxOrientationXyzw_, boxRotationOffsetInTool_, boxOffsetInTool_, height); };
+    const auto makeAttachedBoxTarget = [&](const auto& boxPose, double height, const auto& tcpOrientation)
+        { return MakeAttachedBoxTarget(boxPose, height, tcpOrientation, boxOffsetInTool_); };
+    const auto makeAttachedBoxPose = [&](const auto& boxPose, double height)
+        { return MakeAttachedBoxPose(boxPose, height, boxRotationOffsetInTool_, boxOffsetInTool_); };
+    const auto moveTo = [&](const auto& pose) { return MoveTo(pose, controller, lastResult_, hasResult_); };
+    const auto movePath = [&](const auto& poses, std::size_t count)
+        { return MovePath(poses, count, controller, lastResult_, hasResult_); };
     const auto commandGripper = [&](std::uint8_t position)
-    {
-        robotics::GripperCommand command;
-        command.positionRequest = position;
-        command.speedRequest = 255;
-        command.forceRequest = 128;
-        lastResult_ = gripper.Command(command);
-        hasResult_ = true;
-        return lastResult_.Ok();
-    };
-    const auto alignWristOnly = [&](const std::array<double, 4>& targetOrientation, bool carryingBox)
-    {
-        const std::optional<std::array<double, 3>> attachedOffset = carryingBox
-            ? std::optional<std::array<double, 3>>{boxOffsetInTool_}
-            : std::nullopt;
-        const auto plan = robotics::planning::PlanWristOnlyTarget(
-            specification_, state, targetOrientation, attachedOffset);
-        if (!plan)
-        {
-            lastResult_ = {robotics::ErrorCode::Unsupported,
-                "RobotPanel: wrist alignment needs another axis, exceeds a J6 limit, or moves the attached box over 20 mm"};
-            hasResult_ = true;
-            return false;
-        }
-        lastResult_ = controller.MoveJoint({plan->jointPositionRadians, 1.0, 1.0});
-        hasResult_ = true;
-        return lastResult_.Ok();
-    };
+        { return CommandGripper(position, gripper, lastResult_, hasResult_); };
+    const auto alignWristOnly = [&](const auto& orientation, bool carryingBox)
+        { return AlignWristOnly(specification_, state, orientation, carryingBox, boxOffsetInTool_, controller, lastResult_, hasResult_); };
     // Viewer가 겹친 틱을 취소하면 Controller는 직전 관절각에서 Idle로 멈추고 충돌 원인을 남긴다. 여기서는 하강을 이어가지 않고 저장한 높이로 후퇴한다.
     const bool collisionStopped = state.mode == robotics::RobotMode::Idle &&
         state.faultCode == static_cast<std::uint32_t>(robotics::ErrorCode::EnvironmentContact) &&
@@ -468,99 +497,21 @@ void PickPlaceMission::ApplyActions(const RobotPanelActions& actions,
     const robotics::CartesianPose& graspBoxPoseInBase,
     const robotics::CartesianPose& placementPoseInBase)
 {
-    const auto makeBoxTarget = [&](const robotics::CartesianPose& boxPose, double heightOffset,
-        const std::array<double, 4>& orientation)
-    {
-        robotics::CartesianPose target = boxPose;
-        target.orientationXyzw = orientation;
-        target.positionMeters[1] += heightOffset;
-        return target;
-    };
-    const auto makePlacementTarget = [&](double heightOffset)
-    {
-        robotics::CartesianPose target{};
-        const glm::dquat targetBoxOrientation = Orientation(placementBoxOrientationXyzw_);
-        const glm::dquat boxRotationOffset{boxRotationOffsetInTool_[3], boxRotationOffsetInTool_[0],
-            boxRotationOffsetInTool_[1], boxRotationOffsetInTool_[2]};
-        const glm::dquat targetTcpOrientation = glm::normalize(targetBoxOrientation * glm::inverse(boxRotationOffset));
-        const glm::dvec3 boxOffset = targetTcpOrientation *
-            glm::dvec3{boxOffsetInTool_[0], boxOffsetInTool_[1], boxOffsetInTool_[2]};
-        target.orientationXyzw = QuaternionXyzw(targetTcpOrientation);
-        target.positionMeters = {
-            placementPoseInBase.positionMeters[0] - boxOffset.x,
-            placementPoseInBase.positionMeters[1] + heightOffset - boxOffset.y,
-            placementPoseInBase.positionMeters[2] - boxOffset.z};
-        return target;
-    };
-    const auto makeAttachedBoxTarget = [&](const robotics::CartesianPose& boxPose, double heightOffset,
-        const glm::dquat& tcpOrientation)
-    {
-        robotics::CartesianPose target{};
-        const glm::dquat boxRotationOffset{boxRotationOffsetInTool_[3], boxRotationOffsetInTool_[0],
-            boxRotationOffsetInTool_[1], boxRotationOffsetInTool_[2]};
-        const glm::dvec3 boxOffset = tcpOrientation *
-            glm::dvec3{boxOffsetInTool_[0], boxOffsetInTool_[1], boxOffsetInTool_[2]};
-        target.orientationXyzw = QuaternionXyzw(tcpOrientation);
-        target.positionMeters = {boxPose.positionMeters[0] - boxOffset.x,
-            boxPose.positionMeters[1] + heightOffset - boxOffset.y,
-            boxPose.positionMeters[2] - boxOffset.z};
-        return target;
-    };
-    const auto makeAttachedBoxPose = [&](const robotics::CartesianPose& boxPose, double heightOffset)
-    {
-        const glm::dquat boxRotationOffset{boxRotationOffsetInTool_[3], boxRotationOffsetInTool_[0],
-            boxRotationOffsetInTool_[1], boxRotationOffsetInTool_[2]};
-        const glm::dquat tcpOrientation = glm::normalize(
-            Orientation(boxPose.orientationXyzw) * glm::inverse(boxRotationOffset));
-        return makeAttachedBoxTarget(boxPose, heightOffset, tcpOrientation);
-    };
-    const auto moveTo = [&](const robotics::CartesianPose& pose)
-    {
-        lastResult_ = controller.MoveLinear({pose, kLinearVelocityMetersPerSecond, kAngularVelocityRadiansPerSecond,
-            kLinearAccelerationMetersPerSecondSquared, kAngularAccelerationRadiansPerSecondSquared});
-        hasResult_ = true;
-        return lastResult_.Ok();
-    };
-    const auto movePath = [&](const std::array<robotics::CartesianPose, 6>& poses, std::size_t count)
-    {
-        robotics::LinearPathMoveCommand command;
-        command.targetPoses.assign(poses.begin(), poses.begin() + count);
-        command.maxLinearVelocityMetersPerSecond = kLinearVelocityMetersPerSecond;
-        command.maxAngularVelocityRadiansPerSecond = kAngularVelocityRadiansPerSecond;
-        command.maxLinearAccelerationMetersPerSecondSquared = kLinearAccelerationMetersPerSecondSquared;
-        command.maxAngularAccelerationRadiansPerSecondSquared = kAngularAccelerationRadiansPerSecondSquared;
-        lastResult_ = controller.MoveLinearPath(command);
-        hasResult_ = true;
-        return lastResult_.Ok();
-    };
+    const auto makeBoxTarget = [](const auto& boxPose, double height, const auto& orientation)
+        { return MakeBoxTarget(boxPose, height, orientation); };
+    const auto makePlacementTarget = [&](double height)
+        { return MakePlacementTarget(placementPoseInBase, placementBoxOrientationXyzw_, boxRotationOffsetInTool_, boxOffsetInTool_, height); };
+    const auto makeAttachedBoxTarget = [&](const auto& boxPose, double height, const auto& tcpOrientation)
+        { return MakeAttachedBoxTarget(boxPose, height, tcpOrientation, boxOffsetInTool_); };
+    const auto makeAttachedBoxPose = [&](const auto& boxPose, double height)
+        { return MakeAttachedBoxPose(boxPose, height, boxRotationOffsetInTool_, boxOffsetInTool_); };
+    const auto moveTo = [&](const auto& pose) { return MoveTo(pose, controller, lastResult_, hasResult_); };
+    const auto movePath = [&](const auto& poses, std::size_t count)
+        { return MovePath(poses, count, controller, lastResult_, hasResult_); };
     const auto commandGripper = [&](std::uint8_t position)
-    {
-        robotics::GripperCommand command;
-        command.positionRequest = position;
-        command.speedRequest = 255;
-        command.forceRequest = 128;
-        lastResult_ = gripper.Command(command);
-        hasResult_ = true;
-        return lastResult_.Ok();
-    };
-    const auto alignWristOnly = [&](const std::array<double, 4>& targetOrientation, bool carryingBox)
-    {
-        const std::optional<std::array<double, 3>> attachedOffset = carryingBox
-            ? std::optional<std::array<double, 3>>{boxOffsetInTool_}
-            : std::nullopt;
-        const auto plan = robotics::planning::PlanWristOnlyTarget(
-            specification_, state, targetOrientation, attachedOffset);
-        if (!plan)
-        {
-            lastResult_ = {robotics::ErrorCode::Unsupported,
-                "RobotPanel: wrist alignment needs another axis, exceeds a J6 limit, or moves the attached box over 20 mm"};
-            hasResult_ = true;
-            return false;
-        }
-        lastResult_ = controller.MoveJoint({plan->jointPositionRadians, 1.0, 1.0});
-        hasResult_ = true;
-        return lastResult_.Ok();
-    };
+        { return CommandGripper(position, gripper, lastResult_, hasResult_); };
+    const auto alignWristOnly = [&](const auto& orientation, bool carryingBox)
+        { return AlignWristOnly(specification_, state, orientation, carryingBox, boxOffsetInTool_, controller, lastResult_, hasResult_); };
     const bool canStart = !taskPaused_ && !boxGrasped &&
         (stage_ == Stage::Ready || stage_ == Stage::Complete || stage_ == Stage::Failed);
     // 첫 임무는 버튼으로 시작하고 성공 뒤에는 Viewer가 상자를 옮기고 Ready로 돌려놓아 자동으로 다음 임무를 시작한다.

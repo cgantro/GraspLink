@@ -52,9 +52,7 @@ struct Fixture
 
     explicit Fixture(bool unilateral = false, bool sameSide = false)
     {
-        scenes.LoadScene<Scene>();
-        scenes.OnUpdate(0.0F);
-        Scene& scene = *scenes.GetActiveScene();
+        Scene& scene = *LoadTestScene(scenes);
         root = scene.CreateEntity("RobotRoot");
         anchor = Box(scene, "AnchorProxy", {0.0F, 1.0F, 0.8F}, {0.04F, 0.04F, 0.04F}, BodyMotionType::Kinematic);
         left = Box(scene, "LeftTipProxy", {-0.145F, sameSide ? 0.93F : 1.0F, 0.0F},
@@ -69,7 +67,7 @@ struct Fixture
         right.SetParent(root);
         object = Box(scene, "Object", {0.0F, 1.0F, 0.0F}, {0.1F, 0.1F, 0.1F}, BodyMotionType::Dynamic);
         TransformSystemModule::UpdateWorldTransforms(world);
-        system = std::make_unique<grasplink::simulation::PhysicsSystemModule>(world, physics);
+        system = CreateTestPhysicsSystem(world, physics);
         Require(controller.Connect().Ok() && controller.Activate().Ok(), "controller activated");
         Require(controller.Command({255, 255, 128}).Ok(), "close command accepted");
         grasp = std::make_unique<grasplink::simulation::GripperGraspAdapter>(physics, *system, controller);
@@ -301,10 +299,8 @@ void CheckAuthoredGripperContacts()
     flecs::world world;
     PhysicsWorld physics;
     SceneManager scenes{world};
-    scenes.LoadScene<Scene>();
-    scenes.OnUpdate(0.0F);
-    Scene& scene = *scenes.GetActiveScene();
-    const ModelResource model = GltfLoader::LoadGLB(std::filesystem::path("assets") / "HCR12A_2F-85.glb");
+    Scene& scene = *LoadTestScene(scenes);
+    const ModelResource model = LoadTestGlb("HCR12A_2F-85.glb");
     Entity root = scene.CreateEntity("AuthoredRobotRoot");
     int gripperIndex = -1;
     for (std::size_t node = 0; node < model.nodes.size(); ++node)
@@ -411,10 +407,8 @@ void CheckRobotControllerCarriesAuthoredGrasp()
     flecs::world world;
     PhysicsWorld physics;
     SceneManager scenes{world};
-    scenes.LoadScene<Scene>();
-    scenes.OnUpdate(0.0F);
-    Scene& scene = *scenes.GetActiveScene();
-    const ModelResource model = GltfLoader::LoadGLB(std::filesystem::path("assets") / "HCR12A_2F-85.glb");
+    Scene& scene = *LoadTestScene(scenes);
+    const ModelResource model = LoadTestGlb("HCR12A_2F-85.glb");
     Require(model.rootNodeIndex >= 0, "full robot GLB has authored root");
     std::function<Entity(int, const Entity&)> createTree = [&](int index, const Entity& parent)
     {

@@ -73,9 +73,7 @@ int main()
         Require(builtGeometry.baseShapes.empty(), "model without a Base node has no base geometry");
         flecs::world world;
         SceneManager scenes(world);
-        scenes.LoadScene<Scene>();
-        scenes.OnUpdate(0.0F);
-        auto& scene = *scenes.GetActiveScene();
+        auto& scene = *LoadTestScene(scenes);
         Entity root = scene.CreateEntity("RobotRoot");
         grasplink::simulation::RobotPhysicsAdapter adapter(scene, root, spec, model);
         std::size_t syntheticLinkIndex = 0;
@@ -110,7 +108,7 @@ int main()
         scenes.OnUpdate(0.0F);
         ExpectThrows<std::runtime_error>([&] { adapter.Apply(fk.Update(state)); }, "removed Scene invalidates physics proxy bindings");
         // 여섯 팔 Link에는 현재 121개 볼록 껍질이 만들어지고 Base의 hull은 별도로 집계한다. 전체 수의 150개 상한으로 형상 복잡도의 예상 밖 증가를 검출한다.
-        const auto actualModel = GltfLoader::LoadGLB(std::filesystem::path("assets") / "HCR12A_2F-85.glb");
+        const auto actualModel = LoadTestGlb("HCR12A_2F-85.glb");
         Entity actualRoot = scenes.GetActiveScene()->CreateEntity("ActualRobot");
         grasplink::simulation::RobotPhysicsAdapter actualAdapter(
             *scenes.GetActiveScene(), actualRoot, models::hanwha::kHcr12a, actualModel);

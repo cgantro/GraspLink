@@ -53,6 +53,36 @@ void CheckStartAndPauseResumeWithHeldObject()
     Require(resumed.stageLabel == "Lifting to resume height",
         "Resume with a held object commands a safe lift before transit planning");
 }
+
+void CheckUnreachablePickupFailsWithoutMotion()
+{
+    using namespace grasplink::robotics;
+    using grasplink::robotics::backends::simulation::SimRobotController;
+    SimRobotController controller(models::hanwha::kHcr12a);
+    Require(static_cast<bool>(controller.Connect()), "mission controller connects for failed pickup");
+    StubGripper gripper;
+    Require(static_cast<bool>(gripper.Connect()), "stub gripper connects for failed pickup");
+    grasplink::viewer::PickPlaceMission mission(models::hanwha::kHcr12a);
+    const auto initial = controller.GetState();
+    CartesianPose unreachableBox = initial.tcpPose;
+    unreachableBox.positionMeters[0] += 5.0;
+    const CartesianPose goal = initial.tcpPose;
+
+    mission.Update(controller.GetStateView(), controller, gripper, false, unreachableBox, goal);
+    mission.ApplyActions({true, false, false}, controller.GetStateView(), controller,
+        gripper, false, unreachableBox, goal);
+    Require(mission.Snapshot().stageLabel == "Unwinding J6 before pickup",
+        "accepted start enters the unwind stage before planning pickup");
+
+    mission.Update(controller.GetStateView(), controller, gripper, false, unreachableBox, goal);
+    const auto failed = mission.Snapshot();
+    Require(failed.stageLabel == "Failed", "unreachable pickup transitions the mission to Failed");
+    Require(failed.hasResult && !failed.lastRequestAccepted,
+        "failed pickup reports the rejected motion request");
+    Require(!failed.missionSucceeded, "failed pickup never reports mission success");
+    Require(controller.GetStateView().mode == RobotMode::Idle,
+        "rejected pickup leaves the robot at its current idle pose");
+}
 }
 
 int main()
@@ -60,6 +90,7 @@ int main()
     try
     {
         CheckStartAndPauseResumeWithHeldObject();
+        CheckUnreachablePickupFailsWithoutMotion();
         std::cout << "Pick and place mission checks passed\n";
         return 0;
     }

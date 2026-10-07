@@ -48,32 +48,6 @@ bool IsScaleValid(double value)
     return std::isfinite(value) && value > 0.0 && value <= 1.0;
 }
 
-double RequiredTimeForVelocity(double displacement, double maximumVelocity)
-{
-    return std::abs(displacement) / maximumVelocity;
-}
-
-double VelocityRatio(double displacement, double availableSeconds, double maximumVelocity)
-{
-    return std::abs(displacement) / availableSeconds / maximumVelocity;
-}
-
-Result IkFailure(const kinematics::IkResult& result)
-{
-    using kinematics::IkStatus;
-    ErrorCode code = ErrorCode::IkDidNotConverge;
-    switch (result.status)
-    {
-    case IkStatus::Success: return Result::Success();
-    case IkStatus::InvalidInput: code = ErrorCode::InvalidCommand; break;
-    case IkStatus::MissingToolFrame: code = ErrorCode::Unsupported; break;
-    case IkStatus::Unreachable: code = ErrorCode::Unreachable; break;
-    case IkStatus::JointLimitReached: code = ErrorCode::JointLimitReached; break;
-    case IkStatus::DidNotConverge: break;
-    }
-    return Failure(code, result.message);
-}
-
 kinematics::IkOptions RuntimeLinearIkOptions()
 {
     kinematics::IkOptions options = detail::PathIkOptions();
@@ -102,7 +76,7 @@ double TrapezoidDistanceFraction(double timeFraction, double rampTimeFraction)
     }
     return std::clamp(integratedSpeed / (1.0 - ramp), 0.0, 1.0);
 }
-} // 익명 네임스페이스
+} // ?듬챸 ?ㅼ엫?ㅽ럹?댁뒪
 
 SimRobotController::SimRobotController(const models::RobotSpecification& specification, models::Pose3 tcpInToolFrame)
     : specification_(&specification), inverse_(specification, tcpInToolFrame)
@@ -311,7 +285,7 @@ Result SimRobotController::MovePose(const CartesianPose& targetInBase, double ve
     if (!solution)
         return collisionBlocked ?
             Failure(ErrorCode::EnvironmentContact, "SimRobotController: no collision-free IK solution or joint path") :
-            IkFailure(ikFailure);
+            detail::MapIkFailure(ikFailure);
     return MoveJoint({solution->jointPositionRadians, velocityScale, accelerationScale});
 }
 
@@ -330,12 +304,9 @@ Result SimRobotController::MoveLinearPath(const LinearPathMoveCommand& command)
 {
     if (!connected_)
         return Failure(ErrorCode::NotConnected, "SimRobotController: not connected");
-    if (command.targetPoses.empty() ||
-        !std::isfinite(command.maxLinearVelocityMetersPerSecond) || command.maxLinearVelocityMetersPerSecond <= 0.0 ||
-        !std::isfinite(command.maxAngularVelocityRadiansPerSecond) || command.maxAngularVelocityRadiansPerSecond <= 0.0 ||
-        !std::isfinite(command.maxLinearAccelerationMetersPerSecondSquared) || command.maxLinearAccelerationMetersPerSecondSquared <= 0.0 ||
-        !std::isfinite(command.maxAngularAccelerationRadiansPerSecondSquared) || command.maxAngularAccelerationRadiansPerSecondSquared <= 0.0)
-        return Failure(ErrorCode::InvalidCommand, "SimRobotController: invalid linear path or motion limits");
+    const Result validation = detail::ValidateLinearPathCommand(command);
+    if (!validation)
+        return validation;
     if (!specification_->hasToolFrame)
         return Failure(ErrorCode::Unsupported, "SimRobotController: missing ToolFrame for TCP motion");
 
@@ -543,15 +514,15 @@ void SimRobotController::UpdateLinear(double dtSeconds)
                     (end.joints[joint] - begin.joints[joint]) * nextSegmentFraction;
             double requiredSeconds = 0.0;
             for (std::size_t joint = 0; joint < specification_->jointCount; ++joint)
-                requiredSeconds = std::max(requiredSeconds, RequiredTimeForVelocity(
+                requiredSeconds = std::max(requiredSeconds, detail::RequiredTimeForVelocity(
                     interpolatedJoints[joint] - state_.jointPositionRadians[joint],
                     specification_->joints[joint].maxVelocityRadiansPerSecond));
             const Pose3 nextTcp = FromCartesian(inverse_.EvaluateTcp(interpolatedJoints));
             requiredSeconds = std::max(requiredSeconds,
-                RequiredTimeForVelocity(
+                detail::RequiredTimeForVelocity(
                     Length(Subtract(nextTcp.positionMeters, currentTcp.positionMeters)), linearVelocityLimit_));
             requiredSeconds = std::max(requiredSeconds,
-                RequiredTimeForVelocity(
+                detail::RequiredTimeForVelocity(
                     Length(RotationError(nextTcp.rotation, currentTcp.rotation)), angularVelocityLimit_));
             const double ratio = std::max(1.0, requiredSeconds / available);
             if (ratio <= 1.0 + 1e-8)
@@ -650,16 +621,16 @@ bool SimRobotController::ReorientForLinear(const JointVector& plannedJoints, dou
             for (std::size_t i = 0; i < current.size(); ++i)
             {
                 const double change = solution.jointPositionRadians[i] - current[i];
-                ratio = std::max(ratio, VelocityRatio(
+                ratio = std::max(ratio, detail::VelocityRatio(
                     change, availableSeconds, specification_->joints[i].maxVelocityRadiansPerSecond));
                 movement = std::max(movement, std::abs(change));
                 const double residual = plannedJoints[i] - solution.jointPositionRadians[i];
                 nextDistanceSquared += residual * residual;
             }
             const Pose3 nextTcp = FromCartesian(inverse_.EvaluateTcp(solution.jointPositionRadians));
-            ratio = std::max(ratio, VelocityRatio(
+            ratio = std::max(ratio, detail::VelocityRatio(
                 Length(Subtract(nextTcp.positionMeters, currentTcp.positionMeters)), availableSeconds, linearVelocityLimit_));
-            ratio = std::max(ratio, VelocityRatio(
+            ratio = std::max(ratio, detail::VelocityRatio(
                 Length(RotationError(nextTcp.rotation, currentTcp.rotation)), availableSeconds, angularVelocityLimit_));
             if (ratio <= 1.0 + 1e-8 && movement > 1e-12 && nextDistanceSquared < previousDistanceSquared)
             {
@@ -698,4 +669,4 @@ bool SimRobotController::RestoreCollisionSafeState(const JointVector& safePositi
     return true;
 }
 
-} // grasplink::robotics::backends::simulation 네임스페이스
+} // grasplink::robotics::backends::simulation ?ㅼ엫?ㅽ럹?댁뒪

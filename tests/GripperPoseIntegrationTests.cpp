@@ -88,11 +88,9 @@ struct Fixture
     Fixture()
     {
         world.import<TransformSystemModule>();
-        scenes.LoadScene<Scene>();
-        scenes.OnUpdate(0.0F);
-        scene = scenes.GetActiveScene();
+        scene = LoadTestScene(scenes);
         Require(scene != nullptr, "active scene exists");
-        model = GltfLoader::LoadGLB(std::filesystem::path("assets") / "HCR12A_2F-85.glb");
+        model = LoadTestGlb("HCR12A_2F-85.glb");
         Require(model.rootNodeIndex >= 0, "model root exists");
         nodes.resize(model.nodes.size());
         robotRoot = CreateTree(model.rootNodeIndex, Entity{scene->GetSceneRoot()});
@@ -106,7 +104,7 @@ struct Fixture
         ApplyPoses();
         grasplink::simulation::ConfigureTwoF85Colliders(*scene, robotRoot, model);
         TransformSystemModule::UpdateWorldTransforms(world);
-        integration = std::make_unique<grasplink::simulation::PhysicsSystemModule>(world, physics);
+        integration = CreateTestPhysicsSystem(world, physics);
     }
 
     Entity CreateTree(int index, const Entity& parent)

@@ -14,18 +14,26 @@ include(cmake/Dependencies.cmake)
 grasplink_add_common_dependencies()
 include(CTest)
 
+set(TRACY_ENABLE ON CACHE BOOL "Enable Tracy runtime profiling" FORCE)
+set(TRACY_ON_DEMAND ON CACHE BOOL "Capture Tracy data only when a profiler connects" FORCE)
+FetchContent_Declare(
+  tracy
+  GIT_REPOSITORY https://github.com/wolfpld/tracy.git
+  GIT_TAG v0.14.1
+  GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(tracy)
+
 
 # ============================================================
 # Diagnostics
 # ============================================================
 #
-# Logger와 Profiler는 domain/graphics 모듈과 독립된 비동기 기록 기능을 제공한다.
+# Logger는 domain/graphics 모듈과 독립된 비동기 log와 metric 기록을 제공한다.
 #
 add_library(grasplink_diagnostics STATIC
   modules/diagnostics/src/Logger.cpp
-  modules/diagnostics/src/Profiler.cpp
   modules/diagnostics/include/diagnostics/Logger.h
-  modules/diagnostics/include/diagnostics/Profiler.h
 )
 
 target_include_directories(grasplink_diagnostics PUBLIC
@@ -356,6 +364,7 @@ if(GRASPLINK_BUILD_GRAPHICS)
     grasplink_robotics
     grasplink_physics
     grasplink_diagnostics
+    Tracy::TracyClient
   )
 
 
@@ -372,10 +381,6 @@ if(GRASPLINK_BUILD_GRAPHICS)
     COMMAND ${CMAKE_COMMAND} -E copy_directory
       ${CMAKE_SOURCE_DIR}/assets/shaders
       $<TARGET_FILE_DIR:grasplink_simulator>/shaders
-
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-      ${CMAKE_SOURCE_DIR}/assets/HCR12A_R00.glb
-      $<TARGET_FILE_DIR:grasplink_simulator>/HCR12A_R00.glb
 
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
       ${CMAKE_SOURCE_DIR}/assets/HCR12A_2F-85.glb
@@ -417,23 +422,27 @@ if(GRASPLINK_BUILD_GRAPHICS)
     add_test(NAME PhysicsEcsIntegration COMMAND grasplink_physics_ecs_tests)
 
     add_executable(grasplink_collision_tests tests/RobotCollisionGeometryTests.cpp)
+    target_compile_definitions(grasplink_collision_tests PRIVATE GRASPLINK_TEST_SCENE_SUPPORT)
     target_link_libraries(grasplink_collision_tests PRIVATE grasplink_simulation)
     add_test(NAME RobotCollisionGeometry COMMAND grasplink_collision_tests)
     set_tests_properties(RobotCollisionGeometry PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 
     add_executable(grasplink_gripper_collision_tests tests/GripperCollisionIntegrationTests.cpp)
+    target_compile_definitions(grasplink_gripper_collision_tests PRIVATE GRASPLINK_TEST_SCENE_SUPPORT)
     target_link_libraries(grasplink_gripper_collision_tests PRIVATE grasplink_simulation)
     add_test(NAME GripperCollisionIntegration COMMAND grasplink_gripper_collision_tests)
     set_tests_properties(GripperCollisionIntegration PROPERTIES
       WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" TIMEOUT 60)
 
     add_executable(grasplink_gripper_pose_tests tests/GripperPoseIntegrationTests.cpp)
+    target_compile_definitions(grasplink_gripper_pose_tests PRIVATE GRASPLINK_TEST_SCENE_SUPPORT)
     target_link_libraries(grasplink_gripper_pose_tests PRIVATE grasplink_simulation)
     add_test(NAME GripperPoseIntegration COMMAND grasplink_gripper_pose_tests)
     set_tests_properties(GripperPoseIntegration PROPERTIES
       WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" TIMEOUT 60)
 
     add_executable(grasplink_gripper_grasp_tests tests/GripperGraspIntegrationTests.cpp)
+    target_compile_definitions(grasplink_gripper_grasp_tests PRIVATE GRASPLINK_TEST_SCENE_SUPPORT)
     target_link_libraries(grasplink_gripper_grasp_tests PRIVATE grasplink_simulation)
     add_test(NAME GripperGraspIntegration COMMAND grasplink_gripper_grasp_tests)
     set_tests_properties(GripperGraspIntegration PROPERTIES

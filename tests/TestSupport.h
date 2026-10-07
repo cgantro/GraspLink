@@ -1,5 +1,14 @@
 #pragma once
 
+#ifdef GRASPLINK_TEST_SCENE_SUPPORT
+#include "assets/GltfLoader.h"
+#include "PhysicsWorld.h"
+#include "scene/SceneManager.h"
+#include "simulation/systems/PhysicsSystemModule.h"
+#include <filesystem>
+#include <memory>
+#endif
+
 #include <cmath>
 #include <stdexcept>
 #include <string>
@@ -26,6 +35,26 @@ inline void RequireNear(double actual, double expected, double tolerance, const 
 {
     Require(std::isfinite(actual) && std::abs(actual - expected) <= tolerance, message);
 }
+
+#ifdef GRASPLINK_TEST_SCENE_SUPPORT
+inline Scene* LoadTestScene(SceneManager& scenes)
+{
+    scenes.LoadScene<Scene>();
+    scenes.OnUpdate(0.0F);
+    return scenes.GetActiveScene();
+}
+
+inline ModelResource LoadTestGlb(const std::filesystem::path& filename)
+{
+    return GltfLoader::LoadGLB(std::filesystem::path("assets") / filename);
+}
+
+inline std::unique_ptr<grasplink::simulation::PhysicsSystemModule> CreateTestPhysicsSystem(
+    flecs::world& world, grasplink::physics::PhysicsWorld& physics)
+{
+    return std::make_unique<grasplink::simulation::PhysicsSystemModule>(world, physics);
+}
+#endif
 
 /**
  * @brief 전달한 동작을 실행해 지정한 종류의 예외가 발생하는지 확인한다.

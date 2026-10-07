@@ -5,6 +5,7 @@
 #include "robotics/kinematics/RobotInverseKinematics.h"
 #include "robotics/models/RobotSpecification.h"
 
+#include <cmath>
 #include <functional>
 #include <optional>
 #include <vector>
@@ -19,6 +20,43 @@ inline kinematics::IkOptions PathIkOptions()
     options.positionToleranceMeters = 1e-7;
     options.orientationToleranceRadians = 1e-6;
     return options;
+}
+
+inline Result ValidateLinearPathCommand(const LinearPathMoveCommand& command)
+{
+    if (!command.targetPoses.empty() &&
+        std::isfinite(command.maxLinearVelocityMetersPerSecond) && command.maxLinearVelocityMetersPerSecond > 0.0 &&
+        std::isfinite(command.maxAngularVelocityRadiansPerSecond) && command.maxAngularVelocityRadiansPerSecond > 0.0 &&
+        std::isfinite(command.maxLinearAccelerationMetersPerSecondSquared) && command.maxLinearAccelerationMetersPerSecondSquared > 0.0 &&
+        std::isfinite(command.maxAngularAccelerationRadiansPerSecondSquared) && command.maxAngularAccelerationRadiansPerSecondSquared > 0.0)
+        return Result::Success();
+    return {ErrorCode::InvalidCommand, "SimRobotController: invalid linear path or motion limits"};
+}
+
+inline Result MapIkFailure(const kinematics::IkResult& result)
+{
+    using kinematics::IkStatus;
+    ErrorCode code = ErrorCode::IkDidNotConverge;
+    switch (result.status)
+    {
+    case IkStatus::Success: return Result::Success();
+    case IkStatus::InvalidInput: code = ErrorCode::InvalidCommand; break;
+    case IkStatus::MissingToolFrame: code = ErrorCode::Unsupported; break;
+    case IkStatus::Unreachable: code = ErrorCode::Unreachable; break;
+    case IkStatus::JointLimitReached: code = ErrorCode::JointLimitReached; break;
+    case IkStatus::DidNotConverge: break;
+    }
+    return {code, result.message};
+}
+
+inline double RequiredTimeForVelocity(double displacement, double maximumVelocity)
+{
+    return std::abs(displacement) / maximumVelocity;
+}
+
+inline double VelocityRatio(double displacement, double availableSeconds, double maximumVelocity)
+{
+    return std::abs(displacement) / availableSeconds / maximumVelocity;
 }
 
 struct LinearPathPoint

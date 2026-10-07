@@ -13,31 +13,6 @@ namespace
 {
 using namespace kinematics::detail;
 
-Result Failure(ErrorCode code, std::string message)
-{
-    return {code, std::move(message)};
-}
-
-double RequiredTimeForVelocity(double displacement, double maximumVelocity)
-{
-    return std::abs(displacement) / maximumVelocity;
-}
-
-Result IkFailure(const kinematics::IkResult& result)
-{
-    using kinematics::IkStatus;
-    ErrorCode code = ErrorCode::IkDidNotConverge;
-    switch (result.status)
-    {
-    case IkStatus::Success: return Result::Success();
-    case IkStatus::InvalidInput: code = ErrorCode::InvalidCommand; break;
-    case IkStatus::MissingToolFrame: code = ErrorCode::Unsupported; break;
-    case IkStatus::Unreachable: code = ErrorCode::Unreachable; break;
-    case IkStatus::JointLimitReached: code = ErrorCode::JointLimitReached; break;
-    case IkStatus::DidNotConverge: break;
-    }
-    return Failure(code, result.message);
-}
 } // namespace
 
 Result LinearPathPlanner::Build(
@@ -50,12 +25,9 @@ Result LinearPathPlanner::Build(
     LinearPathPlan& plan,
     const SimulationMotionPolicy& policy)
 {
-    if (command.targetPoses.empty() ||
-        !std::isfinite(command.maxLinearVelocityMetersPerSecond) || command.maxLinearVelocityMetersPerSecond <= 0.0 ||
-        !std::isfinite(command.maxAngularVelocityRadiansPerSecond) || command.maxAngularVelocityRadiansPerSecond <= 0.0 ||
-        !std::isfinite(command.maxLinearAccelerationMetersPerSecondSquared) || command.maxLinearAccelerationMetersPerSecondSquared <= 0.0 ||
-        !std::isfinite(command.maxAngularAccelerationRadiansPerSecondSquared) || command.maxAngularAccelerationRadiansPerSecondSquared <= 0.0)
-        return Failure(ErrorCode::InvalidCommand, "SimRobotController: invalid linear path or motion limits");
+    const Result validation = ValidateLinearPathCommand(command);
+    if (!validation)
+        return validation;
 
     std::vector<Pose3> targets;
     targets.reserve(command.targetPoses.size());
@@ -66,7 +38,7 @@ Result LinearPathPlanner::Build(
     }
     catch (const std::invalid_argument&)
     {
-        return Failure(ErrorCode::InvalidCommand, "SimRobotController: invalid TCP target");
+        return {ErrorCode::InvalidCommand, "SimRobotController: invalid TCP target"};
     }
 
     const Pose3 start = FromCartesian(startTcp);
@@ -104,9 +76,9 @@ Result LinearPathPlanner::Build(
         {
             const auto endpoint = solveEndpointReachability(ToCartesian(end), candidatePlan.points.back().joints);
             if (!endpoint)
-                return IkFailure(endpoint);
-            return Failure(ErrorCode::InvalidCommand, "SimRobotController: linear path exceeds " +
-                std::to_string(policy.maximumPathIntervals) + " intervals");
+                return MapIkFailure(endpoint);
+            return {ErrorCode::InvalidCommand, "SimRobotController: linear path exceeds " +
+                std::to_string(policy.maximumPathIntervals) + " intervals"};
         }
 
         const std::size_t count = static_cast<std::size_t>(intervals);
@@ -123,8 +95,8 @@ Result LinearPathPlanner::Build(
                 options, collisionBlocked, ikFailure);
             if (!solution)
                 return collisionBlocked ?
-                    Failure(ErrorCode::EnvironmentContact, "SimRobotController: no collision-free IK solution for the TCP path") :
-                    IkFailure(ikFailure);
+                    Result{ErrorCode::EnvironmentContact, "SimRobotController: no collision-free IK solution for the TCP path"} :
+                    MapIkFailure(ikFailure);
 
             double duration = std::max(
                 RequiredTimeForVelocity(positionStep, command.maxLinearVelocityMetersPerSecond),
@@ -134,7 +106,7 @@ Result LinearPathPlanner::Build(
                     solution->jointPositionRadians[joint] - candidatePlan.points.back().joints[joint],
                     specification.joints[joint].maxVelocityRadiansPerSecond));
             if (!std::isfinite(duration))
-                return Failure(ErrorCode::InvalidCommand, "SimRobotController: path duration exceeds numeric range");
+                return {ErrorCode::InvalidCommand, "SimRobotController: path duration exceeds numeric range"};
             candidatePlan.points.push_back({solution->jointPositionRadians, ToCartesian(targetPose),
                 std::max(duration, 1e-6)});
             candidatePlan.plannedLinearVelocity = std::max(candidatePlan.plannedLinearVelocity, positionStep / duration);

@@ -37,11 +37,9 @@ struct Fixture
     Fixture()
     {
         // 실제 GLB에 저장된 것과 같은 그리퍼 자식 계층을 구성한다. 충돌용 단순 형상의 자세는 이 ECS 관절들의 변환을 따라야 한다.
-        scenes.LoadScene<Scene>();
-        scenes.OnUpdate(0.0F);
-        scene = scenes.GetActiveScene();
+        scene = LoadTestScene(scenes);
         Require(scene != nullptr, "active Scene created");
-        model = GltfLoader::LoadGLB(std::filesystem::path("assets") / "HCR12A_2F-85.glb");
+        model = LoadTestGlb("HCR12A_2F-85.glb");
         robotRoot = scene->CreateEntity("RobotRoot");
         const int gripperIndex = FindNode("Gripper");
         Require(gripperIndex >= 0, "GLB has Gripper frame");
@@ -222,7 +220,7 @@ int main()
         TransformSystemModule::UpdateWorldTransforms(fixture.world);
         Require(fixture.CountDescendants(fixture.robotRoot) == beforeInvalid + 7,
             "successful configuration creates exactly seven proxies");
-        fixture.integration = std::make_unique<grasplink::simulation::PhysicsSystemModule>(fixture.world, fixture.physics);
+        fixture.integration = CreateTestPhysicsSystem(fixture.world, fixture.physics);
         TransformSystemModule::UpdateWorldTransforms(fixture.world);
 
         DropOnTip(fixture, "LeftFingerTipJoint", "LeftFingerTipJoint_CollisionProxy");
