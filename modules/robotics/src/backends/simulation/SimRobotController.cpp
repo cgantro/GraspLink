@@ -48,6 +48,24 @@ bool IsScaleValid(double value)
     return std::isfinite(value) && value > 0.0 && value <= 1.0;
 }
 
+Result ValidateJointPositionLimits(
+    const models::RobotSpecification& specification,
+    const JointVector& positions)
+{
+    for (std::size_t jointIndex = 0; jointIndex < specification.jointCount; ++jointIndex)
+    {
+        const auto& joint = specification.joints[jointIndex];
+        const double position = positions[jointIndex];
+        if (!std::isfinite(position) || position < joint.minPositionRadians ||
+            position > joint.maxPositionRadians)
+        {
+            return Failure(ErrorCode::InvalidCommand,
+                "SimRobotController: target outside joint limit: " + std::string(joint.name));
+        }
+    }
+    return Result::Success();
+}
+
 kinematics::IkOptions RuntimeLinearIkOptions()
 {
     kinematics::IkOptions options = detail::PathIkOptions();
@@ -231,21 +249,11 @@ Result SimRobotController::MoveJoint(const JointMoveCommand& command)
     if (!IsScaleValid(command.velocityScale) || !IsScaleValid(command.accelerationScale))
         return Failure(ErrorCode::InvalidCommand, "SimRobotController: scale must be in (0, 1]");
 
-    // 모든 joint를 먼저 확인한다. 하나라도 범위 밖이면 target이나 기존 진행 상태를 일부만 바꾸지 않는다.
-    for (std::size_t i = 0; i < specification_->jointCount; ++i)
-    {
-        const double target = command.targetPositionRadians[i];
-        const auto& joint = specification_->joints[i];
-        if (!std::isfinite(target) ||
-            target < joint.minPositionRadians ||
-            target > joint.maxPositionRadians)
-        {
-            return Failure(
-                ErrorCode::InvalidCommand,
-                "SimRobotController: target outside joint limit: " + std::string(joint.name));
-        }
-    }
+    const Result validation = ValidateJointPositionLimits(*specification_, command.targetPositionRadians);
+    if (!validation)
+        return validation;
 
+    // 모든 joint를 먼저 확인한다. 하나라도 범위 밖이면 target이나 기존 진행 상태를 일부만 바꾸지 않는다.
     // 명령을 받는 순간 관절각 q를 바꾸지 않는다. 이후 Update 호출이 정해진 속도 안에서 현재 상태를 목표까지 진행시킨다.
     // 움직이는 도중 새 명령이 들어오면 대기열에 쌓지 않고 현재 목표를 새 목표로 바꾼다.
     targetPositionRadians_ = command.targetPositionRadians;
@@ -651,12 +659,9 @@ const models::RobotSpecification& SimRobotController::GetSpecification() const n
 
 bool SimRobotController::RestoreCollisionSafeState(const JointVector& safePositionRadians)
 {
-    if (safePositionRadians.size() != specification_->jointCount)
+    if (safePositionRadians.size() != specification_->jointCount ||
+        !ValidateJointPositionLimits(*specification_, safePositionRadians))
         return false;
-    for (std::size_t joint = 0; joint < safePositionRadians.size(); ++joint)
-        if (!std::isfinite(safePositionRadians[joint]) || safePositionRadians[joint] < specification_->joints[joint].minPositionRadians ||
-            safePositionRadians[joint] > specification_->joints[joint].maxPositionRadians)
-            return false;
 
     state_.jointPositionRadians = safePositionRadians;
     std::fill(state_.jointVelocityRadiansPerSecond.begin(), state_.jointVelocityRadiansPerSecond.end(), 0.0);
