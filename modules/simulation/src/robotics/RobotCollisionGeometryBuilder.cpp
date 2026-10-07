@@ -15,7 +15,7 @@
 #include <unordered_set>
 #include <utility>
 
-namespace grasplink::simulation
+namespace grasplink::simulation::robot_collision_geometry
 {
 namespace
 {
@@ -42,7 +42,7 @@ struct PositionKeyHash
     }
 };
 
-PositionKey MakePositionKey(const glm::vec3& position, const RobotCollisionGeometryBuilder::Options& options)
+PositionKey MakePositionKey(const glm::vec3& position, const Options& options)
 {
     // 정점 좌표를 약 0.01 mm 간격의 격자에 맞춰 비교한다. 그래서 서로 다른 index를 가진 seam(메시 이음새)의 같은 위치 정점을 하나로 인식한다.
     const double precision = std::round(1.0 / options.vertexMergeToleranceMeters);
@@ -52,7 +52,7 @@ PositionKey MakePositionKey(const glm::vec3& position, const RobotCollisionGeome
         static_cast<std::int64_t>(std::llround(position.z * precision))};
 }
 
-PositionKey MakeCollisionCellKey(const glm::vec3& position, const RobotCollisionGeometryBuilder::Options& options)
+PositionKey MakeCollisionCellKey(const glm::vec3& position, const Options& options)
 {
     // 단위: 충돌 근사 셀 한 변은 16 cm다. 긴 링크의 작은 충돌 형상 수를 줄이면서 떨어진 부품 사이 빈 공간은 한 덩어리로 합치지 않는다.
     return {
@@ -95,7 +95,7 @@ std::vector<grasplink::physics::CollisionShapeDescription> BuildLinkShapes(
     const NodeData& jointNode,
     const NodeData& linkNode,
     const std::unordered_set<std::string>& movingNodes,
-    const RobotCollisionGeometryBuilder::Options& options)
+    const Options& options)
 {
     using Shape = grasplink::physics::CollisionShapeDescription;
     std::vector<Shape> shapes;
@@ -215,7 +215,7 @@ std::vector<grasplink::physics::CollisionShapeDescription> BuildBaseShapes(
     const std::vector<glm::mat4>& nodeTransforms,
     const std::unordered_map<std::string, const NodeData*>& nodesByName,
     const std::unordered_set<std::string>& movingNodes,
-    const RobotCollisionGeometryBuilder::Options& options)
+    const Options& options)
 {
     const auto baseIterator = nodesByName.find("Base");
     if (baseIterator == nodesByName.end()) return {};
@@ -235,28 +235,28 @@ std::vector<grasplink::physics::CollisionShapeDescription> BuildBaseShapes(
 }
 }
 
-RobotCollisionGeometryBuilder::Result RobotCollisionGeometryBuilder::Build(
+Result Build(
     const grasplink::robotics::models::RobotSpecification& specification,
     const ModelResource& model,
     const Options& options)
 {
     if (specification.joints == nullptr || specification.jointCount == 0)
-        throw std::invalid_argument("RobotCollisionGeometryBuilder: joint specifications are missing");
+        throw std::invalid_argument("Robot collision geometry: joint specifications are missing");
     if (specification.links == nullptr || specification.linkCount == 0)
-        throw std::invalid_argument("RobotCollisionGeometryBuilder: link specifications are missing");
+        throw std::invalid_argument("Robot collision geometry: link specifications are missing");
     if (!std::isfinite(options.vertexMergeToleranceMeters) ||
         !std::isfinite(options.cellSizeMeters) ||
         !std::isfinite(options.componentMinimumExtentMeters) ||
         !std::isfinite(options.cellMinimumExtentMeters) ||
         !(options.vertexMergeToleranceMeters > 0.0) || !(options.cellSizeMeters > 0.0F) ||
         !(options.componentMinimumExtentMeters >= 0.0F) || !(options.cellMinimumExtentMeters >= 0.0F))
-        throw std::invalid_argument("RobotCollisionGeometryBuilder: geometry options are invalid");
+        throw std::invalid_argument("Robot collision geometry: geometry options are invalid");
 
     const std::vector<glm::mat4> nodeTransforms = detail::BuildNodeWorldTransforms(model);
     std::unordered_map<std::string, const NodeData*> nodesByName;
     for (const NodeData& node : model.nodes)
         if (!nodesByName.emplace(node.name, &node).second)
-            throw std::invalid_argument("RobotCollisionGeometryBuilder: duplicate GLB node name");
+            throw std::invalid_argument("Robot collision geometry: duplicate GLB node name");
 
     std::unordered_set<std::string> movingNodes;
     for (std::size_t i = 0; i < specification.jointCount; ++i)
@@ -269,15 +269,15 @@ RobotCollisionGeometryBuilder::Result RobotCollisionGeometryBuilder::Build(
     {
         const auto& link = specification.links[i];
         if (link.jointIndex >= specification.jointCount)
-            throw std::invalid_argument("RobotCollisionGeometryBuilder: link joint index is out of range");
+            throw std::invalid_argument("Robot collision geometry: link joint index is out of range");
         const auto joint = nodesByName.find(std::string(specification.joints[link.jointIndex].name));
         const auto linkNode = nodesByName.find(std::string(link.name));
         if (joint == nodesByName.end() || linkNode == nodesByName.end())
-            throw std::invalid_argument("RobotCollisionGeometryBuilder: GLB joint or link node is missing");
+            throw std::invalid_argument("Robot collision geometry: GLB joint or link node is missing");
 
         auto shapes = BuildLinkShapes(model, nodeTransforms, *joint->second, *linkNode->second, movingNodes, options);
         if (shapes.empty())
-            throw std::invalid_argument("RobotCollisionGeometryBuilder: link has no GLB collision geometry");
+            throw std::invalid_argument("Robot collision geometry: link has no GLB collision geometry");
         result.links.push_back({link.jointIndex, std::move(shapes)});
     }
     return result;

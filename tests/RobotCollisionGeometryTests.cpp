@@ -65,7 +65,7 @@ int main()
         model.nodes[4].meshIndex = 1;
         model.nodes[5].meshIndex = 2;
         model.nodes[5].translation.y = 0.5F;
-        const auto builtGeometry = grasplink::simulation::RobotCollisionGeometryBuilder::Build(spec, model);
+        const auto builtGeometry = grasplink::simulation::robot_collision_geometry::Build(spec, model);
         Require(builtGeometry.links.size() == 2, "geometry builder returns one result per specified link");
         Require(builtGeometry.links[0].jointIndex == 0 && builtGeometry.links[1].jointIndex == 1,
             "geometry builder keeps each link's FK joint index");

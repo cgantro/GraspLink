@@ -21,7 +21,7 @@ RobotPhysicsAdapter::RobotPhysicsAdapter(
     const ModelResource& model)
 {
     if (!robotRoot) throw std::runtime_error("RobotPhysicsAdapter: invalid robot root");
-    auto geometry = RobotCollisionGeometryBuilder::Build(specification, model);
+    auto geometry = robot_collision_geometry::Build(specification, model);
     if (!geometry.baseShapes.empty())
     {
         base_ = scene.CreateEntity("Base_CollisionProxy");

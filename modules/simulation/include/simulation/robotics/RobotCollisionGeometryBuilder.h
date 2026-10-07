@@ -7,57 +7,49 @@
 #include <cstddef>
 #include <vector>
 
-namespace grasplink::simulation
+namespace grasplink::simulation::robot_collision_geometry
 {
 
 /**
- * @brief GLB 로봇 메시를 물리 충돌에 사용할 Base와 Link별 볼록 형상으로 변환한다.
- * @details 화면 메시 전체를 그대로 충돌 검사에 쓰면 세부 삼각형이 많아 계산이 무거워진다.
- * Builder는 연결된 메시 부품을 16 cm 셀로 나누고 각 셀을 ConvexHull로 근사한다.
- * 반환된 Base 좌표는 RobotRoot 기준이고 Link 좌표는 해당 Link 관절 원점 기준이다.
- * Scene Entity 생성과 FK 자세 적용은 이 타입의 책임이 아니다.
+ * @brief GLB 꼭짓점을 합치고 충돌 근사 도형을 만들 때 쓰는 오차와 크기 기준이다.
+ * @details 큰 충돌 셀은 계산량을 줄이고, 작은 연결 부품은 별도 ConvexHull로 남겨 얇은 구조가 사라지지 않게 한다.
  */
-struct RobotCollisionGeometryBuilder final
+struct Options
 {
-    /**
-     * @brief 충돌 외피를 만들 때 형상을 단순화하는 기준을 지정한다.
-     * @details Vertex merge tolerance는 GLB seam에서 같은 위치로 저장된 정점을 합치는 거리 [m]다.
-     * Cell size는 한 충돌 형상으로 묶을 삼각형 중심의 셀 한 변 [m]이다.
-     * Component와 cell minimum extent는 각각 연결 부품과 셀 내부의 최소 폭 [m]이며, 이보다 작으면 형상을 생략한다.
-     */
-    struct Options
-    {
-        double vertexMergeToleranceMeters = 0.00001;
-        float cellSizeMeters = 0.16F;
-        float componentMinimumExtentMeters = 0.04F;
-        float cellMinimumExtentMeters = 0.01F;
-    };
-
-    struct LinkGeometry
-    {
-        std::size_t jointIndex = 0;
-        std::vector<grasplink::physics::CollisionShapeDescription> shapes;
-    };
-
-    struct Result
-    {
-        std::vector<grasplink::physics::CollisionShapeDescription> baseShapes;
-        std::vector<LinkGeometry> links;
-    };
-
-    /**
-     * @brief GLB 계층과 로봇 명세에서 충돌 형상을 계산한다.
-     * @param specification 각 Link와 이를 움직이는 joint 번호를 제공하는 로봇 명세.
-     * @param model 형상 정점과 노드 계층을 보관하는 GLB 자원.
-     * @param options 정점 병합과 형상 생략 기준이며 길이 단위는 m다.
-     * @return Base 형상과 명세 순서에 맞춘 Link 형상 및 관절 번호를 반환한다.
-     * @throws std::invalid_argument 명세가 비었거나 GLB 노드가 중복·순환하거나 Link 형상을 만들 수 없을 때.
-     * @throws std::runtime_error GLB 노드 관계, 삼각형 범위 또는 정점 번호가 잘못되었을 때.
-     */
-    [[nodiscard]] static Result Build(
-        const grasplink::robotics::models::RobotSpecification& specification,
-        const ModelResource& model,
-        const Options& options = {});
+    /** @brief 이 거리 안의 GLB 꼭짓점을 같은 점으로 취급한다. 단위는 m이다. */
+    double vertexMergeToleranceMeters = 0.00001;
+    /** @brief 큰 충돌 영역을 나눌 때 쓰는 셀 크기다. 단위는 m이다. */
+    float cellSizeMeters = 0.16F;
+    /** @brief 이 길이보다 짧은 연결 부품은 별도 도형으로 만들지 않는다. 단위는 m이다. */
+    float componentMinimumExtentMeters = 0.04F;
+    /** @brief 이 크기보다 작은 셀은 충돌 도형으로 만들지 않는다. 단위는 m이다. */
+    float cellMinimumExtentMeters = 0.01F;
 };
+
+/** @brief 한 관절에 연결된 링크와 해당 링크의 충돌 도형이다. */
+struct LinkGeometry
+{
+    std::size_t jointIndex = 0;
+    std::vector<grasplink::physics::CollisionShapeDescription> shapes;
+};
+
+/**
+ * @brief 로봇 베이스와 링크별 충돌 도형을 담는다.
+ * @details 베이스 위치는 RobotRoot 기준이며 링크 도형은 각 링크 관절 기준으로 반환한다.
+ */
+struct Result
+{
+    std::vector<grasplink::physics::CollisionShapeDescription> baseShapes;
+    std::vector<LinkGeometry> links;
+};
+
+/**
+ * @brief GLB의 메시와 로봇 관절 명세에서 Jolt용 충돌 도형을 만든다.
+ * @throws std::invalid_argument 옵션, 관절 명세, GLB 노드 또는 링크 충돌 메시가 올바르지 않은 경우
+ */
+[[nodiscard]] Result Build(
+    const grasplink::robotics::models::RobotSpecification& specification,
+    const ModelResource& model,
+    const Options& options = {});
 
 }
