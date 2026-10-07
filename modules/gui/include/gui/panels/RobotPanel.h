@@ -19,6 +19,7 @@ namespace grasplink::gui
  * 파지한 순간 TCP와 상자 중심 사이의 상대 위치를 저장해 목표 위치에서도 상자 중심이 목표에 오도록 보정한다.
  * 물리 접촉에 따른 정지와 파지 성공 여부는 Viewer의 GripperGraspAdapter가 제공한다.
  * Controller가 바닥 충돌로 안전 관절각에 되돌아오면 패널은 마지막 안전 높이까지 후퇴를 요청한다.
+ * Stop robot은 현재 관절 위치에서 제어기를 정지하고 임무 단계를 보존한다. Resume task는 물체를 잡았으면 먼저 안전한 운반 높이로 올린 뒤 목표 이동을 다시 계획한다.
  * 상자와 목표판의 방향을 Robot base 좌표로 받아 목표판 방향에 맞춰 상자를 놓고, 상자 네 꼭짓점이 목표 영역 안에 있을 때 성공 처리한다.
  * Viewer는 성공 알림을 받아 상자와 목표판을 새 무작위 위치와 방향으로 옮기며, 자동 반복 상태가 다음 작업을 시작한다.
  */
@@ -58,7 +59,8 @@ private:
         UnwindingWrist,
         Recovering,
         Complete,
-        Failed
+        Failed,
+        RaisingAfterResume
     };
 
     std::array<double, 4> graspOrientationXyzw_{};
@@ -79,6 +81,7 @@ private:
     bool missionSucceeded_ = false;
     bool missionSuccessEventPending_ = false;
     bool autoLoopEnabled_ = false;
+    bool taskPaused_ = false;
     std::uint64_t completedMissionCount_ = 0;
 };
 

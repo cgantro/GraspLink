@@ -257,7 +257,7 @@ void RobotPanel::DrawContents(robotics::backends::simulation::SimRobotController
         orientationReady_ = true;
     }
 
-    if (collisionStopped)
+    if (!taskPaused_ && collisionStopped)
     {
         stage_ = moveTo(recoveryPose_) ? Stage::Recovering : Stage::Failed;
     }
@@ -297,7 +297,7 @@ void RobotPanel::DrawContents(robotics::backends::simulation::SimRobotController
     {
         stage_ = commandGripper(255) ? Stage::Closing : Stage::Failed;
     }
-    else if (stage_ == Stage::Closing && boxGrasped && state.tcpPoseValid)
+    else if (!taskPaused_ && stage_ == Stage::Closing && boxGrasped && state.tcpPoseValid)
     {
         const glm::dvec3 boxPosition{graspBoxPoseInBase.positionMeters[0], graspBoxPoseInBase.positionMeters[1], graspBoxPoseInBase.positionMeters[2]};
         const glm::dvec3 tcpPosition{state.tcpPose.positionMeters[0], state.tcpPose.positionMeters[1], state.tcpPose.positionMeters[2]};
@@ -310,7 +310,7 @@ void RobotPanel::DrawContents(robotics::backends::simulation::SimRobotController
         recoveryPose_ = makeAttachedBoxPose(graspBoxPoseInBase, kApproachHeightMeters);
         stage_ = moveTo(recoveryPose_) ? Stage::Lifting : Stage::Failed;
     }
-    else if (stage_ == Stage::Closing && !boxGrasped &&
+    else if (!taskPaused_ && stage_ == Stage::Closing && !boxGrasped &&
         gripper.GetState().mode == robotics::GripperMode::Idle &&
         gripper.GetState().objectStatus == robotics::GripperObjectStatus::AtRequestedPosition)
     {
@@ -324,6 +324,10 @@ void RobotPanel::DrawContents(robotics::backends::simulation::SimRobotController
     {
         recoveryPose_ = makeAttachedBoxPose(graspedBoxPoseInBase_, kTransitBoxHeightMeters);
         stage_ = moveTo(recoveryPose_) ? Stage::TransitingToPlacement : Stage::Failed;
+    }
+    else if (stage_ == Stage::RaisingAfterResume && state.mode == robotics::RobotMode::Idle)
+    {
+        stage_ = Stage::TransitingToPlacement;
     }
     else if (stage_ == Stage::TransitingToPlacement && state.mode == robotics::RobotMode::Idle)
     {
@@ -393,7 +397,7 @@ void RobotPanel::DrawContents(robotics::backends::simulation::SimRobotController
     {
         stage_ = commandGripper(0) ? Stage::Opening : Stage::Failed;
     }
-    else if (stage_ == Stage::Opening && !boxGrasped)
+    else if (!taskPaused_ && stage_ == Stage::Opening && !boxGrasped)
     {
         placementReleased_ = true;
         stage_ = moveTo(recoveryPose_) ? Stage::Retreating : Stage::Failed;
@@ -484,13 +488,14 @@ void RobotPanel::DrawContents(robotics::backends::simulation::SimRobotController
         ImGui::EndTable();
     }
     ImGui::TextUnformatted("Angle values are current joint positions, not travel percentages.");
-    const bool canStart = !boxGrasped &&
+    const bool canStart = !taskPaused_ && !boxGrasped &&
         (stage_ == Stage::Ready || stage_ == Stage::Complete || stage_ == Stage::Failed);
     // 첫 임무는 버튼으로 시작하고 성공 뒤에는 Viewer가 상자를 옮기고 Ready로 돌려놓아 자동으로 다음 임무를 시작한다.
     const bool startRequested = canStart && orientationReady_ &&
         (ImGui::Button("Run random pick and place") || (autoLoopEnabled_ && stage_ == Stage::Ready));
     if (startRequested)
     {
+        taskPaused_ = false;
         taskSucceeded_ = true;
         placementReleased_ = false;
         missionSucceeded_ = false;
@@ -514,15 +519,132 @@ void RobotPanel::DrawContents(robotics::backends::simulation::SimRobotController
             stage_ = lastResult_.Ok() ? Stage::UnwindingBeforeTask : Stage::Failed;
         }
     }
-    if (ImGui::Button("Stop robot"))
+    if (taskPaused_)
+    {
+        if (ImGui::Button("Resume task"))
+        {
+            taskPaused_ = false;
+            taskSucceeded_ = true;
+            missionSucceeded_ = false;
+            transitWaypointCount_ = 0;
+            if (boxGrasped)
+            {
+                placementReleased_ = false;
+                if (!state.valid || !state.tcpPoseValid)
+                {
+                    lastResult_ = {robotics::ErrorCode::InvalidCommand,
+                        "RobotPanel: TCP feedback is unavailable for safe resume"};
+                    hasResult_ = true;
+                    stage_ = Stage::Failed;
+                }
+                else
+                {
+                    const glm::dvec3 boxPosition{graspBoxPoseInBase.positionMeters[0],
+                        graspBoxPoseInBase.positionMeters[1], graspBoxPoseInBase.positionMeters[2]};
+                    const glm::dvec3 tcpPosition{state.tcpPose.positionMeters[0],
+                        state.tcpPose.positionMeters[1], state.tcpPose.positionMeters[2]};
+                    const glm::dquat tcpOrientation = TcpOrientation(state);
+                    const glm::dvec3 localOffset = glm::inverse(tcpOrientation) * (boxPosition - tcpPosition);
+                    boxOffsetInTool_ = {localOffset.x, localOffset.y, localOffset.z};
+                    const glm::dquat localRotation = glm::inverse(tcpOrientation) *
+                        Orientation(graspBoxPoseInBase.orientationXyzw);
+                    boxRotationOffsetInTool_ = QuaternionXyzw(localRotation);
+                    graspedBoxPoseInBase_ = graspBoxPoseInBase;
+                    const double currentBoxHeight = graspedBoxPoseInBase_.positionMeters[1];
+                    const double resumeTransitHeight = std::max(currentBoxHeight, kTransitBoxHeightMeters);
+                    const double liftDistance = resumeTransitHeight - currentBoxHeight;
+                    recoveryPose_ = makeAttachedBoxTarget(graspedBoxPoseInBase_, liftDistance, tcpOrientation);
+                    graspedBoxPoseInBase_.positionMeters[1] = resumeTransitHeight - kTransitBoxHeightMeters;
+                    stage_ = moveTo(recoveryPose_) ? Stage::RaisingAfterResume : Stage::Failed;
+                }
+            }
+            else if (placementReleased_)
+            {
+                auto unwindTarget = state.jointPositionRadians;
+                if (unwindTarget.empty())
+                {
+                    lastResult_ = {robotics::ErrorCode::InvalidCommand,
+                        "RobotPanel: current joint positions are unavailable"};
+                    hasResult_ = true;
+                    stage_ = Stage::Failed;
+                }
+                else
+                {
+                    unwindTarget.back() = 0.0;
+                    robotics::JointMoveCommand unwindCommand;
+                    unwindCommand.targetPositionRadians = std::move(unwindTarget);
+                    unwindCommand.preserveJointTurns = true;
+                    lastResult_ = controller.MoveJoint(unwindCommand);
+                    hasResult_ = true;
+                    stage_ = lastResult_.Ok() ? Stage::UnwindingWrist : Stage::Failed;
+                }
+            }
+            else if (stage_ == Stage::Opening)
+            {
+                placementReleased_ = true;
+                stage_ = moveTo(recoveryPose_) ? Stage::Retreating : Stage::Failed;
+            }
+            else
+            {
+                placementReleased_ = false;
+                auto unwindTarget = state.jointPositionRadians;
+                if (unwindTarget.empty())
+                {
+                    lastResult_ = {robotics::ErrorCode::InvalidCommand,
+                        "RobotPanel: current joint positions are unavailable"};
+                    hasResult_ = true;
+                    stage_ = Stage::Failed;
+                }
+                else
+                {
+                    unwindTarget.back() = 0.0;
+                    robotics::JointMoveCommand unwindCommand;
+                    unwindCommand.targetPositionRadians = std::move(unwindTarget);
+                    unwindCommand.preserveJointTurns = true;
+                    lastResult_ = controller.MoveJoint(unwindCommand);
+                    hasResult_ = true;
+                    stage_ = lastResult_.Ok() ? Stage::UnwindingBeforeTask : Stage::Failed;
+                }
+            }
+        }
+    }
+    else if (ImGui::Button("Stop robot"))
     {
         lastResult_ = controller.Stop();
         hasResult_ = true;
-        stage_ = Stage::Ready;
-        autoLoopEnabled_ = false;
+        if (lastResult_.Ok())
+        {
+            taskPaused_ = true;
+            autoLoopEnabled_ = false;
+        }
     }
-    const char* stageName = stage_ == Stage::Complete ? "Complete" : stage_ == Stage::Failed ? "Failed" : stage_ == Stage::Recovering ? "Retracting after collision" : stage_ == Stage::UnwindingWrist ? "Unwinding J6" : "Running / ready";
-    ImGui::Text("Task: %s", stageName);
+    const char* stageName = "Unknown";
+    switch (stage_)
+    {
+    case Stage::Ready: stageName = "Ready"; break;
+    case Stage::UnwindingBeforeTask: stageName = "Unwinding J6 before pickup"; break;
+    case Stage::MovingAbovePickup: stageName = "Moving above the box"; break;
+    case Stage::AligningAbovePickup: stageName = "Aligning over the box"; break;
+    case Stage::MovingDownToPickup: stageName = "Lowering to the box"; break;
+    case Stage::Closing: stageName = "Closing gripper"; break;
+    case Stage::Lifting: stageName = "Lifting the box"; break;
+    case Stage::RaisingAfterResume: stageName = "Lifting to resume height"; break;
+    case Stage::TransitingToPlacement: stageName = "Planning path to goal"; break;
+    case Stage::TransitPathRunning: stageName = "Moving to goal"; break;
+    case Stage::MovingToPlacementOverhead: stageName = "Moving above the goal"; break;
+    case Stage::AligningAbovePlacement: stageName = "Aligning box over goal"; break;
+    case Stage::MovingAbovePlacement: stageName = "Moving to placement height"; break;
+    case Stage::MovingDownToPlacement: stageName = "Lowering box"; break;
+    case Stage::Opening: stageName = "Opening gripper"; break;
+    case Stage::Retreating: stageName = "Retracting from goal"; break;
+    case Stage::UnwindingWrist: stageName = "Unwinding J6"; break;
+    case Stage::Recovering: stageName = "Retracting after collision"; break;
+    case Stage::Complete: stageName = "Complete"; break;
+    case Stage::Failed: stageName = "Failed"; break;
+    }
+    ImGui::Text("Task: %s", taskPaused_ ? "Paused" : stageName);
+    if (taskPaused_)
+        ImGui::Text("Paused at: %s", stageName);
     ImGui::Text("Mission success: %s", missionSucceeded_ ? "YES" : "NO");
     ImGui::Text("Successful missions: %llu", static_cast<unsigned long long>(completedMissionCount_));
     ImGui::Text("Automatic repeat: %s", autoLoopEnabled_ ? "ON" : "OFF");
@@ -546,6 +668,7 @@ bool RobotPanel::ConsumeMissionSuccessEvent() noexcept
 void RobotPanel::PrepareNextTask() noexcept
 {
     stage_ = Stage::Ready;
+    taskPaused_ = false;
     missionSucceeded_ = false;
     placementReleased_ = false;
     taskSucceeded_ = true;
