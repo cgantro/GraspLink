@@ -5,6 +5,7 @@
 #include <memory>
 
 class Camera;
+struct ImVec2;
 
 namespace grasplink::gui
 {
@@ -37,6 +38,9 @@ public:
      * 선은 화면 맨 앞에 그리므로 벽이나 로봇에 가려진 충돌 모양도 확인할 수 있다. OpenGL 명령은 직접 실행하지 않는다.
      */
     void Draw(const Camera& camera, bool visible);
+
+    /** @brief 화면의 일부만 Scene viewport로 쓸 때 해당 영역 크기에 맞춰 충돌선을 그린다. */
+    void Draw(const Camera& camera, bool visible, const ImVec2& viewportSize);
 
 private:
     struct Impl;

@@ -231,16 +231,16 @@ struct ColliderOverlay::Impl
     {
     }
 
-    void Draw(const Camera& camera, bool visible)
+    void Draw(const Camera& camera, bool visible, const ImVec2& viewportSize)
     {
         if (visible)
         {
             const auto now = std::chrono::steady_clock::now();
-            const ImVec2 displaySize = ImGui::GetIO().DisplaySize;
+            const ImVec2 displaySize = viewportSize;
             const bool resized = displaySize.x != cachedDisplaySize.x || displaySize.y != cachedDisplaySize.y;
             if (!wasVisible || resized || now >= nextCollisionRefresh)
             {
-                RefreshCollisionLines(camera);
+                RefreshCollisionLines(camera, displaySize);
                 cachedDisplaySize = displaySize;
                 nextCollisionRefresh = now + std::chrono::milliseconds(100);
             }
@@ -257,13 +257,12 @@ struct ColliderOverlay::Impl
         wasVisible = visible;
     }
 
-    void RefreshCollisionLines(const Camera& camera)
+    void RefreshCollisionLines(const Camera& camera, const ImVec2& displaySize)
     {
         collisionLines.clear();
         // View와 Projection 행렬을 차례로 적용해 Scene 좌표를 화면 투영 전 좌표로 옮긴다.
         // PhysicsTransform에서 제외한 Entity 크기 배율은 이 선에도 적용하지 않는다.
         const glm::mat4 viewProjection = camera.GetProjectionMatrix() * camera.GetViewMatrix();
-        const ImVec2 displaySize = ImGui::GetIO().DisplaySize;
         colliderQuery.each([&](flecs::entity, const RigidBody& rigidBody,
             const Colliders& colliders, const TransformMatrix& matrix)
         {
@@ -300,7 +299,12 @@ ColliderOverlay::~ColliderOverlay() = default;
 
 void ColliderOverlay::Draw(const Camera& camera, bool visible)
 {
-    m_Impl->Draw(camera, visible);
+    m_Impl->Draw(camera, visible, ImGui::GetIO().DisplaySize);
+}
+
+void ColliderOverlay::Draw(const Camera& camera, bool visible, const ImVec2& viewportSize)
+{
+    m_Impl->Draw(camera, visible, viewportSize);
 }
 
 }

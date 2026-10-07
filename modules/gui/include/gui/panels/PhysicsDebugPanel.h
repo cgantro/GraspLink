@@ -14,6 +14,9 @@ public:
     /** @brief 현재 ImGui 프레임에 충돌 형상 표시 체크박스와 각 충돌 그룹 색의 범례를 그린다. */
     void Draw();
 
+    /** @brief 이미 열린 ImGui 창 안에 충돌 표시 설정과 범례를 그린다. */
+    void DrawContents();
+
     /** @brief 사용자가 체크박스에서 선택한 충돌 형상 표시 여부를 반환한다. */
     [[nodiscard]] bool IsColliderVisible() const;
 

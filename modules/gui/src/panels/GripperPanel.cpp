@@ -1,10 +1,10 @@
 #include "gui/panels/GripperPanel.h"
 
 #include "robotics/core/IGripperController.h"
+#include "simulation/robotics/GripperGraspAdapter.h"
 
 #include <imgui.h>
 
-#include <cmath>
 #include <cstdint>
 
 namespace grasplink::gui
@@ -51,39 +51,46 @@ const char* ErrorCodeName(grasplink::robotics::ErrorCode code)
     case ErrorCode::Fault: return "Fault";
     case ErrorCode::Unsupported: return "Unsupported";
     case ErrorCode::TransportError: return "Transport error";
+    case ErrorCode::Unreachable: return "Unreachable pose";
+    case ErrorCode::JointLimitReached: return "Joint limit reached";
+    case ErrorCode::IkDidNotConverge: return "IK did not converge";
+    case ErrorCode::EnvironmentContact: return "Robot stopped at environment collision";
     }
     return "Unknown";
 }
 
 }
 
-void GripperPanel::Draw(grasplink::robotics::IGripperController& gripper)
+void GripperPanel::Draw(grasplink::robotics::IGripperController& gripper, const grasplink::simulation::GripperGraspState* graspState)
+{
+    ImGui::Begin("Gripper control");
+    DrawContents(gripper, graspState);
+    ImGui::End();
+}
+
+void GripperPanel::DrawContents(grasplink::robotics::IGripperController& gripper, const grasplink::simulation::GripperGraspState* graspState)
 {
     using grasplink::robotics::GripperCommand;
-    ImGui::SetNextWindowPos(ImVec2(20, 160), ImGuiCond_FirstUseEver);
-    ImGui::Begin("Gripper control");
-    const auto submitClosure = [&]()
+    ImGui::SeparatorText("Gripper");
+    const auto submitClosure = [&](std::uint8_t position)
     {
         GripperCommand command;
-        command.positionRequest = static_cast<std::uint8_t>(std::lround(
-            static_cast<double>(requestedClosurePercent) * 255.0 / 100.0));
-        command.speedRequest = static_cast<std::uint8_t>(requestedSpeed);
+        command.positionRequest = position;
+        command.speedRequest = 255;
         command.forceRequest = 128;
         lastGripperResult = gripper.Command(command);
         hasGripperResult = true;
     };
     ImGui::Text("Connection: %s", gripper.IsConnected() ? "Connected" : "Disconnected");
 
-    if (ImGui::Button("Activate"))
+    if (ImGui::Button("Open"))
     {
-        lastGripperResult = gripper.Activate();
-        hasGripperResult = true;
+        submitClosure(0);
     }
     ImGui::SameLine();
-    if (ImGui::Button("Reset"))
+    if (ImGui::Button("Close"))
     {
-        lastGripperResult = gripper.Reset();
-        hasGripperResult = true;
+        submitClosure(255);
     }
     ImGui::SameLine();
     if (ImGui::Button("Stop"))
@@ -91,24 +98,6 @@ void GripperPanel::Draw(grasplink::robotics::IGripperController& gripper)
         lastGripperResult = gripper.Stop();
         hasGripperResult = true;
     }
-
-    if (ImGui::Button("Open"))
-    {
-        requestedClosurePercent = 0;
-        submitClosure();
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Close"))
-    {
-        requestedClosurePercent = 100;
-        submitClosure();
-    }
-
-    ImGui::SliderInt("Requested closure (%)", &requestedClosurePercent, 0, 100);
-    ImGui::SliderInt("Speed request (raw)", &requestedSpeed, 0, 255);
-    ImGui::TextUnformatted("Force request: 128 (fixed; effect is not simulated)");
-    if (ImGui::Button("Move to requested closure"))
-        submitClosure();
 
     const grasplink::robotics::GripperState state = gripper.GetState();
     if (state.valid)
@@ -146,8 +135,15 @@ void GripperPanel::Draw(grasplink::robotics::IGripperController& gripper)
     {
         ImGui::TextUnformatted("Last result: no command sent");
     }
-    ImGui::TextWrapped("Free-space linkage motion; contact-driven stopping and adaptive grasping are unavailable.");
-    ImGui::End();
+    if (graspState != nullptr)
+    {
+        ImGui::Text("Left contact: %s", graspState->leftContact ? "Yes" : "No");
+        ImGui::Text("Right contact: %s", graspState->rightContact ? "Yes" : "No");
+        ImGui::Text("Object held: %s", graspState->grasped ? "Yes" : "No");
+        ImGui::TextWrapped("Open to release the held object. Holding uses a rigid attachment; grip force and individual finger adaptation are not simulated.");
+    }
+    else
+        ImGui::TextUnformatted("Physical contact feedback: unavailable");
 }
 
 }

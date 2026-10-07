@@ -52,6 +52,9 @@ public:
      */
     void ResolveToDefault() const;
 
+    /** @brief 지정한 픽셀 사각형의 색만 창 출력 대상으로 복사한다. */
+    void ResolveToDefault(int x, int y, int width, int height) const;
+
     /** @brief 생성 또는 마지막 크기 변경에 지정한 너비 [pixel]를 반환한다. */
     int GetWidth() const { return m_Width; }
     /** @brief 생성 또는 마지막 크기 변경에 지정한 높이 [pixel]를 반환한다. */

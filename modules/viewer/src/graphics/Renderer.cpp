@@ -12,6 +12,7 @@
 #include <glad/glad.h>
 
 #include <cstdint>
+#include <algorithm>
 
 Renderer::Renderer() = default;
 Renderer::~Renderer() = default;
@@ -56,6 +57,7 @@ void Renderer::Init(int framebufferWidth, int framebufferHeight)
 
 void Renderer::BeginFrame()
 {
+    glDisable(GL_SCISSOR_TEST);
     m_MSAAFramebuffer->Bind();
 
     glClearColor(0.14F, 0.15F, 0.16F, 1.0F);
@@ -64,13 +66,35 @@ void Renderer::BeginFrame()
 
 void Renderer::EndFrame()
 {
-    m_MSAAFramebuffer->ResolveToDefault();
+    glDisable(GL_SCISSOR_TEST);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(0, 0, m_MSAAFramebuffer->GetWidth(), m_MSAAFramebuffer->GetHeight());
+    glClearColor(0.14F, 0.15F, 0.16F, 1.0F);
+    glClear(GL_COLOR_BUFFER_BIT);
+    m_MSAAFramebuffer->ResolveToDefault(
+        m_SceneViewport.x, m_SceneViewport.y,
+        m_SceneViewport.z, m_SceneViewport.w);
 }
 
 void Renderer::Resize(int width, int height)
 {
     if (m_MSAAFramebuffer)
+    {
         m_MSAAFramebuffer->Resize(width, height);
+        m_SceneViewport = {0, 0, width, height};
+    }
+}
+
+void Renderer::SetSceneViewport(int x, int y, int width, int height)
+{
+    if (!m_MSAAFramebuffer || width <= 0 || height <= 0)
+        return;
+
+    const int left = std::clamp(x, 0, m_MSAAFramebuffer->GetWidth());
+    const int bottom = std::clamp(y, 0, m_MSAAFramebuffer->GetHeight());
+    const int right = std::clamp(x + width, left, m_MSAAFramebuffer->GetWidth());
+    const int top = std::clamp(y + height, bottom, m_MSAAFramebuffer->GetHeight());
+    m_SceneViewport = {left, bottom, right - left, top - bottom};
 }
 
 void Renderer::Draw(
@@ -81,6 +105,13 @@ void Renderer::Draw(
     const glm::mat4& projection,
     const glm::vec3& cameraPosition)
 {
+    if (m_SceneViewport.z > 0 && m_SceneViewport.w > 0)
+    {
+        glViewport(m_SceneViewport.x, m_SceneViewport.y, m_SceneViewport.z, m_SceneViewport.w);
+        glEnable(GL_SCISSOR_TEST);
+        glScissor(m_SceneViewport.x, m_SceneViewport.y, m_SceneViewport.z, m_SceneViewport.w);
+    }
+
     // Mesh나 재질처럼 필요한 렌더 자료가 빠진 Entity는 GPU 상태를 바꾸기 전에 건너뛴다.
     if (!meshFilter.mesh || !meshRenderer.shader || !meshRenderer.material) return;
 

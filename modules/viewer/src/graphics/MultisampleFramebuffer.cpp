@@ -112,6 +112,21 @@ void MultisampleFramebuffer::ResolveToDefault() const
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
+void MultisampleFramebuffer::ResolveToDefault(int x, int y, int width, int height) const
+{
+    if (width <= 0 || height <= 0)
+        return;
+
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, m_Framebuffer);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+    glBlitFramebuffer(
+        x, y, x + width, y + height,
+        x, y, x + width, y + height,
+        GL_COLOR_BUFFER_BIT,
+        GL_NEAREST);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
 void MultisampleFramebuffer::Resize(int width, int height)
 {
     if (width <= 0 || height <= 0) return;

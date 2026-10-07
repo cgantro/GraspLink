@@ -55,6 +55,9 @@ public:
      */
     void Resize(int width, int height);
 
+    /** @brief 화면에서 장면을 그릴 픽셀 사각형을 지정한다. */
+    void SetSceneViewport(int x, int y, int width, int height);
+
     /** @brief 광원 기준으로 표면 깊이만 그림자 이미지에 기록하기 시작한다. */
     void BeginShadowPass();
 
@@ -103,4 +106,7 @@ private:
 
     // World 좌표를 광원 기준 Clip 좌표로 바꾸는 행렬. 깊이 기록과 화면의 가림 판정이 같은 변환을 쓴다.
     glm::mat4 m_LightSpaceMatrix{1.0F};
+
+    // 메인 카메라 장면을 표시할 영역이다. 창 전체에서 UI 영역을 제외한 픽셀 범위를 사용한다.
+    glm::ivec4 m_SceneViewport{0, 0, 0, 0};
 };
