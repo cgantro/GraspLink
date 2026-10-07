@@ -5,6 +5,7 @@
 #include "PhysicsWorld.h"
 #include "simulation/components/PhysicsComponents.h"
 #include "simulation/robotics/RobotPhysicsAdapter.h"
+#include "simulation/robotics/RobotCollisionGeometryBuilder.h"
 #include "simulation/systems/PhysicsSystemModule.h"
 #include "systems/TransformSystemModule.h"
 #include "TestSupport.h"
@@ -63,6 +64,13 @@ int main()
         model.nodes[4].meshIndex = 1;
         model.nodes[5].meshIndex = 2;
         model.nodes[5].translation.y = 0.5F;
+        const auto builtGeometry = grasplink::simulation::RobotCollisionGeometryBuilder::Build(spec, model);
+        Require(builtGeometry.links.size() == 2, "geometry builder returns one result per specified link");
+        Require(builtGeometry.links[0].jointIndex == 0 && builtGeometry.links[1].jointIndex == 1,
+            "geometry builder keeps each link's FK joint index");
+        Require(!builtGeometry.links[0].shapes.empty() && !builtGeometry.links[1].shapes.empty(),
+            "geometry builder returns collision shapes without creating Scene entities");
+        Require(builtGeometry.baseShapes.empty(), "model without a Base node has no base geometry");
         flecs::world world;
         SceneManager scenes(world);
         scenes.LoadScene<Scene>();
@@ -70,16 +78,20 @@ int main()
         auto& scene = *scenes.GetActiveScene();
         Entity root = scene.CreateEntity("RobotRoot");
         grasplink::simulation::RobotPhysicsAdapter adapter(scene, root, spec, model);
+        std::size_t syntheticLinkIndex = 0;
         for (const char* name : {"Link1_CollisionProxy", "Link2_CollisionProxy"})
         {
             Entity proxy = root.GetChild(name);
             Require(proxy.IsValid(), "collision proxy created");
             const auto& colliders = proxy.Get<Colliders>();
             Require(!colliders.shapes.empty(), std::string(name) + ": own geometry produces colliders");
+            Require(colliders.shapes.size() == builtGeometry.links[syntheticLinkIndex].shapes.size(),
+                "adapter installs the builder's generated shape set");
             for (const auto& shape : colliders.shapes)
                 for (const auto& point : shape.pointsMeters)
                     Require(std::abs(point.x) < 0.051F && std::abs(point.y) < 0.051F && std::abs(point.z) < 0.051F,
                         "downstream joint and Gripper geometry excluded");
+            ++syntheticLinkIndex;
         }
         kinematics::RobotKinematics fk(spec);
         RobotState state;

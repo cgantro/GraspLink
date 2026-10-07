@@ -246,12 +246,14 @@ if(GRASPLINK_BUILD_GRAPHICS)
     modules/simulation/src/robotics/CollisionGeometry.cpp
     modules/simulation/src/robotics/GripperColliders.cpp
     modules/simulation/src/robotics/GripperGraspAdapter.cpp
+    modules/simulation/src/robotics/RobotCollisionGeometryBuilder.cpp
     modules/simulation/src/robotics/RobotPhysicsAdapter.cpp
     modules/simulation/src/systems/PhysicsSystemModule.cpp
     modules/simulation/include/simulation/SimulationSceneBuilder.h
     modules/simulation/include/simulation/components/PhysicsComponents.h
     modules/simulation/include/simulation/components/RobotCollisionProxy.h
     modules/simulation/include/simulation/robotics/RobotPhysicsAdapter.h
+    modules/simulation/include/simulation/robotics/RobotCollisionGeometryBuilder.h
     modules/simulation/include/simulation/robotics/GripperColliders.h
     modules/simulation/include/simulation/robotics/GripperGraspAdapter.h
     modules/simulation/src/robotics/CollisionGeometry.h
