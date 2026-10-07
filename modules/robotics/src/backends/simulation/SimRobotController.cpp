@@ -1,8 +1,8 @@
 #include "robotics/backends/simulation/SimRobotController.h"
+#include "robotics/kinematics/detail/AlternativeIkSeeds.h"
 #include "robotics/kinematics/detail/PoseMath.h"
 
 #include <algorithm>
-#include <array>
 #include <cmath>
 #include <limits>
 #include <stdexcept>
@@ -125,45 +125,6 @@ void SimRobotController::SetJointPoseCollisionValidator(std::function<bool(const
     collisionValidator_ = std::move(validator);
 }
 
-std::vector<JointVector> SimRobotController::BuildIkSeeds(const JointVector& start) const
-{
-    std::vector<JointVector> seeds{start};
-    const auto addSeed = [&](JointVector candidate)
-    {
-        for (const auto& existing : seeds)
-        {
-            bool same = true;
-            for (std::size_t joint = 0; joint < candidate.size(); ++joint)
-                same = same && std::abs(existing[joint] - candidate[joint]) <= 1e-8;
-            if (same)
-                return;
-        }
-        seeds.push_back(std::move(candidate));
-    };
-
-    // J1은 팔을 반대쪽으로 돌리고, J3은 팔꿈치를 접거나 펴며, J5는 손목 굽힘 방향을 바꾸는 대표적인 해 분기 관절이다.
-    // 각 관절각을 허용 범위의 반대편으로 비춘 조합을 시작점으로 넣어 DLS가 현재 해에만 갇히지 않게 한다.
-    constexpr std::array<std::size_t, 3> branchJoints{0, 2, 4};
-    for (unsigned mask = 1; mask < (1U << branchJoints.size()); ++mask)
-    {
-        JointVector candidate = start;
-        for (std::size_t bit = 0; bit < branchJoints.size(); ++bit)
-        {
-            if ((mask & (1U << bit)) == 0 || branchJoints[bit] >= candidate.size())
-                continue;
-            const auto& joint = specification_->joints[branchJoints[bit]];
-            candidate[branchJoints[bit]] = std::clamp(
-                joint.minPositionRadians + joint.maxPositionRadians - candidate[branchJoints[bit]],
-                joint.minPositionRadians,
-                joint.maxPositionRadians);
-        }
-        addSeed(std::move(candidate));
-    }
-
-    // 대체 seed는 현재 자세와 J1·J3·J5를 허용 범위의 반대편으로 반사한 조합만 포함하며, 가능한 IK 해 전체를 열거하지 않는다.
-    return seeds;
-}
-
 bool SimRobotController::IsJointPathCollisionFree(const JointVector& start, const JointVector& end) const
 {
     if (!collisionValidator_)
@@ -211,14 +172,8 @@ std::optional<kinematics::IkResult> SimRobotController::SolveCollisionFreeIk(
     bool foundAnyIkSolution = false;
     std::optional<kinematics::IkResult> bestSolution;
     double bestNormalizedDistance = std::numeric_limits<double>::infinity();
-    for (const auto& seed : BuildIkSeeds(start))
+    for (const auto& seed : kinematics::detail::BuildAlternativeIkSeeds(start, *specification_))
     {
-        bool sameAsStart = true;
-        for (std::size_t joint = 0; joint < start.size(); ++joint)
-            sameAsStart = sameAsStart && std::abs(seed[joint] - start[joint]) <= 1e-8;
-        if (sameAsStart)
-            continue;
-
         auto solution = inverse_.SolveSingleSeed(target, seed, options);
         if (!solution)
         {

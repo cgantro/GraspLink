@@ -74,6 +74,7 @@ target_sources(grasplink_robotics PUBLIC
   modules/robotics/include/robotics/runtime/FixedControlLoop.h
   modules/robotics/include/robotics/kinematics/RobotKinematics.h
   modules/robotics/include/robotics/kinematics/RobotInverseKinematics.h
+  modules/robotics/include/robotics/kinematics/detail/AlternativeIkSeeds.h
   modules/robotics/include/robotics/kinematics/detail/PoseMath.h
   modules/robotics/include/robotics/kinematics/GripperKinematics.h
 )

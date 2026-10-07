@@ -1,4 +1,5 @@
 #include "robotics/kinematics/RobotInverseKinematics.h"
+#include "robotics/kinematics/detail/AlternativeIkSeeds.h"
 #include "robotics/kinematics/detail/PoseMath.h"
 
 #include <algorithm>
@@ -256,27 +257,9 @@ IkResult DampedLeastSquaresIk::Solve(
         return candidate.positionErrorMeters +
             options.orientationWeightMetersPerRadian * candidate.orientationErrorRadians;
     };
-    constexpr std::array<std::size_t, 3> branchJoints{0, 2, 4};
     // 첫 시드가 막힌 경우에만 HCR의 어깨·팔꿈치·손목 자세를 반사해 제한된 대체 시드를 검사한다.
-    for (unsigned mask = 1; mask < (1U << branchJoints.size()); ++mask)
+    for (const auto& alternate : BuildAlternativeIkSeeds(currentSeed, specification_))
     {
-        JointVector alternate = currentSeed;
-        bool changed = false;
-        for (std::size_t bit = 0; bit < branchJoints.size(); ++bit)
-        {
-            const std::size_t joint = branchJoints[bit];
-            if ((mask & (1U << bit)) == 0 || joint >= alternate.size())
-                continue;
-            const auto& limit = specification_.joints[joint];
-            alternate[joint] = std::clamp(
-                limit.minPositionRadians + limit.maxPositionRadians - currentSeed[joint],
-                limit.minPositionRadians,
-                limit.maxPositionRadians);
-            changed = changed || std::abs(alternate[joint] - currentSeed[joint]) > 1e-8;
-        }
-        if (!changed)
-            continue;
-
         IkResult candidate = SolveFromSeed(targetInBase, alternate, options);
         if (candidate.Ok())
         {

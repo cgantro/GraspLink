@@ -156,7 +156,6 @@ private:
     void RefreshTcp();
     void UpdateLinear(double dtSeconds);
     bool ReorientForLinear(const JointVector& plannedJoints, double availableSeconds);
-    std::vector<JointVector> BuildIkSeeds(const JointVector& start) const;
     bool IsJointPathCollisionFree(const JointVector& start, const JointVector& end) const;
     std::optional<kinematics::IkResult> SolveCollisionFreeIk(
         const CartesianPose& target, const JointVector& start, const kinematics::IkOptions& options,
