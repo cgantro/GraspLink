@@ -100,6 +100,7 @@ RobotKinematics::RobotKinematics(const models::RobotSpecification& specification
 
     state_.jointLocalRotations.resize(specification_.jointCount);
     state_.linkPosesInBaseFrame.resize(specification_.jointCount);
+    state_.jointAxesInBaseFrame.resize(specification_.jointCount);
 }
 
 const RobotKinematicState& RobotKinematics::Update(const RobotState& state)
@@ -107,8 +108,16 @@ const RobotKinematicState& RobotKinematics::Update(const RobotState& state)
     // 결과 위치와 회전은 Robot base 기준이다. Scene에서 robotRoot에 적용한 배치 위치와 회전은 아직 포함하지 않는다.
     if (!state.valid)
         throw std::invalid_argument("RobotKinematics: invalid RobotState");
-    if (state.jointPositionRadians.size() != specification_.jointCount)
+    return Update(state.jointPositionRadians);
+}
+
+const RobotKinematicState& RobotKinematics::Update(const JointVector& jointPositionRadians)
+{
+    if (jointPositionRadians.size() != specification_.jointCount)
         throw std::invalid_argument("RobotKinematics: joint count mismatch");
+    for (double angle : jointPositionRadians)
+        if (!std::isfinite(angle))
+            throw std::invalid_argument("RobotKinematics: non-finite joint angle");
 
     QuaternionWxyz parentRotation{};
     Vec3 parentPosition{};
@@ -117,15 +126,17 @@ const RobotKinematicState& RobotKinematics::Update(const RobotState& state)
     for (std::size_t i = 0; i < specification_.jointCount; ++i)
     {
         const models::JointSpecification& joint = specification_.joints[i];
-        const double angle = state.jointPositionRadians[i];
-        if (!std::isfinite(angle))
-            throw std::invalid_argument("RobotKinematics: non-finite joint angle");
+        const double angle = jointPositionRadians[i];
 
         // 모델 초기 상태(bind pose)에서 이웃한 관절 중심 사이의 차이를 구한다. 부모 관절이 회전하면 이 간격도 함께 회전하므로, 누적된 부모 회전을 적용해 현재 관절 중심을 계산한다.
         const Vec3 bindOffset = i == 0
             ? joint.bindPivotMeters
             : Subtract(joint.bindPivotMeters, previousBindPivot);
         const Vec3 jointPosition = Add(parentPosition, Rotate(parentRotation, bindOffset));
+        // 관절 Local 축을 부모 누적 회전으로 Robot base 축으로 바꾼다. 자체 회전은 자기 축 방향을 바꾸지 않는다.
+        const double axisLength = Length(joint.axis);
+        state_.jointAxesInBaseFrame[i] = Rotate(parentRotation,
+            {joint.axis.x / axisLength, joint.axis.y / axisLength, joint.axis.z / axisLength});
         // 회전: axis-angle은 관절 Local 회전이며 parent * local로 누적한다. Local 점에는 관절 회전 후 부모 회전이 적용된다.
         const QuaternionWxyz localRotation = AxisRotation(joint.axis, angle);
         const QuaternionWxyz worldRotation = Multiply(parentRotation, localRotation);

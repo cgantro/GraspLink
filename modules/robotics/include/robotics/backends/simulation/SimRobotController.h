@@ -1,7 +1,11 @@
 #pragma once
 
 #include "robotics/core/IRobotController.h"
+#include "robotics/kinematics/RobotInverseKinematics.h"
 #include "robotics/models/RobotSpecification.h"
+
+#include <functional>
+#include <optional>
 
 namespace grasplink::robotics::backends::simulation
 {
@@ -12,11 +16,14 @@ namespace grasplink::robotics::backends::simulation
  * 앱은 RobotState를 RobotKinematics에 보내 FK를 계산한다.
  * FK는 관절각에서 Link 위치와 방향을 구하며 어댑터가 이 결과를 화면 계층에 적용한다.
  * 한 번의 Update에서 관절은 모델 최대 각속도에 velocityScale을 곱한 한계 안에서 목표를 향한다.
- * 가속도 제한이나 속도를 부드럽게 올리는 ramp는 적용하지 않는다.
+ * MoveJoint는 관절 가속도 제한을 적용하지 않는다.
  * 역기구학(IK)은 목표 TCP 위치에서 이를 만드는 관절각을 찾는 계산이다.
- * 이 Controller에는 IK와 직선 경로 실행이 없어 MoveLinear은 Unsupported를 반환한다.
- * FK로 계산한 모델 ToolFrame과 Controller가 보고하는 공구 TCP는 서로 다른 값이다.
- * Connect 뒤 관절 상태 valid는 true지만 TCP feedback을 제공하지 않으므로 tcpPoseValid는 false다.
+ * MovePose는 IK 결과를 MoveJoint에 보내며, 충돌 검사 함수를 등록하면 다른 시작각도 시험해 안전한 관절 해를 고른다.
+ * MoveLinear은 TCP 직선 위치와 최단 회전 경로의 IK를 계산하고 각 경로 표본에서 안전한 해를 찾는다.
+ * TCP는 모델 ToolFrame에 생성자에서 정한 고정 변환을 더한 작업 기준점이며 기본 변환은 항등이다.
+ * 목표와 tcpPose feedback은 Robot base 기준이고 Scene의 robotRoot World 변환을 포함하지 않는다.
+ * ToolFrame이 있으면 tcpPoseValid는 true이며 이 feedback은 모델 FK 결과이지 물리 장치 측정값이 아니다.
+ * ToolFrame이 없으면 관절 이동은 지원하지만 MovePose와 MoveLinear은 Unsupported다.
  * 사양 문자열과 배열은 빌려 쓰므로 원본은 Controller보다 오래 살아야 한다.
  */
 class SimRobotController final : public IRobotController
@@ -25,13 +32,23 @@ public:
     /**
      * @brief 관절 이름·각도 제한·최대 속도를 제공하는 로봇 사양을 참조하는 Controller를 만든다.
      * @param specification 관절 제한과 최대 속도를 제공하는 사양. 배열과 문자열 저장소도 수명 동안 유효해야 한다.
-     * @throws std::invalid_argument 관절 배열이 비었거나, q=0이 제한 밖이거나, 제한/최대 속도가 유한한 유효값이 아닐 때.
+     * @param tcpInToolFrame 모델 ToolFrame 기준 TCP 고정 위치 [m]와 quaternion [w,x,y,z]다. 기본값은 항등이다.
+     * @throws std::invalid_argument 관절 배열이 비었거나, q=0이 제한 밖이거나, 제한/최대 속도 또는 FK geometry와 공구 변환이 유효하지 않을 때.
      * @details 시작 상태가 항상 q=0이므로 0을 포함하지 않는 모델은 이 구현의 초기화 계약과 맞지 않는다.
      */
-    explicit SimRobotController(const models::RobotSpecification& specification);
+    explicit SimRobotController(const models::RobotSpecification& specification, models::Pose3 tcpInToolFrame = {});
+
+    /**
+     * @brief IK가 만든 관절 자세 후보가 Environment와 겹치는지 확인하는 함수를 등록한다.
+     * @param validator 충돌이 없으면 true를 반환하는 관절각 [rad] 검사 함수다.
+     * @details Viewer는 Robot과 Gripper의 실제 collision proxy를 Jolt Environment와 대조한다.
+     * 함수는 명령을 처리하는 스레드에서 동기 호출되며 후보 관절 수명 밖으로 참조를 보관하지 않는다.
+     * 설정하지 않으면 관절 충돌 검사를 생략한다.
+     */
+    void SetJointPoseCollisionValidator(std::function<bool(const JointVector&)> validator);
 
     /** @brief 관절각과 속도를 0으로 한 유효한 Simulation 상태로 연결한다.
-     * @return 항상 성공하며 TCP feedback은 계산하지 않아 tcpPoseValid는 false다.
+     * @return 성공하며 ToolFrame이 있으면 설정된 TCP의 모델 FK feedback을 제공한다.
      * @details 목표 관절각도 0으로 두고 속도와 가속도 비율을 1.0으로 초기화한다.
      */
     Result Connect() override;
@@ -55,14 +72,32 @@ public:
     Result MoveJoint(const JointMoveCommand& command) override;
 
     /**
+     * @brief Robot base 기준 TCP 목표를 IK로 관절각으로 바꾼 뒤 MoveJoint로 실행한다.
+     * @param targetInBase TCP 위치 [m]와 quaternion [x,y,z,w]다. World 배치를 포함하지 않는다.
+     * @param velocityScale 모델 최대 관절 각속도에 곱하는 유한한 (0,1] 비율이다.
+     * @param accelerationScale 유한한 (0,1] 비율이며 기존 MoveJoint와 같이 보관만 하고 가속도 제한에 쓰지 않는다.
+     * @return IK와 명령 수락 결과다. 실패하면 기존 진행 목표와 현재 상태를 바꾸지 않는다.
+     * @details 현재 자세를 먼저 IK 시작각으로 사용하고, 해나 관절 이동 경로가 충돌하면 다른 시작각을 시험한다.
+     * 검사에 통과한 첫 해를 사용하며 모든 가능한 IK 해를 열거하지는 않는다.
+     * 충돌 검사 함수가 없으면 현재 관절각을 시작점으로 구한 해를 사용한다. TCP 이동 경로는 관절 이동에 따른 곡선일 수 있다.
+     */
+    Result MovePose(const CartesianPose& targetInBase, double velocityScale = 1.0, double accelerationScale = 1.0);
+
+    /**
      * @brief TCP 목표까지 직선 이동을 요청한다.
-     * @param command 공통 API의 TCP 목표 위치·방향과 선속도·각속도 상한이다.
-     * @return 연결되지 않았으면 NotConnected를, 연결 상태면 항상 Unsupported를 반환한다.
-     * @details FK는 관절각에서 모델 ToolFrame 위치와 방향을 계산한다.
-     * 이 Controller에는 TCP 목표에서 관절각을 찾는 IK와 직선 경로 실행이 없다.
-     * 따라서 FK가 있어도 이 명령은 수행되지 않는다.
+     * @param command 공통 API의 TCP 목표 위치·방향, 선속도·각속도 상한과 선·각 가속도 상한이다.
+     * @return 연결, 입력, ToolFrame 또는 전체 경로의 IK 검증이 실패하면 오류를 반환하고 기존 동작을 유지한다.
+     * @details 목표는 Robot base 기준이며 TCP 위치는 직선, 방향은 최단 quaternion 보간으로 진행한다.
+     * TCP 직선 경로를 1 cm 표본마다 IK로 계획하고 표본 사이 관절각을 보간해 실행한다.
+     * 유한한 양수 선속도·각속도·가속도와 모델 관절 속도 상한을 적용하며 관절이 느리면 TCP 진행을 늦춘다.
+     * 특이 자세에서는 같은 경로 자세를 유지하는 작은 IK 보조 이동으로 손목을 정렬할 수 있으며 이때도 관절/TCP 속도와 FK 오차를 검사한다.
+     * 최대 4096개 구간을 넘는 요청은 InvalidCommand이며 표본 사이 모든 자세의 도달 가능성을 수학적으로 보장하지는 않는다.
+     * 실행 중 보조 IK가 필요한 특이 자세에서 해를 찾지 못하면 마지막 유효한 관절각에서 Fault로 멈추고 속도를 0으로 만든다.
+     * TCP 속도는 주어진 가속도 제한에 따라 빠르게 상승하고 목표 전에 감속한다. 충돌 검사 함수가 등록된 경우에만 표본 관절 경로를 충돌 확인한다.
+     * 이 확인은 환경 장애물을 돌아가는 대체 TCP 경로를 계획하지 않는다.
      */
     Result MoveLinear(const LinearMoveCommand& command) override;
+    Result MoveLinearPath(const LinearPathMoveCommand& command) override;
 
     /**
      * @brief 현재 관절 위치에서 Simulation 동작을 멈춘다.
@@ -75,20 +110,26 @@ public:
     /**
      * @brief Controller 상태의 독립된 값 복사본을 반환한다.
      * @return 관절 위치 [rad], 속도 [rad/s], mode와 상태 유효성을 담는다.
-     * @details Connect 뒤 관절 상태는 유효하지만 이 Controller는 TCP feedback을 계산하거나 보고하지 않는다.
-     * FK로 구한 모델 ToolFrame은 Controller가 보고하는 실제 TCP feedback과 별도다.
+     * @details ToolFrame이 정의되어 있으면 관절 FK에 고정 공구 변환을 더한 Robot base TCP를 제공한다.
+     * Simulation feedback이므로 실제 장치에서 측정한 TCP는 아니며 기본 offset은 TCP를 ToolFrame에 놓는다.
      * 반환 vector는 내부 저장소를 빌리지 않는다.
      */
     [[nodiscard]] RobotState GetState() const override;
 
+    /** @brief 같은 스레드에서 즉시 읽을 Controller 내부 상태를 const 참조로 반환한다.
+     * @details GetState()와 달리 관절 vector를 복사하지 않는다. 다음 Controller 갱신 뒤에도 참조 객체는 유효하지만 값은 새 상태로 바뀌므로 snapshot 보관에는 GetState()를 사용한다.
+     */
+    [[nodiscard]] const RobotState& GetStateView() const noexcept;
+
     /**
      * @brief 경과 시간 [s]만큼 각 관절을 목표각 쪽으로 움직인다.
      * @details 연결되고 Moving 상태이며 시간이 유한한 양수일 때만 적용한다.
-     * 한 번의 각도 변화 한도는 모델 최대 각속도 × velocityScale × dtSeconds다.
-     * 목표까지의 차이가 한도보다 크면 한도만큼 움직이고, 작으면 남은 차이만큼 움직인다.
+     * MoveJoint는 모델 최대 각속도 × velocityScale × dtSeconds 안에서 각 관절을 목표각으로 진행시킨다.
+     * MoveLinear은 계획한 TCP 직선 자세에 IK를 적용하고 관절 또는 TCP 속도 상한을 넘으면 경로 진행을 줄인다.
      * 이번 각도 변화량을 시간으로 나눈 값을 관절 속도 [rad/s]로 기록한다.
      * 가속도 제한이 없어 새 명령을 받으면 속도가 즉시 바뀔 수 있다.
-     * 목표에 도달하면 각도를 정확히 맞추고 속도를 0으로 만든 뒤 Idle로 바꾼다.
+     * MoveJoint의 마지막 각도는 목표각에 맞추고 MoveLinear의 마지막 TCP는 IK 오차 허용 범위 안에 맞춘다.
+     * 동작을 완료하면 속도를 0으로 만든 뒤 Idle로 바꾼다.
      * 잘못된 시간은 오류 없이 무시한다.
      */
     void Update(double dtSeconds) override;
@@ -98,7 +139,34 @@ public:
      */
     [[nodiscard]] const models::RobotSpecification& GetSpecification() const noexcept;
 
+    /**
+     * @brief 물리 충돌 뒤 저장한 안전 관절 자세로 즉시 돌아가고 새 명령을 받을 수 있게 멈춘다.
+     * @param safePositionRadians 직전 충돌 검사까지 유지된 J1..Jn 관절각 [rad]다.
+     * @return 입력 자세가 전부 유한하고 관절 한계 안이면 복원 성공이다. 잘못된 입력은 상태를 바꾸지 않는다.
+     * @details 현재 q와 새 q 사이를 보간하지 않는다. 호출자는 새로 저장한 자세가 충돌 검사에 통과한 경우에만 이 함수를 사용한다.
+     * 이는 Kinematic Body의 마지막 틱 침투를 화면 기준으로 되돌리는 복구이고 연속 속도 제한 궤적이 아니다.
+     * 상태는 Idle이 되며 faultCode에는 EnvironmentContact가 남는다. 상위 작업은 이 오류를 보고 안전한 후퇴 동작을 제출할 수 있다.
+     */
+    bool RestoreCollisionSafeState(const JointVector& safePositionRadians);
+
 private:
+    struct LinearPathPoint
+    {
+        JointVector joints;
+        CartesianPose tcpPose{};
+        // 이전 표본부터의 TCP/관절 속도 상한으로 계산한 최소 계획 시간 [s]이며 실제 IK의 속도 검사가 필요하면 더 늦게 진행한다.
+        double durationSeconds = 0.0;
+    };
+
+    void RefreshTcp();
+    void UpdateLinear(double dtSeconds);
+    bool ReorientForLinear(const JointVector& plannedJoints, double availableSeconds);
+    std::vector<JointVector> BuildIkSeeds(const JointVector& start) const;
+    bool IsJointPathCollisionFree(const JointVector& start, const JointVector& end) const;
+    std::optional<kinematics::IkResult> SolveCollisionFreeIk(
+        const CartesianPose& target, const JointVector& start, const kinematics::IkOptions& options,
+        bool& collisionBlocked, kinematics::IkResult& ikFailure);
+
     // 소유하지 않는 robot model specification 주소.
     const models::RobotSpecification* specification_ = nullptr;
 
@@ -108,6 +176,9 @@ private:
     // MoveJoint가 마지막으로 수락한 J1..Jn 절대 목표각 [rad]. 새 명령은 이 값을 교체한다.
     JointVector targetPositionRadians_;
 
+    // MoveLinear tick에서 사용할 관절 보간 공간이다. Connect 때 크기를 정해 실행 중 vector 할당을 피한다.
+    JointVector linearInterpolationBuffer_;
+
     // 모델 max velocity에 곱하는 현재 속도 비율. 1.0이면 모델 최대속도.
     double velocityScale_ = 1.0;
 
@@ -116,6 +187,23 @@ private:
 
     // Simulation backend가 Connect되어 사용 가능한 상태인지 나타낸다.
     bool connected_ = false;
+
+    // IK 계산기는 같은 사양을 빌리며 모델 ToolFrame에 고정 공구 변환을 적용해 TCP를 계산한다.
+    kinematics::DampedLeastSquaresIk inverse_;
+    std::function<bool(const JointVector&)> collisionValidator_;
+    std::vector<LinearPathPoint> linearPath_;
+    std::size_t linearSegment_ = 1;
+    double linearSegmentFraction_ = 0.0;
+    double linearVelocityLimit_ = 0.0;
+    double angularVelocityLimit_ = 0.0;
+    // 선형 및 회전 가속도 상한으로 사다리꼴 프로파일의 가속·감속 구간 길이를 계산한다.
+    double linearAccelerationLimit_ = 0.0;
+    double angularAccelerationLimit_ = 0.0;
+    // 감속과 가속 구간을 포함한 경로의 명목 시간, 실제 프로파일 시간 및 진행 시간을 기록한다.
+    double linearPlannedDurationSeconds_ = 0.0;
+    double linearProfileDurationSeconds_ = 0.0;
+    double linearProfileRampFraction_ = 0.0;
+    double linearProfileElapsedSeconds_ = 0.0;
 };
 
 } // namespace grasplink::robotics::backends::simulation

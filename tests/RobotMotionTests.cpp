@@ -1,0 +1,718 @@
+#include "robotics/backends/simulation/SimRobotController.h"
+#include "robotics/kinematics/RobotInverseKinematics.h"
+#include "robotics/models/hanwha/Hcr12a.h"
+#include "TestSupport.h"
+
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <iostream>
+#include <string>
+
+using namespace grasplink::robotics;
+using grasplink::robotics::backends::simulation::SimRobotController;
+using grasplink::robotics::kinematics::DampedLeastSquaresIk;
+
+namespace
+{
+double PositionDistance(const CartesianPose& left, const CartesianPose& right)
+{
+    double squared = 0.0;
+    for (std::size_t i = 0; i < 3; ++i)
+    {
+        const double difference = left.positionMeters[i] - right.positionMeters[i];
+        squared += difference * difference;
+    }
+    return std::sqrt(squared);
+}
+
+double OrientationDistance(const CartesianPose& left, const CartesianPose& right)
+{
+    double dot = 0.0;
+    double leftNorm = 0.0;
+    double rightNorm = 0.0;
+    for (std::size_t i = 0; i < 4; ++i)
+    {
+        dot += left.orientationXyzw[i] * right.orientationXyzw[i];
+        leftNorm += left.orientationXyzw[i] * left.orientationXyzw[i];
+        rightNorm += right.orientationXyzw[i] * right.orientationXyzw[i];
+    }
+    dot = std::abs(dot) / std::sqrt(leftNorm * rightNorm);
+    return 2.0 * std::acos(std::clamp(dot, 0.0, 1.0));
+}
+
+CartesianPose InterpolatePose(const CartesianPose& start, const CartesianPose& end, double fraction)
+{
+    CartesianPose result;
+    for (std::size_t i = 0; i < 3; ++i)
+        result.positionMeters[i] = start.positionMeters[i] + fraction * (end.positionMeters[i] - start.positionMeters[i]);
+
+    // SLERP는 두 회전 사이를 일정한 각도 비율로 잇는 구면 보간이다. quaternion의 부호가 반대여도 같은 회전을 나타내므로 짧은 회전 방향을 선택한다.
+    double dot = 0.0;
+    for (std::size_t i = 0; i < 4; ++i)
+        dot += start.orientationXyzw[i] * end.orientationXyzw[i];
+    const double sign = dot < 0.0 ? -1.0 : 1.0;
+    dot = std::clamp(std::abs(dot), 0.0, 1.0);
+    const double angle = std::acos(dot);
+    if (angle < 1e-10)
+    {
+        for (std::size_t i = 0; i < 4; ++i)
+            result.orientationXyzw[i] = start.orientationXyzw[i] + fraction * (sign * end.orientationXyzw[i] - start.orientationXyzw[i]);
+    }
+    else
+    {
+        const double denominator = std::sin(angle);
+        const double startWeight = std::sin((1.0 - fraction) * angle) / denominator;
+        const double endWeight = std::sin(fraction * angle) / denominator * sign;
+        for (std::size_t i = 0; i < 4; ++i)
+            result.orientationXyzw[i] = startWeight * start.orientationXyzw[i] + endWeight * end.orientationXyzw[i];
+    }
+    double norm = 0.0;
+    for (const double component : result.orientationXyzw)
+        norm += component * component;
+    norm = std::sqrt(norm);
+    for (double& component : result.orientationXyzw)
+        component /= norm;
+    return result;
+}
+
+void AdvanceUntilIdle(SimRobotController& controller, double dtSeconds)
+{
+    for (int i = 0; i < 10000 && controller.GetState().mode == RobotMode::Moving; ++i)
+        controller.Update(dtSeconds);
+    Require(controller.GetState().mode == RobotMode::Idle, "motion reaches target within bounded updates");
+}
+
+void CheckHomeSeedCanReachFoldedButValidPosture()
+{
+    const models::Pose3 tcpOffset{{0.04, 0.0, 0.0}, {}};
+    DampedLeastSquaresIk ik(models::hanwha::kHcr12a, tcpOffset);
+    SimRobotController controller(models::hanwha::kHcr12a, tcpOffset);
+    Require(static_cast<bool>(controller.Connect()), "home-seed controller connects without a collision filter");
+    const JointVector reachableJoints{0.0, -0.8, -0.1, 0.5, -0.4, 0.2};
+    const CartesianPose target = ik.EvaluateTcp(reachableJoints);
+    Require(static_cast<bool>(controller.MovePose(target)),
+        "controller runs bounded IK branch recovery when no environment validator is registered");
+    AdvanceUntilIdle(controller, 0.004);
+    Require(PositionDistance(controller.GetState().tcpPose, target) < 2e-5,
+        "home-seed recovery reaches the reachable target position");
+    Require(OrientationDistance(controller.GetState().tcpPose, target) < 2e-4,
+        "home-seed recovery reaches the reachable target orientation");
+}
+
+void CheckMovePoseAndFailurePreservation()
+{
+    const models::Pose3 tcpOffset{{0.04, 0.0, 0.0}, {}};
+    DampedLeastSquaresIk ik(models::hanwha::kHcr12a, tcpOffset);
+    SimRobotController controller(models::hanwha::kHcr12a, tcpOffset);
+    Require(static_cast<bool>(controller.Connect()), "controller connects");
+    const JointVector seed{0.2, -0.35, 0.3, 0.2, -0.25, 0.1};
+    JointMoveCommand seedCommand;
+    seedCommand.targetPositionRadians = seed;
+    Require(static_cast<bool>(controller.MoveJoint(seedCommand)), "joint command prepares a regular IK seed");
+    AdvanceUntilIdle(controller, 0.004);
+    const JointVector targetJoints{0.25, -0.37, 0.34, 0.17, -0.23, 0.11};
+    const CartesianPose target = ik.EvaluateTcp(targetJoints);
+    Require(static_cast<bool>(controller.MovePose(target, 0.5)), "MovePose accepts FK-generated reachable pose");
+    Require(controller.GetState().mode == RobotMode::Moving, "MovePose starts joint motion");
+
+    for (int i = 0; i < 8; ++i)
+        controller.Update(0.004);
+    const RobotState beforeRejected = controller.GetState();
+    const CartesianPose farTarget{{50.0, 0.0, 0.0}, {0.0, 0.0, 0.0, 1.0}};
+    const Result unreachablePose = controller.MovePose(farTarget);
+    Require(unreachablePose.code == ErrorCode::Unreachable, "MovePose maps unreachable IK status");
+    const RobotState afterRejectedPose = controller.GetState();
+    Require(afterRejectedPose.jointPositionRadians == beforeRejected.jointPositionRadians &&
+        afterRejectedPose.jointVelocityRadiansPerSecond == beforeRejected.jointVelocityRadiansPerSecond &&
+        afterRejectedPose.mode == beforeRejected.mode,
+        "failed MovePose preserves the active motion state");
+    const Result unreachable = controller.MoveLinear(
+        {farTarget, 0.05, 0.2});
+    Require(unreachable.code == ErrorCode::Unreachable, "unreachable replacement path is reported");
+    const RobotState afterRejected = controller.GetState();
+    Require(afterRejected.jointPositionRadians == beforeRejected.jointPositionRadians &&
+        afterRejected.jointVelocityRadiansPerSecond == beforeRejected.jointVelocityRadiansPerSecond &&
+        afterRejected.mode == beforeRejected.mode,
+        "failed replacement preserves the active motion state");
+
+    AdvanceUntilIdle(controller, 0.004);
+    const RobotState reached = controller.GetState();
+    Require(reached.tcpPoseValid, "simulation publishes model TCP feedback");
+    Require(PositionDistance(reached.tcpPose, target) < 2e-5, "MovePose reaches requested TCP position");
+    Require(OrientationDistance(reached.tcpPose, target) < 2e-4, "MovePose reaches requested TCP orientation");
+
+    JointMoveCommand replacement;
+    replacement.targetPositionRadians.assign(6, 0.0);
+    replacement.targetPositionRadians[0] = -0.2;
+    Require(static_cast<bool>(controller.MoveJoint(replacement)), "MoveJoint retarget succeeds");
+    AdvanceUntilIdle(controller, 0.006);
+    RequireNear(controller.GetState().jointPositionRadians[0], -0.2, 1e-8,
+        "MoveJoint replaces a pose target");
+}
+
+void CheckEquivalentJointTargetUsesNearestLegalTurn()
+{
+    SimRobotController controller(models::hanwha::kHcr12a, models::Pose3{{0.04, 0.0, 0.0}, {}});
+    Require(static_cast<bool>(controller.Connect()), "turn-continuity controller connects");
+
+    constexpr double degreesToRadians = 3.14159265358979323846 / 180.0;
+    JointVector start(6, 0.0);
+    start[5] = 170.0 * degreesToRadians;
+    Require(static_cast<bool>(controller.MoveJoint({start, 1.0, 1.0})), "J6 reaches the positive 170 degree representation");
+    AdvanceUntilIdle(controller, 0.004);
+
+    JointVector wrappedTarget = start;
+    wrappedTarget[5] = -170.0 * degreesToRadians;
+    Require(static_cast<bool>(controller.MoveJoint({wrappedTarget, 1.0, 1.0})), "equivalent J6 target is accepted");
+    int j6Ticks = 0;
+    while (controller.GetState().mode == RobotMode::Moving && j6Ticks < 10000)
+    {
+        controller.Update(0.004);
+        ++j6Ticks;
+    }
+    Require(controller.GetState().mode == RobotMode::Idle, "J6 reaches its equivalent target");
+    RequireNear(controller.GetState().jointPositionRadians[5], 190.0 * degreesToRadians, 1e-8,
+        "J6 uses the equivalent 190 degree representation that stays inside its plus/minus 360 degree limits");
+    Require(j6Ticks < 100, "J6 crosses the 180 degree representation boundary by the short rotation");
+
+    start[0] = 170.0 * degreesToRadians;
+    start[5] = 0.0;
+    Require(static_cast<bool>(controller.MoveJoint({start, 1.0, 1.0})), "J1 reaches its positive 170 degree limit neighborhood");
+    AdvanceUntilIdle(controller, 0.004);
+    wrappedTarget = start;
+    wrappedTarget[0] = -170.0 * degreesToRadians;
+    Require(static_cast<bool>(controller.MoveJoint({wrappedTarget, 1.0, 1.0})), "J1 target within its hard limits is accepted");
+    int j1Ticks = 0;
+    while (controller.GetState().mode == RobotMode::Moving && j1Ticks < 10000)
+    {
+        controller.Update(0.004);
+        ++j1Ticks;
+    }
+    Require(controller.GetState().mode == RobotMode::Idle, "J1 reaches its legal target representation");
+    RequireNear(controller.GetState().jointPositionRadians[0], -170.0 * degreesToRadians, 1e-8,
+        "J1 stays at the requested representation because its plus/minus 180 degree limits exclude 190 degrees");
+    Require(j1Ticks > 500, "J1 does not cross its hard limit to take an unavailable short rotation");
+}
+
+void CheckEnvironmentCollisionCanBeRetried()
+{
+    SimRobotController controller(models::hanwha::kHcr12a, models::Pose3{{0.04, 0.0, 0.0}, {}});
+    Require(static_cast<bool>(controller.Connect()), "controller connects before a collision rollback");
+    const JointVector safePosition = controller.GetState().jointPositionRadians;
+    Require(controller.RestoreCollisionSafeState(safePosition), "collision rollback restores the last safe joints");
+    const RobotState stopped = controller.GetState();
+    Require(stopped.mode == RobotMode::Idle, "collision rollback leaves a stopped controller that accepts recovery motion");
+    Require(stopped.faultCode == static_cast<std::uint32_t>(ErrorCode::EnvironmentContact),
+        "collision rollback preserves the reason for stopping");
+    JointVector recovery = safePosition;
+    recovery[0] += 0.05;
+    Require(static_cast<bool>(controller.MoveJoint({recovery, 1.0, 1.0})),
+        "the controller accepts a new retreat command after collision rollback");
+}
+
+void CheckCollisionAwareIkSelectsAnotherBranch()
+{
+    const models::Pose3 tcpOffset{{0.04, 0.0, 0.0}, {}};
+    DampedLeastSquaresIk ik(models::hanwha::kHcr12a, tcpOffset);
+    SimRobotController reference(models::hanwha::kHcr12a, tcpOffset);
+    Require(static_cast<bool>(reference.Connect()), "reference controller connects");
+    const JointVector start{0.2, -0.35, 0.3, 0.2, -0.25, 0.1};
+    Require(static_cast<bool>(reference.MoveJoint({start, 1.0, 1.0})), "reference controller reaches regular seed");
+    AdvanceUntilIdle(reference, 0.004);
+    const CartesianPose target = ik.EvaluateTcp({0.25, -0.37, 0.34, 0.17, -0.23, 0.11});
+    Require(static_cast<bool>(reference.MovePose(target)), "reference IK reaches target without obstacle filter");
+    AdvanceUntilIdle(reference, 0.004);
+    const JointVector blockedBranch = reference.GetState().jointPositionRadians;
+
+    SimRobotController constrained(models::hanwha::kHcr12a, tcpOffset);
+    Require(static_cast<bool>(constrained.Connect()), "collision-aware controller connects");
+    Require(static_cast<bool>(constrained.MoveJoint({start, 1.0, 1.0})), "collision-aware controller reaches same seed");
+    AdvanceUntilIdle(constrained, 0.004);
+    constrained.SetJointPoseCollisionValidator([&](const JointVector& candidate)
+    {
+        double squaredDistance = 0.0;
+        for (std::size_t joint = 0; joint < candidate.size(); ++joint)
+        {
+            const double difference = candidate[joint] - blockedBranch[joint];
+            squaredDistance += difference * difference;
+        }
+        return squaredDistance > 0.02 * 0.02;
+    });
+
+    Require(static_cast<bool>(constrained.MovePose(target)), "IK selects a different collision-free branch");
+    AdvanceUntilIdle(constrained, 0.004);
+    const auto reached = constrained.GetState();
+    Require(PositionDistance(reached.tcpPose, target) < 2e-5, "alternate branch reaches target TCP position");
+    Require(OrientationDistance(reached.tcpPose, target) < 2e-4, "alternate branch reaches target TCP orientation");
+    double branchDifferenceSquared = 0.0;
+    for (std::size_t joint = 0; joint < blockedBranch.size(); ++joint)
+    {
+        const double difference = reached.jointPositionRadians[joint] - blockedBranch[joint];
+        branchDifferenceSquared += difference * difference;
+    }
+    Require(branchDifferenceSquared > 0.02 * 0.02, "selected IK solution avoids the rejected joint-space region");
+}
+
+void CheckLinearPathAndVelocityBounds(double dtSeconds)
+{
+    const models::Pose3 tcpOffset{{0.04, 0.0, 0.0}, {}};
+    DampedLeastSquaresIk ik(models::hanwha::kHcr12a, tcpOffset);
+    SimRobotController controller(models::hanwha::kHcr12a, tcpOffset);
+    Require(static_cast<bool>(controller.Connect()), "linear controller connects");
+    JointMoveCommand seedCommand;
+    seedCommand.targetPositionRadians = {0.2, -0.35, 0.3, 0.2, -0.25, 0.1};
+    Require(static_cast<bool>(controller.MoveJoint(seedCommand)), "joint command prepares a regular linear-path seed");
+    AdvanceUntilIdle(controller, 0.004);
+    const CartesianPose start = controller.GetState().tcpPose;
+    const CartesianPose target = ik.EvaluateTcp({0.25, -0.37, 0.34, 0.17, -0.23, 0.11});
+    LinearMoveCommand command;
+    command.targetPose = target;
+    command.maxLinearVelocityMetersPerSecond = 0.04;
+    command.maxAngularVelocityRadiansPerSecond = 0.25;
+    Require(static_cast<bool>(controller.MoveLinear(command)), "MoveLinear accepts the reachable TCP path");
+
+    CartesianPose previous = controller.GetState().tcpPose;
+    double previousProgress = 0.0;
+    double peakLinearSpeed = 0.0;
+    bool sawIntermediatePose = false;
+    for (int i = 0; i < 10000 && controller.GetState().mode == RobotMode::Moving; ++i)
+    {
+        controller.Update(dtSeconds);
+        const RobotState state = controller.GetState();
+        Require(state.tcpPoseValid, "TCP feedback stays valid during linear motion");
+        const double movedMeters = PositionDistance(previous, state.tcpPose);
+        const double turnedRadians = OrientationDistance(previous, state.tcpPose);
+        peakLinearSpeed = std::max(peakLinearSpeed, movedMeters / dtSeconds);
+        Require(movedMeters / dtSeconds <= command.maxLinearVelocityMetersPerSecond + 1e-7,
+            "per-tick TCP translation stays under its requested speed");
+        if (i == 0)
+            Require(movedMeters / dtSeconds <= command.maxLinearAccelerationMetersPerSecondSquared * dtSeconds + 1e-5,
+                "linear motion accelerates from rest within its requested acceleration");
+        Require(turnedRadians / dtSeconds <= command.maxAngularVelocityRadiansPerSecond + 1e-6,
+            "per-tick TCP rotation stays under its requested speed");
+        if (i == 0)
+            Require(turnedRadians / dtSeconds <= command.maxAngularAccelerationRadiansPerSecondSquared * dtSeconds + 1e-5,
+                "angular motion accelerates from rest within its requested acceleration");
+        for (std::size_t joint = 0; joint < state.jointVelocityRadiansPerSecond.size(); ++joint)
+        {
+            const double velocity = state.jointVelocityRadiansPerSecond[joint];
+            Require(std::isfinite(velocity) &&
+                std::abs(velocity) <= models::hanwha::kHcr12a.joints[joint].maxVelocityRadiansPerSecond + 1e-7,
+                "reported joint velocity stays under the model limit");
+        }
+
+        const double dx = target.positionMeters[0] - start.positionMeters[0];
+        const double dy = target.positionMeters[1] - start.positionMeters[1];
+        const double dz = target.positionMeters[2] - start.positionMeters[2];
+        const double lengthSquared = dx * dx + dy * dy + dz * dz;
+        double progress = 0.0;
+        for (std::size_t axis = 0; axis < 3; ++axis)
+            progress += (state.tcpPose.positionMeters[axis] - start.positionMeters[axis]) *
+                (target.positionMeters[axis] - start.positionMeters[axis]);
+        progress = std::clamp(progress / lengthSquared, 0.0, 1.0);
+        const CartesianPose onPath = InterpolatePose(start, target, progress);
+        Require(PositionDistance(onPath, state.tcpPose) < 1e-3,
+            "interpolated joint path stays within 1 mm of the requested TCP line");
+        Require(OrientationDistance(onPath, state.tcpPose) < 1e-3,
+            "interpolated joint path stays within 1 mrad of the requested TCP rotation");
+        Require(progress + 1e-8 >= previousProgress, "linear path progress does not move backward");
+        sawIntermediatePose = sawIntermediatePose || (progress > 0.01 && progress < 0.99);
+        previousProgress = progress;
+        previous = state.tcpPose;
+    }
+
+    Require(controller.GetState().mode == RobotMode::Idle, "linear path reaches its endpoint");
+    Require(sawIntermediatePose, "linear motion exposes intermediate TCP states");
+    Require(peakLinearSpeed >= command.maxLinearVelocityMetersPerSecond * 0.8,
+        "linear motion reaches its requested top speed between acceleration ramps");
+    Require(PositionDistance(controller.GetState().tcpPose, target) < 2e-5,
+        "linear path reaches target position");
+    Require(OrientationDistance(controller.GetState().tcpPose, target) < 2e-4,
+        "linear path reaches target orientation");
+
+    // 회전만 요청하면 TCP 위치는 고정하고 공구 방향만 바뀌어야 한다. 관절 해는 여러 개일 수 있으므로 관절각 대신 실제 TCP 자세를 검사한다.
+    const CartesianPose rotationStart = controller.GetState().tcpPose;
+    CartesianPose rotationTarget = rotationStart;
+    const double halfAngle = 0.02;
+    const double cosine = std::cos(halfAngle);
+    const double sine = std::sin(halfAngle);
+    const auto old = rotationStart.orientationXyzw;
+    rotationTarget.orientationXyzw = {
+        cosine * old[0] - sine * old[1],
+        cosine * old[1] + sine * old[0],
+        cosine * old[2] + sine * old[3],
+        cosine * old[3] - sine * old[2]};
+    command.targetPose = rotationTarget;
+    Require(static_cast<bool>(controller.MoveLinear(command)), "rotation-only TCP path is accepted");
+    double peakRotationSpeed = 0.0;
+    for (int i = 0; i < 10000 && controller.GetState().mode == RobotMode::Moving; ++i)
+    {
+        const CartesianPose previousRotationPose = controller.GetState().tcpPose;
+        controller.Update(dtSeconds);
+        const CartesianPose currentRotationPose = controller.GetState().tcpPose;
+        peakRotationSpeed = std::max(peakRotationSpeed,
+            OrientationDistance(previousRotationPose, currentRotationPose) / dtSeconds);
+        Require(PositionDistance(rotationStart, currentRotationPose) < 1e-3,
+            "rotation-only interpolated path keeps TCP position within 1 mm");
+        Require(OrientationDistance(previousRotationPose, currentRotationPose) / dtSeconds <=
+            command.maxAngularVelocityRadiansPerSecond + 1e-6,
+            "rotation-only path respects angular speed");
+    }
+    Require(controller.GetState().mode == RobotMode::Idle, "rotation-only path completes");
+    Require(peakRotationSpeed >= command.maxAngularVelocityRadiansPerSecond * 0.8,
+        "rotation-only motion reaches its requested angular top speed");
+    Require(PositionDistance(rotationStart, controller.GetState().tcpPose) < 1e-3,
+        "rotation-only endpoint preserves TCP position within 1 mm");
+    Require(OrientationDistance(rotationTarget, controller.GetState().tcpPose) < 2e-5,
+        "rotation-only endpoint reaches requested orientation");
+    command.targetPose = controller.GetState().tcpPose;
+    Require(static_cast<bool>(controller.MoveLinear(command)), "same-pose linear request is accepted");
+    Require(controller.GetState().mode == RobotMode::Idle,
+        "same-pose linear request does not create unnecessary motion");
+}
+
+void CheckMultiWaypointUsesOneMotionProfile()
+{
+    const models::Pose3 tcpOffset{{0.04, 0.0, 0.0}, {}};
+    DampedLeastSquaresIk ik(models::hanwha::kHcr12a, tcpOffset);
+    const JointVector startJoints{0.2, -0.35, 0.3, 0.2, -0.25, 0.1};
+    const CartesianPose firstTarget = ik.EvaluateTcp({0.25, -0.37, 0.34, 0.17, -0.23, 0.11});
+    const CartesianPose finalTarget = ik.EvaluateTcp({0.27, -0.4, 0.36, 0.16, -0.21, 0.12});
+    const double dt = 0.004;
+
+    SimRobotController combined(models::hanwha::kHcr12a, tcpOffset);
+    Require(static_cast<bool>(combined.Connect()), "combined-path controller connects");
+    Require(static_cast<bool>(combined.MoveJoint({startJoints, 1.0, 1.0})), "combined path reaches its seed posture");
+    AdvanceUntilIdle(combined, dt);
+    LinearPathMoveCommand path;
+    path.targetPoses = {firstTarget, finalTarget};
+    path.maxLinearVelocityMetersPerSecond = 0.05;
+    path.maxAngularVelocityRadiansPerSecond = 0.5;
+    path.maxLinearAccelerationMetersPerSecondSquared = 0.2;
+    path.maxAngularAccelerationRadiansPerSecondSquared = 2.0;
+    Require(static_cast<bool>(combined.MoveLinearPath(path)), "multi-waypoint path is accepted");
+    int combinedTicks = 0;
+    while (combined.GetState().mode == RobotMode::Moving && combinedTicks < 10000)
+    {
+        combined.Update(dt);
+        ++combinedTicks;
+    }
+    Require(combined.GetState().mode == RobotMode::Idle, "multi-waypoint path completes");
+    Require(PositionDistance(combined.GetState().tcpPose, finalTarget) < 2e-5,
+        "multi-waypoint path reaches its final target");
+
+    SimRobotController split(models::hanwha::kHcr12a, tcpOffset);
+    Require(static_cast<bool>(split.Connect()), "split-path controller connects");
+    Require(static_cast<bool>(split.MoveJoint({startJoints, 1.0, 1.0})), "split path reaches its seed posture");
+    AdvanceUntilIdle(split, dt);
+    LinearMoveCommand segment;
+    segment.maxLinearVelocityMetersPerSecond = path.maxLinearVelocityMetersPerSecond;
+    segment.maxAngularVelocityRadiansPerSecond = path.maxAngularVelocityRadiansPerSecond;
+    segment.maxLinearAccelerationMetersPerSecondSquared = path.maxLinearAccelerationMetersPerSecondSquared;
+    segment.maxAngularAccelerationRadiansPerSecondSquared = path.maxAngularAccelerationRadiansPerSecondSquared;
+    segment.targetPose = firstTarget;
+    Require(static_cast<bool>(split.MoveLinear(segment)), "first split segment is accepted");
+    int splitTicks = 0;
+    while (split.GetState().mode == RobotMode::Moving && splitTicks < 10000)
+    {
+        split.Update(dt);
+        ++splitTicks;
+    }
+    segment.targetPose = finalTarget;
+    Require(static_cast<bool>(split.MoveLinear(segment)), "second split segment is accepted");
+    while (split.GetState().mode == RobotMode::Moving && splitTicks < 10000)
+    {
+        split.Update(dt);
+        ++splitTicks;
+    }
+    Require(split.GetState().mode == RobotMode::Idle, "split segments complete");
+    Require(combinedTicks < splitTicks,
+        "one shared acceleration profile avoids stopping and restarting at the intermediate waypoint");
+}
+
+void CheckJointLimitsSetLinearPathSpeed()
+{
+    const models::Pose3 tcpOffset{{0.04, 0.0, 0.0}, {}};
+    DampedLeastSquaresIk ik(models::hanwha::kHcr12a, tcpOffset);
+    const CartesianPose target = ik.EvaluateTcp({0.24, -0.37, 0.34, 0.18, -0.23, 0.11});
+    const auto measureTicks = [&](double linearCeiling, double angularCeiling)
+    {
+        SimRobotController controller(models::hanwha::kHcr12a, tcpOffset);
+        Require(static_cast<bool>(controller.Connect()), "joint-limited path controller connects");
+        JointMoveCommand seed;
+        seed.targetPositionRadians = {0.2, -0.35, 0.3, 0.2, -0.25, 0.1};
+        Require(static_cast<bool>(controller.MoveJoint(seed)), "joint-limited path seed starts");
+        AdvanceUntilIdle(controller, 0.004);
+        LinearMoveCommand command;
+        command.targetPose = target;
+        command.maxLinearVelocityMetersPerSecond = linearCeiling;
+        command.maxAngularVelocityRadiansPerSecond = angularCeiling;
+        Require(static_cast<bool>(controller.MoveLinear(command)), "joint-limited test path is accepted");
+        int ticks = 0;
+        while (ticks < 10000 && controller.GetState().mode == RobotMode::Moving)
+        {
+            controller.Update(0.004);
+            for (std::size_t joint = 0; joint < controller.GetStateView().jointVelocityRadiansPerSecond.size(); ++joint)
+                Require(std::abs(controller.GetStateView().jointVelocityRadiansPerSecond[joint]) <=
+                    models::hanwha::kHcr12a.joints[joint].maxVelocityRadiansPerSecond + 1e-7,
+                    "joint-limited path never exceeds its model velocity");
+            ++ticks;
+        }
+        Require(controller.GetState().mode == RobotMode::Idle, "joint-limited test path finishes");
+        return ticks;
+    };
+
+    const int restrictiveTicks = measureTicks(0.04, 0.25);
+    const int jointLimitedTicks = measureTicks(2.0, 8.0);
+    Require(jointLimitedTicks < restrictiveTicks,
+        "raising the unrelated TCP ceiling lets the model joint limits determine the faster path duration");
+}
+
+void CheckLinearPathFromHomeNearWristSingularity()
+{
+    const models::Pose3 tcpOffset{{0.04, 0.0, 0.0}, {}};
+    DampedLeastSquaresIk ik(models::hanwha::kHcr12a, tcpOffset);
+    SimRobotController controller(models::hanwha::kHcr12a, tcpOffset);
+    Require(static_cast<bool>(controller.Connect()), "home-singularity fixture connects");
+    const CartesianPose start = controller.GetState().tcpPose;
+    const CartesianPose target = ik.EvaluateTcp({0.22, -0.1, 0.08, 0.1, -0.06, 0.12});
+    LinearMoveCommand command;
+    command.targetPose = target;
+    command.maxLinearVelocityMetersPerSecond = 0.04;
+    command.maxAngularVelocityRadiansPerSecond = 0.25;
+    const Result accepted = controller.MoveLinear(command);
+    Require(static_cast<bool>(accepted), "home wrist-singularity path is accepted: " + accepted.message);
+
+    CartesianPose previous = start;
+    for (int i = 0; i < 10000 && controller.GetState().mode == RobotMode::Moving; ++i)
+    {
+        controller.Update(0.004);
+        const RobotState state = controller.GetState();
+        const double dx = target.positionMeters[0] - start.positionMeters[0];
+        const double dy = target.positionMeters[1] - start.positionMeters[1];
+        const double dz = target.positionMeters[2] - start.positionMeters[2];
+        const double lengthSquared = dx * dx + dy * dy + dz * dz;
+        double progress = 0.0;
+        for (std::size_t axis = 0; axis < 3; ++axis)
+            progress += (state.tcpPose.positionMeters[axis] - start.positionMeters[axis]) *
+                (target.positionMeters[axis] - start.positionMeters[axis]);
+        progress = std::clamp(progress / lengthSquared, 0.0, 1.0);
+        const std::string faultDetails =
+            " at tick=" + std::to_string(i) +
+            " faultCode=" + std::to_string(state.faultCode) +
+            " q4=" + std::to_string(state.jointPositionRadians[3]) +
+            " q5=" + std::to_string(state.jointPositionRadians[4]) +
+            " q6=" + std::to_string(state.jointPositionRadians[5]) +
+            " tcp=(" + std::to_string(state.tcpPose.positionMeters[0]) + "," +
+                std::to_string(state.tcpPose.positionMeters[1]) + "," +
+                std::to_string(state.tcpPose.positionMeters[2]) + ")" +
+            " progress=" + std::to_string(progress);
+        Require(state.mode != RobotMode::Fault,
+            "home wrist-singularity path avoids a runtime IK fault" + faultDetails);
+        Require(PositionDistance(previous, state.tcpPose) / 0.004 <=
+            command.maxLinearVelocityMetersPerSecond + 1e-7,
+            "home wrist-singularity path respects TCP linear speed");
+        Require(OrientationDistance(previous, state.tcpPose) / 0.004 <=
+            command.maxAngularVelocityRadiansPerSecond + 1e-6,
+            "home wrist-singularity path respects TCP angular speed");
+
+        Require(PositionDistance(InterpolatePose(start, target, progress), state.tcpPose) < 1e-3,
+            "home wrist-singularity TCP stays within 1 mm of the requested line");
+        previous = state.tcpPose;
+    }
+
+    const RobotState finalState = controller.GetState();
+    const double dx = target.positionMeters[0] - start.positionMeters[0];
+    const double dy = target.positionMeters[1] - start.positionMeters[1];
+    const double dz = target.positionMeters[2] - start.positionMeters[2];
+    const double lengthSquared = dx * dx + dy * dy + dz * dz;
+    double finalProgress = 0.0;
+    for (std::size_t axis = 0; axis < 3; ++axis)
+        finalProgress += (finalState.tcpPose.positionMeters[axis] - start.positionMeters[axis]) *
+            (target.positionMeters[axis] - start.positionMeters[axis]);
+    finalProgress = std::clamp(finalProgress / lengthSquared, 0.0, 1.0);
+    std::string finalDiagnostics =
+        " final mode=" + std::to_string(static_cast<unsigned>(finalState.mode)) +
+        " faultCode=" + std::to_string(finalState.faultCode) + " q=[";
+    for (std::size_t joint = 0; joint < finalState.jointPositionRadians.size(); ++joint)
+    {
+        if (joint != 0)
+            finalDiagnostics += ",";
+        finalDiagnostics += std::to_string(finalState.jointPositionRadians[joint]);
+    }
+    finalDiagnostics += "] tcp=(" + std::to_string(finalState.tcpPose.positionMeters[0]) + "," +
+        std::to_string(finalState.tcpPose.positionMeters[1]) + "," +
+        std::to_string(finalState.tcpPose.positionMeters[2]) + ") progress=" +
+        std::to_string(finalProgress) + " positionErrorMeters=" +
+        std::to_string(PositionDistance(finalState.tcpPose, target)) + " orientationErrorRadians=" +
+        std::to_string(OrientationDistance(finalState.tcpPose, target));
+    Require(finalState.mode == RobotMode::Idle,
+        "home wrist-singularity path reaches its target" + finalDiagnostics);
+    Require(PositionDistance(finalState.tcpPose, target) < 2e-5,
+        "home wrist-singularity path reaches TCP position" + finalDiagnostics);
+    Require(OrientationDistance(finalState.tcpPose, target) < 2e-4,
+        "home wrist-singularity path reaches TCP orientation" + finalDiagnostics);
+}
+
+void CheckLinearPathKeepsJ1BranchContinuous()
+{
+    const models::Pose3 tcpOffset{{0.04, 0.0, 0.0}, {}};
+    DampedLeastSquaresIk ik(models::hanwha::kHcr12a, tcpOffset);
+    SimRobotController controller(models::hanwha::kHcr12a, tcpOffset);
+    Require(static_cast<bool>(controller.Connect()), "branch-continuity controller connects at home");
+    const double initialJ1 = controller.GetStateView().jointPositionRadians[0];
+    const CartesianPose target = ik.EvaluateTcp({0.0, -0.8, -0.1, 0.5, -0.4, 0.2});
+    LinearMoveCommand command;
+    command.targetPose = target;
+    command.maxLinearVelocityMetersPerSecond = 0.25;
+    command.maxAngularVelocityRadiansPerSecond = 1.0;
+    Require(static_cast<bool>(controller.MoveLinear(command)),
+        "linear path accepts a reachable target that needs an alternate IK posture");
+
+    constexpr double dtSeconds = 0.004;
+    double previousJ1 = initialJ1;
+    double totalJ1Travel = 0.0;
+    double peakJ1Step = 0.0;
+    for (int tick = 0; tick < 10000 && controller.GetStateView().mode == RobotMode::Moving; ++tick)
+    {
+        controller.Update(dtSeconds);
+        const double currentJ1 = controller.GetStateView().jointPositionRadians[0];
+        const double change = std::abs(currentJ1 - previousJ1);
+        totalJ1Travel += change;
+        peakJ1Step = std::max(peakJ1Step, change);
+        previousJ1 = currentJ1;
+    }
+    const RobotState finalState = controller.GetState();
+    Require(finalState.mode == RobotMode::Idle, "alternate-posture linear path completes without stalling");
+    Require(peakJ1Step <= models::hanwha::kHcr12a.joints[0].maxVelocityRadiansPerSecond * dtSeconds + 1e-8,
+        "J1 never jumps farther in one tick than its speed limit allows");
+    Require(totalJ1Travel <= std::abs(finalState.jointPositionRadians[0] - initialJ1) + 0.5,
+        "J1 follows a nearby branch instead of accumulating a long opposite rotation");
+    Require(PositionDistance(finalState.tcpPose, target) < 2e-5,
+        "continuous J1 branch still reaches the target TCP position");
+    Require(OrientationDistance(finalState.tcpPose, target) < 2e-4,
+        "continuous J1 branch still reaches the target TCP orientation");
+}
+
+void CheckStopRetargetAndDisconnect()
+{
+    const models::Pose3 tcpOffset{{0.04, 0.0, 0.0}, {}};
+    DampedLeastSquaresIk ik(models::hanwha::kHcr12a, tcpOffset);
+    SimRobotController controller(models::hanwha::kHcr12a, tcpOffset);
+    Require(static_cast<bool>(controller.Connect()), "stop fixture connects");
+    JointMoveCommand seedCommand;
+    seedCommand.targetPositionRadians = {0.2, -0.35, 0.3, 0.2, -0.25, 0.1};
+    Require(static_cast<bool>(controller.MoveJoint(seedCommand)), "stop fixture reaches a regular IK seed");
+    AdvanceUntilIdle(controller, 0.004);
+    LinearMoveCommand path;
+    path.targetPose = ik.EvaluateTcp({0.4, -0.35, 0.3, 0.2, -0.25, 0.1});
+    path.maxLinearVelocityMetersPerSecond = 0.025;
+    path.maxAngularVelocityRadiansPerSecond = 0.15;
+    const Result longPath = controller.MoveLinear(path);
+    Require(static_cast<bool>(longPath), "long path starts: " + longPath.message);
+    for (int i = 0; i < 30; ++i)
+        controller.Update(0.004);
+    const RobotState beforeStop = controller.GetState();
+    Require(beforeStop.mode == RobotMode::Moving, "stop fixture remains in flight");
+    Require(static_cast<bool>(controller.Stop()), "Stop accepts a path cancellation");
+    const RobotState stopped = controller.GetState();
+    Require(stopped.mode == RobotMode::Stopped, "Stop reports stopped mode");
+    for (int i = 0; i < 20; ++i)
+        controller.Update(0.004);
+    Require(controller.GetState().jointPositionRadians == stopped.jointPositionRadians,
+        "stopped linear path does not resume");
+
+    JointMoveCommand jointTarget;
+    jointTarget.targetPositionRadians.assign(6, 0.0);
+    jointTarget.targetPositionRadians[0] = -0.25;
+    Require(static_cast<bool>(controller.MoveJoint(jointTarget)), "new joint command replaces stopped path");
+    AdvanceUntilIdle(controller, 0.005);
+    RequireNear(controller.GetState().jointPositionRadians[0], -0.25, 1e-8,
+        "replacement joint command reaches its own target");
+
+    Require(static_cast<bool>(controller.MoveLinear(path)), "another linear path starts");
+    controller.Disconnect();
+    Require(!controller.GetState().valid && !controller.IsConnected(), "disconnect invalidates controller state");
+    Require(controller.MovePose(path.targetPose).code == ErrorCode::NotConnected,
+        "disconnected controller rejects Cartesian motion");
+}
+
+void CheckModelWithoutToolFrame()
+{
+    auto specification = models::hanwha::kHcr12a;
+    specification.hasToolFrame = false;
+    SimRobotController controller(specification);
+    Require(static_cast<bool>(controller.Connect()), "robot without ToolFrame still connects");
+    Require(!controller.GetState().tcpPoseValid, "robot without ToolFrame has no TCP feedback");
+    JointMoveCommand jointTarget;
+    jointTarget.targetPositionRadians.assign(specification.jointCount, 0.0);
+    Require(static_cast<bool>(controller.MoveJoint(jointTarget)), "robot without ToolFrame still supports joint motion");
+    Require(controller.MovePose({}).code == ErrorCode::Unsupported,
+        "robot without ToolFrame cannot run a TCP pose command");
+    Require(controller.MoveLinear({}).code == ErrorCode::Unsupported,
+        "robot without ToolFrame cannot run a TCP line command");
+}
+
+void CheckUnreachableLineInteriorPreservesActiveJointMotion()
+{
+    std::array<models::JointSpecification, 1> joints{{
+        {"J1", {0.0, 0.0, 0.0}, {0.0, 0.0, 1.0}, -1.0, 1.0, 1.0}}};
+    const models::RobotSpecification specification{
+        "Test", "SingleAxisArm", joints.data(), joints.size(), nullptr, 0, {{1.0, 0.0, 0.0}, {}}, true};
+    DampedLeastSquaresIk ik(specification);
+    SimRobotController controller(specification);
+    Require(static_cast<bool>(controller.Connect()), "single-axis controller connects");
+    const CartesianPose reachableEndpoint = ik.EvaluateTcp({0.5});
+    Require(ik.Solve(reachableEndpoint, {0.0}).status == grasplink::robotics::kinematics::IkStatus::Success,
+        "the line endpoint is independently reachable");
+
+    JointMoveCommand activeJointTarget;
+    activeJointTarget.targetPositionRadians = {-0.1};
+    Require(static_cast<bool>(controller.MoveJoint(activeJointTarget)), "existing joint motion starts");
+    const RobotState beforePath = controller.GetState();
+    LinearMoveCommand impossibleChord;
+    impossibleChord.targetPose = reachableEndpoint;
+    impossibleChord.maxLinearVelocityMetersPerSecond = 0.1;
+    impossibleChord.maxAngularVelocityRadiansPerSecond = 0.5;
+    const Result rejected = controller.MoveLinear(impossibleChord);
+    Require(rejected.code == ErrorCode::IkDidNotConverge || rejected.code == ErrorCode::JointLimitReached,
+        "whole-path validation rejects a chord with an unreachable intermediate TCP pose");
+    const RobotState afterPath = controller.GetState();
+    Require(afterPath.jointPositionRadians == beforePath.jointPositionRadians &&
+        afterPath.jointVelocityRadiansPerSecond == beforePath.jointVelocityRadiansPerSecond &&
+        afterPath.mode == beforePath.mode,
+        "rejected line preserves the pre-existing joint motion");
+    controller.Update(0.05);
+    Require(controller.GetState().jointPositionRadians[0] < beforePath.jointPositionRadians[0],
+        "preserved joint target continues after failed line validation");
+}
+}
+
+int main()
+{
+    try
+    {
+        CheckMovePoseAndFailurePreservation();
+        CheckEquivalentJointTargetUsesNearestLegalTurn();
+        CheckHomeSeedCanReachFoldedButValidPosture();
+        CheckEnvironmentCollisionCanBeRetried();
+        CheckCollisionAwareIkSelectsAnotherBranch();
+        CheckLinearPathAndVelocityBounds(0.004);
+        CheckLinearPathAndVelocityBounds(0.007);
+        CheckMultiWaypointUsesOneMotionProfile();
+        CheckJointLimitsSetLinearPathSpeed();
+        CheckLinearPathFromHomeNearWristSingularity();
+        CheckLinearPathKeepsJ1BranchContinuous();
+        CheckStopRetargetAndDisconnect();
+        CheckModelWithoutToolFrame();
+        CheckUnreachableLineInteriorPreservesActiveJointMotion();
+        std::cout << "Robot motion checks passed\n";
+        return 0;
+    }
+    catch (const std::exception& error)
+    {
+        std::cerr << error.what() << '\n';
+        return 1;
+    }
+}

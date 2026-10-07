@@ -7,7 +7,7 @@
 
 /**
  * @brief 로봇 Controller가 주고받는 명령과 상태의 공통 자료형을 정의한다.
- * @details 관절 위치는 [rad], 각속도는 [rad/s], TCP 위치는 [m], 선속도는 [m/s], 시간은 [s]다.
+ * @details 관절 위치는 [rad], 각속도는 [rad/s], TCP 위치는 [m], 선속도는 [m/s], 가속도는 [m/s²] 또는 [rad/s²], 시간은 [s]다.
  * TCP는 공구 끝에서 작업 위치와 방향을 나타내는 기준점이다.
  * 방향 quaternion은 회전을 네 숫자 [x,y,z,w]로 저장한다.
  * Controller가 실제로 보고한 TCP는 FK로 계산한 모델 ToolFrame과 별도다.
@@ -24,6 +24,8 @@ using JointVector = std::vector<double>;
  * @details None은 성공, NotConnected는 연결 없음, InvalidCommand는 잘못된 요청값을 뜻한다.
  * Busy는 앞선 동작 때문에 요청을 받을 수 없음, Fault는 장치나 구현의 오류를 뜻한다.
  * Unsupported는 이 구현이 기능을 제공하지 않음, TransportError는 통신 실패를 뜻한다.
+ * Unreachable은 IK의 보수적 도달 거리 밖이고 JointLimitReached는 관절 경계에 막힌 국소 계산이며 IkDidNotConverge는 반복 한도나 정체다.
+ * 국소 IK 실패만으로 다른 시작 관절각에서도 해가 없다고 단정하지 않는다.
  * Fault code만으로 장비 보호 정지 여부를 판단할 수 없다.
  */
 enum class ErrorCode
@@ -34,7 +36,11 @@ enum class ErrorCode
     Busy,           // 제어 구현가 앞선 동작을 처리하고 있어 새 요청을 지금 받을 수 없다.
     Fault,          // 장비 또는 Simulation 제어 구현가 오류 상태를 보고했다.
     Unsupported,    // 공통 인터페이스에 있지만 현재 제어 구현는 구현하지 않은 기능이다.
-    TransportError  // TCP, Serial 또는 Modbus 연결에서 통신이 실패했다.
+    TransportError, // TCP, Serial 또는 Modbus 연결에서 통신이 실패했다.
+    Unreachable,    // IK가 링크 길이의 보수적 거리 상한 밖인 목표를 확인했다.
+    JointLimitReached, // IK가 관절 한계 때문에 국소 오차를 더 줄이지 못했다.
+    IkDidNotConverge, // IK가 반복 한도나 수치 정체로 해를 찾지 못했다. 다른 시작각에서 해가 없다는 뜻은 아니다.
+    EnvironmentContact // 다음 Robot 또는 Gripper 목표 자세가 Environment와 겹쳐 물리 반영 전에 직전 관절 자세로 돌아갔다.
 };
 
 /**
@@ -78,7 +84,7 @@ struct JointMoveCommand
 };
 
 // TCP는 공구 끝의 작업 기준점이다. TCP 목표에서 관절 목표를 구하는 역기구학(IK)과 경로 실행이 있어야 직선 이동할 수 있다.
-/** @brief TCP가 도착할 위치·방향과 직선 이동 속도 상한을 요청한다. 관절 목표를 계산하는 IK와 경로 실행 기능이 제어 구현에 있어야 처리할 수 있다. */
+/** @brief TCP가 도착할 위치·방향과 직선 이동의 최대 속도·가속도를 요청한다. 관절 목표를 계산하는 IK와 경로 실행 기능이 제어 구현에 있어야 처리할 수 있다. */
 struct LinearMoveCommand
 {
     /// 도착할 TCP 위치 [m]와 방향 quaternion [x,y,z,w]다. 기준 좌표계는 공통 형식만으로 정하지 않는다.
@@ -89,6 +95,30 @@ struct LinearMoveCommand
 
     /// 직선 경로를 실행할 때 허용할 TCP 회전 속도 상한 [rad/s]다.
     double maxAngularVelocityRadiansPerSecond = 0.5;
+
+    /// 직선 경로를 실행할 TCP 선가속도 상한 [m/s²]다.
+    double maxLinearAccelerationMetersPerSecondSquared = 12.0;
+
+    /// 직선 경로를 실행할 TCP 각가속도 상한 [rad/s²]다.
+    double maxAngularAccelerationRadiansPerSecondSquared = 60.0;
+};
+
+/**
+ * @brief TCP가 지정한 여러 자세를 순서대로 지나가도록 하나의 경로를 요청한다.
+ * @details 각 자세 사이에서는 직선 위치와 최단 회전 경로를 사용한다. 전체 경로는 하나의 가속·감속 프로파일로 실행한다.
+ */
+struct LinearPathMoveCommand
+{
+    /// TCP 자세는 로봇 도구 끝의 위치와 방향을 함께 나타낸다. 이 목록의 자세를 입력 순서대로 통과한다.
+    std::vector<CartesianPose> targetPoses;
+    /// 경로 전체에서 허용하는 TCP 직선 이동 속도 상한 [m/s]이다.
+    double maxLinearVelocityMetersPerSecond = 0.25;
+    /// 경로 전체에서 허용하는 TCP 회전 속도 상한 [rad/s]이다.
+    double maxAngularVelocityRadiansPerSecond = 0.5;
+    /// 경로 전체에서 허용하는 TCP 직선 가속도 상한 [m/s²]이다.
+    double maxLinearAccelerationMetersPerSecondSquared = 12.0;
+    /// 경로 전체에서 허용하는 TCP 회전 가속도 상한 [rad/s²]이다.
+    double maxAngularAccelerationRadiansPerSecondSquared = 60.0;
 };
 
 /** @brief Controller가 연결되어 있는지, 움직이는 중인지, 정지했는지를 나타낸다. */
@@ -116,7 +146,7 @@ struct RobotState
     /// RobotSpecification 순서에 맞춘 현재 J1부터 Jn까지의 관절 속도 [rad/s]다.
     JointVector jointVelocityRadiansPerSecond;
 
-    /// Controller가 보고한 TCP 위치·방향이다. 실제로 유효한 feedback인지 tcpPoseValid를 별도로 확인한다.
+    /// Controller가 보고한 TCP 위치·방향이다. Simulation은 설정한 공구 offset과 관절 FK에서 계산하고 실제 장치는 장치 feedback을 사용한다. tcpPoseValid를 별도로 확인한다.
     CartesianPose tcpPose{};
 
     RobotMode mode = RobotMode::Disconnected;
@@ -125,7 +155,7 @@ struct RobotState
     /// 제어 구현 또는 실제 장치가 정한 오류 code다. 숫자의 구체적인 의미는 해당 구현 설명을 따라야 한다.
     std::uint32_t faultCode = 0;
 
-    /// TCP 위치·방향 feedback만 유효한지 나타낸다. 관절값 유효성과 별개다.
+    /// TCP 위치·방향 feedback만 유효한지 나타낸다. 관절값 유효성과 별개이며 Simulation에서는 모델로 계산한 유효성을 뜻한다.
     bool tcpPoseValid = false;
 
     /// 이 상태 복사본의 feedback을 현재 상태로 사용해도 되는지 나타낸다. TCP 유효성과 별개다.

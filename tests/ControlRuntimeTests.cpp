@@ -1,4 +1,5 @@
 #include "robotics/backends/simulation/SimRobotController.h"
+#include "robotics/kinematics/RobotInverseKinematics.h"
 #include "robotics/models/hanwha/Hcr12a.h"
 #include "robotics/runtime/FixedControlLoop.h"
 #include "TestSupport.h"
@@ -11,7 +12,7 @@ using namespace grasplink::robotics;
 /**
  * @brief FixedControlLoop와 시뮬레이션 Controller의 시간·명령 계약을 확인한다.
  * @details 고정 간격 누적/초과 시간 제한, 잘못된 경과 시간 무시, 관절 속도 제한과 범위 거부를 검사한다.
- * 또한 정지·재목표 동작과 미구현 TCP feedback/linear trajectory 경계를 고정한다.
+ * 또한 정지·재목표 동작과 TCP feedback 및 Cartesian 경로 요청 계약을 확인한다.
  */
 int main()
 {
@@ -54,8 +55,12 @@ int main()
         const auto stopped = controller.GetState().jointPositionRadians;
         controller.Update(1.0);
         Require(controller.GetState().jointPositionRadians == stopped, "stop freezes q");
-        Require(!controller.GetState().tcpPoseValid, "controller has no synthetic TCP feedback");
-        Require(controller.MoveLinear({}).code == ErrorCode::Unsupported, "no IK trajectory");
+        Require(controller.GetState().tcpPoseValid, "simulation reports FK-derived TCP feedback");
+        grasplink::robotics::kinematics::DampedLeastSquaresIk ik(models::hanwha::kHcr12a);
+        const CartesianPose homePose = ik.EvaluateTcp(JointVector(6, 0.0));
+        Require(static_cast<bool>(controller.MovePose(homePose)), "MovePose accepts reachable TCP target");
+        Require(static_cast<bool>(controller.MoveLinear({homePose, 0.05, 0.2})),
+            "MoveLinear accepts a reachable TCP path");
         controller.Disconnect();
         Require(!controller.GetState().valid, "disconnected state invalid");
 

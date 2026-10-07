@@ -24,6 +24,8 @@ struct RobotKinematicState
     std::vector<models::QuaternionWxyz> jointLocalRotations;
     /// RobotSpecification 순서대로 관절 회전 중심의 Robot base 기준 위치 [m]와 누적 회전을 저장한다. Link는 이 회전 중심 사이에 이어지는 로봇 팔 부분이다.
     std::vector<models::Pose3> linkPosesInBaseFrame;
+    /// 각 관절의 회전축을 Robot base 좌표계에서 길이 1인 방향으로 저장한다. IK는 이 축과 회전 중심에서 TCP 변화율을 계산한다.
+    std::vector<models::Axis3> jointAxesInBaseFrame;
     /// 마지막 관절에 고정 변환을 적용한 ToolFrame의 위치 [m]와 방향이다. Robot base 기준이며 실제 공구 끝 TCP와 다를 수 있다.
     models::Pose3 toolFrameInBaseFrame{};
     /// RobotSpecification에 ToolFrame이 정의되어 있으면 true다. Controller가 실제 TCP feedback을 제공하는지는 별도로 판정한다.
@@ -60,6 +62,16 @@ public:
      * @throws std::invalid_argument snapshot이 유효하지 않거나 관절 수가 다르거나 각도가 유한수가 아닐 때.
      */
     const RobotKinematicState& Update(const RobotState& state);
+
+    /**
+     * @brief 상태 feedback 없이 관절각 배열만으로 Robot base 기준 FK를 계산한다.
+     * @details IK는 목표 자세에 가까워지는 후보 관절각을 반복 평가하므로 Controller 상태를 만들지 않고 이 함수에 전달한다.
+     * 관절 제한은 여기서 적용하지 않으며 Controller와 IK가 각각 검사한다.
+     * @param jointPositionRadians RobotSpecification 순서의 관절각 [rad]다.
+     * @return 이 객체가 소유하며 다음 Update에서 덮어쓰는 FK 결과다.
+     * @throws std::invalid_argument 관절 수가 다르거나 유한하지 않은 각도가 있을 때.
+     */
+    const RobotKinematicState& Update(const JointVector& jointPositionRadians);
 
 private:
     const models::RobotSpecification& specification_;
