@@ -1,12 +1,12 @@
 #include "robotics/kinematics/GripperKinematics.h"
 #include "robotics/models/robotiq/TwoF85.h"
-#include "TestSupport.h"
 
 #include <array>
 #include <cmath>
-#include <iostream>
+#include <gtest/gtest.h>
 #include <limits>
 #include <string>
+#include <stdexcept>
 
 namespace
 {
@@ -27,21 +27,21 @@ GripperState ClosureState(double fraction)
 void RequireQuaternion(const models::QuaternionWxyz& actual,
     const models::QuaternionWxyz& expected, double tolerance, const std::string& label)
 {
-    RequireNear(actual.w, expected.w, tolerance, label + ": w");
-    RequireNear(actual.x, expected.x, tolerance, label + ": x");
-    RequireNear(actual.y, expected.y, tolerance, label + ": y");
-    RequireNear(actual.z, expected.z, tolerance, label + ": z");
+    EXPECT_NEAR(actual.w, expected.w, tolerance) << label + ": w";
+    EXPECT_NEAR(actual.x, expected.x, tolerance) << label + ": x";
+    EXPECT_NEAR(actual.y, expected.y, tolerance) << label + ": y";
+    EXPECT_NEAR(actual.z, expected.z, tolerance) << label + ": z";
 }
 
 void RequireSamePose(const GripperKinematicState& actual,
     const GripperKinematicState& expected, const std::string& label)
 {
-    RequireNear(actual.masterAngleRadians, expected.masterAngleRadians, 0.0, label + ": master angle");
-    Require(actual.jointAnglesRadians.size() == expected.jointAnglesRadians.size(), label + ": angle count");
-    Require(actual.jointLocalRotations.size() == expected.jointLocalRotations.size(), label + ": rotation count");
+    EXPECT_NEAR(actual.masterAngleRadians, expected.masterAngleRadians, 0.0) << label + ": master angle";
+    EXPECT_TRUE(actual.jointAnglesRadians.size() == expected.jointAnglesRadians.size()) << label + ": angle count";
+    EXPECT_TRUE(actual.jointLocalRotations.size() == expected.jointLocalRotations.size()) << label + ": rotation count";
     for (std::size_t i = 0; i < expected.jointAnglesRadians.size(); ++i)
     {
-        RequireNear(actual.jointAnglesRadians[i], expected.jointAnglesRadians[i], 0.0, label + ": joint angle");
+        EXPECT_NEAR(actual.jointAnglesRadians[i], expected.jointAnglesRadians[i], 0.0) << label + ": joint angle";
         RequireQuaternion(actual.jointLocalRotations[i], expected.jointLocalRotations[i], 0.0, label + ": rotation");
     }
 }
@@ -55,20 +55,20 @@ void CheckReferencePoses()
     {
         const auto& pose = calculator.Update(ClosureState(fraction));
         const double master = 0.7929 * fraction;
-        RequireNear(pose.masterAngleRadians, master, 1.0e-12, "nominal master angle");
-        Require(pose.jointAnglesRadians.size() == signs.size(), "six mimic angles");
-        Require(pose.jointLocalRotations.size() == signs.size(), "six local rotations");
+        EXPECT_NEAR(pose.masterAngleRadians, master, 1.0e-12) << "nominal master angle";
+        EXPECT_TRUE(pose.jointAnglesRadians.size() == signs.size()) << "six mimic angles";
+        EXPECT_TRUE(pose.jointLocalRotations.size() == signs.size()) << "six local rotations";
         for (std::size_t i = 0; i < signs.size(); ++i)
         {
             const double angle = signs[i] * master;
             const std::string label = std::string(models::robotiq::kTwoF85Joints[i].name) +
                 " closure " + std::to_string(fraction);
-            RequireNear(pose.jointAnglesRadians[i], angle, 1.0e-12, label + ": mimic angle");
+            EXPECT_NEAR(pose.jointAnglesRadians[i], angle, 1.0e-12) << label + ": mimic angle";
             const auto& rotation = pose.jointLocalRotations[i];
             RequireQuaternion(rotation, {std::cos(angle * 0.5), 0.0, 0.0, -std::sin(angle * 0.5)},
                 1.0e-12, label);
-            RequireNear(rotation.w * rotation.w + rotation.x * rotation.x +
-                rotation.y * rotation.y + rotation.z * rotation.z, 1.0, 1.0e-12, label + ": unit rotation");
+            EXPECT_NEAR(rotation.w * rotation.w + rotation.x * rotation.x +
+                rotation.y * rotation.y + rotation.z * rotation.z, 1.0, 1.0e-12) << label + ": unit rotation";
         }
     }
 }
@@ -92,7 +92,8 @@ void CheckContinuousInputAndRejectedState()
     const GripperKinematicState before = retained;
     const auto reject = [&](const GripperState& invalid, const std::string& label)
     {
-        ExpectThrows<std::invalid_argument>([&] { calculator.Update(invalid); }, label);
+        SCOPED_TRACE(label);
+        EXPECT_THROW(calculator.Update(invalid), std::invalid_argument);
         RequireSamePose(retained, before, label + ": previous pose retained");
     };
     GripperState invalid = state;
@@ -124,14 +125,15 @@ void CheckNonunitAxis()
     RequireQuaternion(pose.jointLocalRotations[0],
         {std::cos(halfAngle), sine * 2.0 / 7.0, sine * -3.0 / 7.0, sine * 6.0 / 7.0},
         1.0e-12, "arbitrary axis is normalized");
-    RequireNear(pose.jointAnglesRadians[0], 0.7929 * 0.5, 1.0e-12, "axis length preserves joint angle");
+    EXPECT_NEAR(pose.jointAnglesRadians[0], 0.7929 * 0.5, 1.0e-12) << "axis length preserves joint angle";
 }
 
 void CheckInvalidSpecifications()
 {
     const auto reject = [](const models::GripperSpecification& specification, const std::string& label)
     {
-        ExpectThrows<std::invalid_argument>([&] { GripperKinematics invalid(specification); }, label);
+        SCOPED_TRACE(label);
+        EXPECT_THROW(GripperKinematics invalid(specification), std::invalid_argument);
     };
     auto specification = models::robotiq::kTwoF85;
     specification.joints = nullptr;
@@ -208,20 +210,22 @@ void CheckInvalidSpecifications()
  * @details 열린·중간·닫힌 기준 자세, 축 정규화와 잘못된 입력 거부를 확인한다.
  * GLB bind 합성·부모 계층 전파·물리 추종은 별도의 PoseIntegration 테스트가 담당한다.
  */
-int main()
+TEST(GripperKinematicsTests, ReferencePosesAndMimicRotations)
 {
-    try
-    {
-        CheckReferencePoses();
-        CheckContinuousInputAndRejectedState();
-        CheckNonunitAxis();
-        CheckInvalidSpecifications();
-        std::cout << "Gripper kinematics mimic, quaternion and validation checks passed\n";
-        return 0;
-    }
-    catch (const std::exception& error)
-    {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
+    CheckReferencePoses();
+}
+
+TEST(GripperKinematicsTests, ContinuousInputAndRejectedState)
+{
+    CheckContinuousInputAndRejectedState();
+}
+
+TEST(GripperKinematicsTests, NormalizesNonunitJointAxis)
+{
+    CheckNonunitAxis();
+}
+
+TEST(GripperKinematicsTests, RejectsInvalidSpecifications)
+{
+    CheckInvalidSpecifications();
 }

@@ -52,7 +52,12 @@
 #include <memory>
 #include <limits>
 #include <stdexcept>
+#if GRASPLINK_ENABLE_TRACY
 #include <tracy/Tracy.hpp>
+#else
+#define ZoneScopedN(name) ((void)0)
+#define FrameMark ((void)0)
+#endif
 
 namespace
 {

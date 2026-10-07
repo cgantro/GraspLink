@@ -7,22 +7,52 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 if(MSVC)
-  add_compile_options(/utf-8)
+  add_compile_options(/utf-8 "$<$<COMPILE_LANGUAGE:CXX>:/EHsc>")
 endif()
 
 include(cmake/Dependencies.cmake)
 grasplink_add_common_dependencies()
 include(CTest)
 
-set(TRACY_ENABLE ON CACHE BOOL "Enable Tracy runtime profiling" FORCE)
-set(TRACY_ON_DEMAND ON CACHE BOOL "Capture Tracy data only when a profiler connects" FORCE)
-FetchContent_Declare(
-  tracy
-  GIT_REPOSITORY https://github.com/wolfpld/tracy.git
-  GIT_TAG v0.14.1
-  GIT_SHALLOW TRUE
-)
-FetchContent_MakeAvailable(tracy)
+option(GRASPLINK_ENABLE_TRACY "Enable Tracy runtime profiling" ON)
+option(GRASPLINK_BUILD_BENCHMARKS "Build FK, IK, and path-planning benchmarks" ${BUILD_TESTING})
+
+if(GRASPLINK_ENABLE_TRACY)
+  set(TRACY_ENABLE ON CACHE BOOL "Enable Tracy runtime profiling" FORCE)
+  set(TRACY_ON_DEMAND ON CACHE BOOL "Capture Tracy data only when a profiler connects" FORCE)
+  FetchContent_Declare(
+    tracy
+    GIT_REPOSITORY https://github.com/wolfpld/tracy.git
+    GIT_TAG v0.14.1
+    GIT_SHALLOW TRUE
+  )
+  FetchContent_MakeAvailable(tracy)
+endif()
+
+if(BUILD_TESTING)
+  set(BUILD_GMOCK OFF CACHE BOOL "Disable Google Mock" FORCE)
+  set(INSTALL_GTEST OFF CACHE BOOL "Disable GoogleTest installation" FORCE)
+  FetchContent_Declare(
+    googletest
+    GIT_REPOSITORY https://github.com/google/googletest.git
+    GIT_TAG v1.18.0
+    GIT_SHALLOW TRUE
+  )
+  FetchContent_MakeAvailable(googletest)
+endif()
+
+if(BUILD_TESTING AND GRASPLINK_BUILD_BENCHMARKS)
+  set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "Disable Google Benchmark tests" FORCE)
+  set(BENCHMARK_ENABLE_GTEST_TESTS OFF CACHE BOOL "Disable Google Benchmark GoogleTest tests" FORCE)
+  set(BENCHMARK_ENABLE_INSTALL OFF CACHE BOOL "Disable Google Benchmark installation" FORCE)
+  FetchContent_Declare(
+    googlebenchmark
+    GIT_REPOSITORY https://github.com/google/benchmark.git
+    GIT_TAG v1.9.5
+    GIT_SHALLOW TRUE
+  )
+  FetchContent_MakeAvailable(googlebenchmark)
+endif()
 
 
 # ============================================================
@@ -155,6 +185,18 @@ if(BUILD_TESTING)
   add_executable(grasplink_gripper_kinematics_tests tests/GripperKinematicsTests.cpp)
   target_link_libraries(grasplink_gripper_kinematics_tests PRIVATE grasplink_robotics)
   add_test(NAME GripperKinematics COMMAND grasplink_gripper_kinematics_tests)
+
+  foreach(test_target IN ITEMS
+      grasplink_physics_tests
+      grasplink_control_tests
+      grasplink_kinematics_tests
+      grasplink_inverse_kinematics_tests
+      grasplink_robot_motion_tests
+      grasplink_robot_panel_motion_tests
+      grasplink_gripper_runtime_tests
+      grasplink_gripper_kinematics_tests)
+    target_link_libraries(${test_target} PRIVATE GTest::gtest_main)
+  endforeach()
 endif()
 
 # ============================================================
@@ -364,8 +406,13 @@ if(GRASPLINK_BUILD_GRAPHICS)
     grasplink_robotics
     grasplink_physics
     grasplink_diagnostics
-    Tracy::TracyClient
   )
+  target_compile_definitions(grasplink_simulator PRIVATE
+    GRASPLINK_ENABLE_TRACY=$<BOOL:${GRASPLINK_ENABLE_TRACY}>
+  )
+  if(GRASPLINK_ENABLE_TRACY)
+    target_link_libraries(grasplink_simulator PRIVATE Tracy::TracyClient)
+  endif()
 
 
   # ----------------------------------------------------------
@@ -452,6 +499,30 @@ if(GRASPLINK_BUILD_GRAPHICS)
     add_test(NAME ViewerDemoSmoke COMMAND grasplink_simulator --smoke-test --physics-demo)
     set_tests_properties(ViewerSmoke ViewerDemoSmoke PROPERTIES
       WORKING_DIRECTORY "$<TARGET_FILE_DIR:grasplink_simulator>" TIMEOUT 60)
+
+    foreach(test_target IN ITEMS
+      grasplink_pick_place_mission_tests
+      grasplink_gui_composition_tests
+      grasplink_quaternion_transform_tests
+      grasplink_graphics_tests
+      grasplink_gltf_tests
+      grasplink_robot_pose_integration_tests
+      grasplink_physics_ecs_tests
+      grasplink_collision_tests
+      grasplink_gripper_collision_tests
+      grasplink_gripper_pose_tests
+      grasplink_gripper_grasp_tests
+    )
+      target_link_libraries(${test_target} PRIVATE GTest::gtest_main)
+    endforeach()
   endif()
 
+endif()
+
+if(BUILD_TESTING AND GRASPLINK_BUILD_BENCHMARKS)
+  add_executable(grasplink_robotics_benchmarks benchmarks/RoboticsBenchmarks.cpp)
+  target_link_libraries(grasplink_robotics_benchmarks PRIVATE
+    grasplink_robotics
+    benchmark::benchmark
+  )
 endif()

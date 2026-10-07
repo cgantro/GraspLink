@@ -1,12 +1,11 @@
 #include "robotics/kinematics/RobotInverseKinematics.h"
 #include "robotics/kinematics/RobotKinematics.h"
 #include "robotics/models/hanwha/Hcr12a.h"
-#include "TestSupport.h"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <iostream>
+#include <gtest/gtest.h>
 #include <limits>
 
 using namespace grasplink::robotics;
@@ -66,7 +65,9 @@ models::RobotSpecification MakeSingleJointModel(
     return {"Test", "SingleJoint", joints.data(), joints.size(), nullptr, 0, toolFrame, true};
 }
 
-void CheckJacobianAxesAgainstFiniteDifference()
+}
+
+TEST(RobotInverseKinematicsTests, JacobianMatchesFiniteDifferenceWithAngledAxesAndTcpOffset)
 {
     // 서로 다른 크기와 방향을 가진 회전축, 관절 중심, ToolFrame offset을 사용해 축이 Local에서 Base로 변환되는지 확인한다.
     std::array<models::JointSpecification, 3> joints{{
@@ -107,17 +108,17 @@ void CheckJacobianAxesAgainstFiniteDifference()
         {
             const double numeric = (plusPose.positionMeters[coordinate] - minusPose.positionMeters[coordinate]) /
                 (2.0 * deltaRadians);
-            RequireNear(numeric, analytic[coordinate], 2e-7,
-                "base-frame joint axis cross TCP offset matches finite-difference FK");
+            EXPECT_NEAR(numeric, analytic[coordinate], 2e-7)
+                << "base-frame joint axis cross TCP offset matches finite-difference FK";
         }
         const std::array<double, 3> numericRotation = RotationRate(plusPose, minusPose, deltaRadians);
-        RequireNear(numericRotation[0], axis.x, 2e-7, "finite-difference TCP rotation x follows the base joint axis");
-        RequireNear(numericRotation[1], axis.y, 2e-7, "finite-difference TCP rotation y follows the base joint axis");
-        RequireNear(numericRotation[2], axis.z, 2e-7, "finite-difference TCP rotation z follows the base joint axis");
+        EXPECT_NEAR(numericRotation[0], axis.x, 2e-7) << "finite-difference TCP rotation x follows the base joint axis";
+        EXPECT_NEAR(numericRotation[1], axis.y, 2e-7) << "finite-difference TCP rotation y follows the base joint axis";
+        EXPECT_NEAR(numericRotation[2], axis.z, 2e-7) << "finite-difference TCP rotation z follows the base joint axis";
     }
 }
 
-void CheckReachableRoundTripAndQuaternionSign()
+TEST(RobotInverseKinematicsTests, RoundTripsReachablePoseAndIgnoresQuaternionSign)
 {
     DampedLeastSquaresIk inverse(models::hanwha::kHcr12a);
     const JointVector currentSeed{0.2, -0.35, 0.3, 0.2, -0.25, 0.1};
@@ -126,43 +127,42 @@ void CheckReachableRoundTripAndQuaternionSign()
 
     // 순기구학(FK)은 관절각에서 TCP 자세를 계산하고 역기구학(IK)은 그 자세에서 관절각을 찾는다. 여기서는 같은 로봇 모델의 FK가 만든 목표를 넣어 IK 출력도 FK로 다시 검사한다.
     const IkResult result = inverse.Solve(target, currentSeed);
-    Require(result.status == IkStatus::Success, "FK-generated reachable target converges");
+    ASSERT_EQ(result.status, IkStatus::Success) << "FK-generated reachable target converges";
     const CartesianPose recovered = inverse.EvaluateTcp(result.jointPositionRadians);
-    Require(PositionDistance(recovered, target) < 2e-5, "round-trip TCP position error");
-    Require(OrientationDistance(recovered, target) < 2e-4, "round-trip TCP orientation error");
+    EXPECT_LT(PositionDistance(recovered, target), 2e-5) << "round-trip TCP position error";
+    EXPECT_LT(OrientationDistance(recovered, target), 2e-4) << "round-trip TCP orientation error";
 
     CartesianPose equivalent = target;
     for (double& component : equivalent.orientationXyzw)
         component = -component;
     const IkResult signFlipped = inverse.Solve(equivalent, currentSeed);
-    Require(signFlipped.status == IkStatus::Success, "opposite quaternion sign describes the same orientation");
+    ASSERT_EQ(signFlipped.status, IkStatus::Success) << "opposite quaternion sign describes the same orientation";
     const CartesianPose signRecovered = inverse.EvaluateTcp(signFlipped.jointPositionRadians);
-    Require(PositionDistance(signRecovered, target) < 2e-5, "sign-flipped position error");
-    Require(OrientationDistance(signRecovered, target) < 2e-4, "sign-flipped orientation error");
+    EXPECT_LT(PositionDistance(signRecovered, target), 2e-5) << "sign-flipped position error";
+    EXPECT_LT(OrientationDistance(signRecovered, target), 2e-4) << "sign-flipped orientation error";
 }
 
-void CheckReachableTargetEscapesDlsLocalMinimum()
+TEST(RobotInverseKinematicsTests, FallbackEscapesSingularSeedLocalMinimum)
 {
     DampedLeastSquaresIk inverse(models::hanwha::kHcr12a);
     const JointVector source{0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
     const JointVector reachableJoints{0.0, -0.8, -0.1, 0.5, -0.4, 0.2};
     const CartesianPose target = inverse.EvaluateTcp(reachableJoints);
     const IkResult primaryAttempt = inverse.SolveSingleSeed(target, source);
-    Require(primaryAttempt.status == IkStatus::DidNotConverge || primaryAttempt.status == IkStatus::JointLimitReached,
-        "single-seed solve exposes the singular home-posture local minimum");
+    EXPECT_TRUE(primaryAttempt.status == IkStatus::DidNotConverge || primaryAttempt.status == IkStatus::JointLimitReached)
+        << "single-seed solve exposes the singular home-posture local minimum";
     const IkResult solved = inverse.Solve(target, source);
-    Require(solved.status == IkStatus::Success,
-        "bounded posture alternatives recover an FK-reachable target from a singular home seed");
+    ASSERT_EQ(solved.status, IkStatus::Success)
+        << "bounded posture alternatives recover an FK-reachable target from a singular home seed";
     const CartesianPose recovered = inverse.EvaluateTcp(solved.jointPositionRadians);
-    Require(PositionDistance(recovered, target) < 2e-5,
-        "fallback solution preserves the FK-reachable target position");
-    Require(OrientationDistance(recovered, target) < 2e-4,
-        "fallback solution preserves the FK-reachable target orientation");
-    Require(solved.iterations < 200,
-        "successful fallback reports the iterations from its converged seed");
+    EXPECT_LT(PositionDistance(recovered, target), 2e-5)
+        << "fallback solution preserves the FK-reachable target position";
+    EXPECT_LT(OrientationDistance(recovered, target), 2e-4)
+        << "fallback solution preserves the FK-reachable target orientation";
+    EXPECT_LT(solved.iterations, 200U) << "successful fallback reports the iterations from its converged seed";
 }
 
-void CheckToolOffsetAndValidation()
+TEST(RobotInverseKinematicsTests, AppliesToolOffsetAndRejectsInvalidInputs)
 {
     std::array<models::JointSpecification, 1> joints{};
     const double halfQuarterTurn = std::acos(-1.0) / 4.0;
@@ -170,63 +170,61 @@ void CheckToolOffsetAndValidation()
     const auto specification = MakeSingleJointModel(joints, {});
     DampedLeastSquaresIk toolOffsetIk(specification, tcpOffset);
     const CartesianPose offsetPose = toolOffsetIk.EvaluateTcp({0.0});
-    RequireNear(offsetPose.positionMeters[0], 0.3, 1e-12, "TCP offset translation x");
-    RequireNear(offsetPose.positionMeters[1], 0.0, 1e-12, "TCP offset translation y");
-    RequireNear(offsetPose.orientationXyzw[2], std::sin(halfQuarterTurn), 1e-12,
-        "model wxyz quaternion is returned as TCP xyzw");
-    RequireNear(offsetPose.orientationXyzw[3], std::cos(halfQuarterTurn), 1e-12,
-        "TCP orientation retains the tool offset rotation");
+    EXPECT_NEAR(offsetPose.positionMeters[0], 0.3, 1e-12) << "TCP offset translation x";
+    EXPECT_NEAR(offsetPose.positionMeters[1], 0.0, 1e-12) << "TCP offset translation y";
+    EXPECT_NEAR(offsetPose.orientationXyzw[2], std::sin(halfQuarterTurn), 1e-12)
+        << "model wxyz quaternion is returned as TCP xyzw";
+    EXPECT_NEAR(offsetPose.orientationXyzw[3], std::cos(halfQuarterTurn), 1e-12)
+        << "TCP orientation retains the tool offset rotation";
 
     DampedLeastSquaresIk inverse(specification, tcpOffset);
     models::RobotSpecification withoutToolFrame = specification;
     withoutToolFrame.hasToolFrame = false;
     DampedLeastSquaresIk missingTool(withoutToolFrame);
-    Require(missingTool.Solve(offsetPose, {0.0}).status == IkStatus::MissingToolFrame,
-        "IK distinguishes a model without a ToolFrame");
-    ExpectThrows<std::invalid_argument>([&] { missingTool.EvaluateTcp({0.0}); },
-        "FK TCP evaluation rejects a missing ToolFrame");
+    EXPECT_EQ(missingTool.Solve(offsetPose, {0.0}).status, IkStatus::MissingToolFrame)
+        << "IK distinguishes a model without a ToolFrame";
+    EXPECT_THROW(missingTool.EvaluateTcp({0.0}), std::invalid_argument)
+        << "FK TCP evaluation rejects a missing ToolFrame";
 
     CartesianPose invalidTarget = offsetPose;
     invalidTarget.orientationXyzw = {0.0, 0.0, 0.0, 0.0};
-    Require(inverse.Solve(invalidTarget, {0.0}).status == IkStatus::InvalidInput,
-        "zero target quaternion is rejected");
+    EXPECT_EQ(inverse.Solve(invalidTarget, {0.0}).status, IkStatus::InvalidInput)
+        << "zero target quaternion is rejected";
     invalidTarget = offsetPose;
     invalidTarget.positionMeters[1] = std::numeric_limits<double>::quiet_NaN();
-    Require(inverse.Solve(invalidTarget, {0.0}).status == IkStatus::InvalidInput,
-        "non-finite target position is rejected");
-    Require(inverse.Solve(offsetPose, {}).status == IkStatus::InvalidInput,
-        "wrong seed joint count is rejected");
-    Require(inverse.Solve(offsetPose, {std::numeric_limits<double>::quiet_NaN()}).status == IkStatus::InvalidInput,
-        "non-finite seed is rejected");
-    Require(inverse.Solve(offsetPose, {0.2}).status == IkStatus::InvalidInput,
-        "seed outside joint limits is rejected");
+    EXPECT_EQ(inverse.Solve(invalidTarget, {0.0}).status, IkStatus::InvalidInput)
+        << "non-finite target position is rejected";
+    EXPECT_EQ(inverse.Solve(offsetPose, {}).status, IkStatus::InvalidInput) << "wrong seed joint count is rejected";
+    EXPECT_EQ(inverse.Solve(offsetPose, {std::numeric_limits<double>::quiet_NaN()}).status, IkStatus::InvalidInput)
+        << "non-finite seed is rejected";
+    EXPECT_EQ(inverse.Solve(offsetPose, {0.2}).status, IkStatus::InvalidInput) << "seed outside joint limits is rejected";
 
     IkOptions invalidOptions;
     invalidOptions.maxIterations = 0;
-    Require(inverse.Solve(offsetPose, {0.0}, invalidOptions).status == IkStatus::InvalidInput,
-        "zero iteration budget is rejected");
+    EXPECT_EQ(inverse.Solve(offsetPose, {0.0}, invalidOptions).status, IkStatus::InvalidInput)
+        << "zero iteration budget is rejected";
     invalidOptions = {};
     invalidOptions.damping = std::numeric_limits<double>::quiet_NaN();
-    Require(inverse.Solve(offsetPose, {0.0}, invalidOptions).status == IkStatus::InvalidInput,
-        "non-finite damping is rejected");
+    EXPECT_EQ(inverse.Solve(offsetPose, {0.0}, invalidOptions).status, IkStatus::InvalidInput)
+        << "non-finite damping is rejected";
     invalidOptions = {};
     invalidOptions.positionToleranceMeters = 0.0;
-    Require(inverse.Solve(offsetPose, {0.0}, invalidOptions).status == IkStatus::InvalidInput,
-        "zero position tolerance is rejected");
+    EXPECT_EQ(inverse.Solve(offsetPose, {0.0}, invalidOptions).status, IkStatus::InvalidInput)
+        << "zero position tolerance is rejected";
 }
 
-void CheckDistinctFailureStatusesAndDamping()
+TEST(RobotInverseKinematicsTests, ReportsFailureStatusesAndStabilizesNearSingularPose)
 {
     std::array<models::JointSpecification, 1> joints{};
     const auto limitedModel = MakeSingleJointModel(joints, {{1.0, 0.0, 0.0}, {}});
     DampedLeastSquaresIk limited(limitedModel);
     const CartesianPose beyondJointLimit = limited.EvaluateTcp({0.5});
     const IkResult jointLimit = limited.Solve(beyondJointLimit, {0.0});
-    Require(jointLimit.status == IkStatus::JointLimitReached, "joint boundary failure has its own status");
+    EXPECT_EQ(jointLimit.status, IkStatus::JointLimitReached) << "joint boundary failure has its own status";
 
     const IkResult unreachable = limited.Solve(
         CartesianPose{{50.0, 0.0, 0.0}, {0.0, 0.0, 0.0, 1.0}}, {0.0});
-    Require(unreachable.status == IkStatus::Unreachable, "far target is classified as unreachable");
+    EXPECT_EQ(unreachable.status, IkStatus::Unreachable) << "far target is classified as unreachable";
 
     const IkResult exhausted = [&]
     {
@@ -238,8 +236,8 @@ void CheckDistinctFailureStatusesAndDamping()
         options.orientationToleranceRadians = 1e-12;
         return hcr.Solve(reachable, {0.2, -0.35, 0.3, 0.2, -0.25, 0.1}, options);
     }();
-    Require(exhausted.status == IkStatus::DidNotConverge,
-        "iteration exhaustion is distinct from an unreachable target and a joint limit");
+    EXPECT_EQ(exhausted.status, IkStatus::DidNotConverge)
+        << "iteration exhaustion is distinct from an unreachable target and a joint limit";
 
     std::array<models::JointSpecification, 1> unconstrainedJoints{};
     const auto unconstrainedModel = MakeSingleJointModel(
@@ -249,28 +247,8 @@ void CheckDistinctFailureStatusesAndDamping()
     IkOptions dampedOptions;
     dampedOptions.damping = 1e-2;
     const IkResult nearSingular = damped.Solve(smallTurn, {0.0}, dampedOptions);
-    Require(nearSingular.status == IkStatus::Success, "damping stabilizes a nearly aligned arm pose");
-    Require(std::isfinite(nearSingular.jointPositionRadians[0]) &&
-        std::abs(nearSingular.jointPositionRadians[0]) <= 3.0,
-        "damped near-singular result remains finite and within limits");
-}
-}
-
-int main()
-{
-    try
-    {
-        CheckReachableTargetEscapesDlsLocalMinimum();
-        CheckReachableRoundTripAndQuaternionSign();
-        CheckToolOffsetAndValidation();
-        CheckJacobianAxesAgainstFiniteDifference();
-        CheckDistinctFailureStatusesAndDamping();
-        std::cout << "Robot inverse kinematics checks passed\n";
-        return 0;
-    }
-    catch (const std::exception& error)
-    {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
+    ASSERT_EQ(nearSingular.status, IkStatus::Success) << "damping stabilizes a nearly aligned arm pose";
+    EXPECT_TRUE(std::isfinite(nearSingular.jointPositionRadians[0]) &&
+        std::abs(nearSingular.jointPositionRadians[0]) <= 3.0)
+        << "damped near-singular result remains finite and within limits";
 }

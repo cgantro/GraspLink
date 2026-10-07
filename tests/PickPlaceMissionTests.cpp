@@ -1,9 +1,8 @@
 #include "PickPlaceMission.h"
 #include "robotics/backends/simulation/SimRobotController.h"
 #include "robotics/models/hanwha/Hcr12a.h"
-#include "TestSupport.h"
 
-#include <iostream>
+#include <gtest/gtest.h>
 
 namespace
 {
@@ -29,9 +28,9 @@ void CheckStartAndPauseResumeWithHeldObject()
     using namespace grasplink::robotics;
     using grasplink::robotics::backends::simulation::SimRobotController;
     SimRobotController controller(models::hanwha::kHcr12a);
-    Require(static_cast<bool>(controller.Connect()), "mission controller connects");
+    ASSERT_TRUE(static_cast<bool>(controller.Connect())) << "mission controller connects";
     StubGripper gripper;
-    Require(static_cast<bool>(gripper.Connect()), "stub gripper connects");
+    ASSERT_TRUE(static_cast<bool>(gripper.Connect())) << "stub gripper connects";
     grasplink::viewer::PickPlaceMission mission(models::hanwha::kHcr12a);
     const auto state = controller.GetState();
     CartesianPose box = state.tcpPose;
@@ -40,18 +39,16 @@ void CheckStartAndPauseResumeWithHeldObject()
     mission.Update(controller.GetStateView(), controller, gripper, false, box, goal);
     mission.ApplyActions({true, false, false}, controller.GetStateView(), controller,
         gripper, false, box, goal);
-    Require(mission.Snapshot().stageLabel == "Unwinding J6 before pickup",
-        "Start issues the J6 unwind and exposes its stage");
+    ASSERT_EQ(mission.Snapshot().stageLabel, "Unwinding J6 before pickup");
 
     mission.ApplyActions({false, false, true}, controller.GetStateView(), controller,
         gripper, false, box, goal);
-    Require(mission.Snapshot().paused, "Stop pauses the mission without clearing its stage");
+    ASSERT_TRUE(mission.Snapshot().paused);
     mission.ApplyActions({false, true, false}, controller.GetStateView(), controller,
         gripper, true, box, goal);
     const auto resumed = mission.Snapshot();
-    Require(!resumed.paused, "Resume clears the paused state");
-    Require(resumed.stageLabel == "Lifting to resume height",
-        "Resume with a held object commands a safe lift before transit planning");
+    ASSERT_FALSE(resumed.paused);
+    ASSERT_EQ(resumed.stageLabel, "Lifting to resume height");
 }
 
 void CheckUnreachablePickupFailsWithoutMotion()
@@ -59,9 +56,9 @@ void CheckUnreachablePickupFailsWithoutMotion()
     using namespace grasplink::robotics;
     using grasplink::robotics::backends::simulation::SimRobotController;
     SimRobotController controller(models::hanwha::kHcr12a);
-    Require(static_cast<bool>(controller.Connect()), "mission controller connects for failed pickup");
+    ASSERT_TRUE(static_cast<bool>(controller.Connect())) << "mission controller connects for failed pickup";
     StubGripper gripper;
-    Require(static_cast<bool>(gripper.Connect()), "stub gripper connects for failed pickup");
+    ASSERT_TRUE(static_cast<bool>(gripper.Connect())) << "stub gripper connects for failed pickup";
     grasplink::viewer::PickPlaceMission mission(models::hanwha::kHcr12a);
     const auto initial = controller.GetState();
     CartesianPose unreachableBox = initial.tcpPose;
@@ -71,32 +68,24 @@ void CheckUnreachablePickupFailsWithoutMotion()
     mission.Update(controller.GetStateView(), controller, gripper, false, unreachableBox, goal);
     mission.ApplyActions({true, false, false}, controller.GetStateView(), controller,
         gripper, false, unreachableBox, goal);
-    Require(mission.Snapshot().stageLabel == "Unwinding J6 before pickup",
-        "accepted start enters the unwind stage before planning pickup");
+    ASSERT_EQ(mission.Snapshot().stageLabel, "Unwinding J6 before pickup");
 
     mission.Update(controller.GetStateView(), controller, gripper, false, unreachableBox, goal);
     const auto failed = mission.Snapshot();
-    Require(failed.stageLabel == "Failed", "unreachable pickup transitions the mission to Failed");
-    Require(failed.hasResult && !failed.lastRequestAccepted,
-        "failed pickup reports the rejected motion request");
-    Require(!failed.missionSucceeded, "failed pickup never reports mission success");
-    Require(controller.GetStateView().mode == RobotMode::Idle,
-        "rejected pickup leaves the robot at its current idle pose");
+    ASSERT_EQ(failed.stageLabel, "Failed");
+    EXPECT_TRUE(failed.hasResult);
+    EXPECT_FALSE(failed.lastRequestAccepted);
+    EXPECT_FALSE(failed.missionSucceeded);
+    EXPECT_EQ(controller.GetStateView().mode, RobotMode::Idle);
 }
 }
 
-int main()
+TEST(PickPlaceMissionTests, StartPauseAndResumeWithHeldObject)
 {
-    try
-    {
-        CheckStartAndPauseResumeWithHeldObject();
-        CheckUnreachablePickupFailsWithoutMotion();
-        std::cout << "Pick and place mission checks passed\n";
-        return 0;
-    }
-    catch (const std::exception& exception)
-    {
-        std::cerr << exception.what() << '\n';
-        return 1;
-    }
+    CheckStartAndPauseResumeWithHeldObject();
+}
+
+TEST(PickPlaceMissionTests, UnreachablePickupFailsWithoutMotion)
+{
+    CheckUnreachablePickupFailsWithoutMotion();
 }

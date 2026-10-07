@@ -19,7 +19,11 @@
 
 #include <algorithm>
 #include <glm/gtc/quaternion.hpp>
+#if GRASPLINK_ENABLE_TRACY
 #include <tracy/Tracy.hpp>
+#else
+#define ZoneScopedN(name) ((void)0)
+#endif
 
 namespace grasplink::viewer
 {
