@@ -167,8 +167,7 @@ robotics::CartesianPose MakeAttachedBoxTarget(const robotics::CartesianPose& box
     const std::array<double, 4>& targetBoxOrientation, const std::array<double, 4>& boxRotationOffsetInTool,
     const std::array<double, 3>& boxOffsetInTool)
 {
-    const glm::dquat boxRotationOffset{boxRotationOffsetInTool[3], boxRotationOffsetInTool[0],
-        boxRotationOffsetInTool[1], boxRotationOffsetInTool[2]};
+    const glm::dquat boxRotationOffset = Orientation(boxRotationOffsetInTool);
     const glm::dquat tcpOrientation = glm::normalize(
         Orientation(targetBoxOrientation) * glm::inverse(boxRotationOffset));
     const glm::dvec3 boxOffset = tcpOrientation *
@@ -376,8 +375,7 @@ void PickPlaceMission::Update(const robotics::RobotState& state, robotics::IRobo
     }
     else if (stage_ == Stage::TransitPathRunning && idle)
     {
-        const glm::dquat boxRotationOffset{boxRotationOffsetInTool_[3], boxRotationOffsetInTool_[0],
-            boxRotationOffsetInTool_[1], boxRotationOffsetInTool_[2]};
+        const glm::dquat boxRotationOffset = Orientation(boxRotationOffsetInTool_);
         const glm::dquat currentTcp = TcpOrientation(state);
         const glm::dquat chosenTcp = ClosestSquarePlacementOrientation(
             Orientation(placementPoseInBase.orientationXyzw), boxRotationOffset, currentTcp);
@@ -388,8 +386,7 @@ void PickPlaceMission::Update(const robotics::RobotState& state, robotics::IRobo
     }
     else if (stage_ == Stage::MovingToPlacementOverhead && idle)
     {
-        const glm::dquat boxRotationOffset{boxRotationOffsetInTool_[3], boxRotationOffsetInTool_[0],
-            boxRotationOffsetInTool_[1], boxRotationOffsetInTool_[2]};
+        const glm::dquat boxRotationOffset = Orientation(boxRotationOffsetInTool_);
         SetStageFromResult(
             AlignWristOnly(specification_, state,
                 QuaternionXyzw(Orientation(placementBoxOrientationXyzw_) *
