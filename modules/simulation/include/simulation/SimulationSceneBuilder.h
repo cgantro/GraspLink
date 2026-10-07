@@ -6,14 +6,6 @@ namespace grasplink::simulation
 {
 
 /**
- * @brief 화면 바닥 아래에 고정된 Environment 충돌 Body 설정을 만든다.
- * @details 이 함수는 Entity에 RigidBody와 Colliders 설정만 넣는다.
- * PhysicsSystemModule이 이 설정을 읽어 Jolt Body를 생성하고 갱신하며 해제한다.
- * GLB 바닥은 화면에 그리는 Mesh이고 Box는 접촉 판정에 쓰는 별도 Collider다.
- * Box 크기는 Entity scale과 무관하게 미터 단위로 고정된다.
- * 따라서 화면 Mesh 크기를 바꿔도 충돌 Box 크기는 바뀌지 않는다.
- */
-/**
  * @brief 바닥 Entity에 움직이지 않는 Environment Body와 Box Collider 설정을 붙인다.
  * @param floor GLB 바닥 Mesh를 가진 Entity다. 부모 scale은 단위여야 한다.
  * @details plane.glb는 X와 Z축으로 원점에서 3 m까지 뻗고 표면은 Y=0이며 두께는 1 mm다.

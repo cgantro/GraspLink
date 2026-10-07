@@ -98,7 +98,6 @@ void ViewerRobotCollisionGuard::RestoreSafePoseIfOverlapping()
         return;
 
     ApplyJointPose(m_RobotController.GetStateView());
-    TransformSystemModule::UpdateWorldTransforms(m_World);
 }
 
 bool ViewerRobotCollisionGuard::ValidateCandidatePose(

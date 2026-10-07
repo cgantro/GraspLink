@@ -278,8 +278,9 @@ void PickPlaceMission::Update(const robotics::RobotState& state, robotics::IRobo
     const robotics::CartesianPose& graspBoxPoseInBase,
     const robotics::CartesianPose& placementPoseInBase)
 {
+    const bool idle = state.mode == robotics::RobotMode::Idle;
     // Viewer가 겹친 틱을 취소하면 Controller는 직전 관절각에서 Idle로 멈추고 충돌 원인을 남긴다. 여기서는 하강을 이어가지 않고 저장한 높이로 후퇴한다.
-    const bool collisionStopped = state.mode == robotics::RobotMode::Idle &&
+    const bool collisionStopped = idle &&
         state.faultCode == static_cast<std::uint32_t>(robotics::ErrorCode::EnvironmentContact) &&
         stage_ != Stage::Ready && stage_ != Stage::Complete && stage_ != Stage::Failed && stage_ != Stage::Recovering;
 
@@ -294,9 +295,9 @@ void PickPlaceMission::Update(const robotics::RobotState& state, robotics::IRobo
 
     if (!taskPaused_ && collisionStopped)
     {
-        stage_ = MoveTo(recoveryPose_, controller, lastResult_, hasResult_) ? Stage::Recovering : Stage::Failed;
+        SetStageFromResult(MoveTo(recoveryPose_, controller, lastResult_, hasResult_), Stage::Recovering);
     }
-    else if (stage_ == Stage::UnwindingBeforeTask && state.mode == robotics::RobotMode::Idle)
+    else if (stage_ == Stage::UnwindingBeforeTask && idle)
     {
         if (state.jointPositionRadians.empty() ||
             std::abs(state.jointPositionRadians.back()) > kJ6UnwindToleranceRadians)
@@ -309,10 +310,10 @@ void PickPlaceMission::Update(const robotics::RobotState& state, robotics::IRobo
         {
             const auto approach = MakeBoxTarget(graspBoxPoseInBase, kApproachHeightMeters,
                 graspOrientationXyzw_);
-            stage_ = MoveTo(approach, controller, lastResult_, hasResult_) ? Stage::MovingAbovePickup : Stage::Failed;
+            SetStageFromResult(MoveTo(approach, controller, lastResult_, hasResult_), Stage::MovingAbovePickup);
         }
     }
-    else if (stage_ == Stage::MovingAbovePickup && state.mode == robotics::RobotMode::Idle)
+    else if (stage_ == Stage::MovingAbovePickup && idle)
     {
         const double boxYawRadians = glm::radians(YawDegrees(graspBoxPoseInBase.orientationXyzw));
         const glm::dquat desiredPickupOrientation = glm::normalize(
@@ -320,17 +321,17 @@ void PickPlaceMission::Update(const robotics::RobotState& state, robotics::IRobo
         pickupOrientationXyzw_ = QuaternionXyzw(desiredPickupOrientation);
         recoveryPose_ = MakeBoxTarget(graspBoxPoseInBase, kApproachHeightMeters,
             QuaternionXyzw(TcpOrientation(state)));
-        stage_ = AlignWristOnly(specification_, state, pickupOrientationXyzw_, false, boxOffsetInTool_, controller, lastResult_, hasResult_)
-            ? Stage::AligningAbovePickup : Stage::Failed;
+        SetStageFromResult(AlignWristOnly(specification_, state, pickupOrientationXyzw_, false,
+            boxOffsetInTool_, controller, lastResult_, hasResult_), Stage::AligningAbovePickup);
     }
-    else if (stage_ == Stage::AligningAbovePickup && state.mode == robotics::RobotMode::Idle)
+    else if (stage_ == Stage::AligningAbovePickup && idle)
     {
         const auto target = MakeBoxTarget(graspBoxPoseInBase, kGraspClearanceMeters, pickupOrientationXyzw_);
-        stage_ = MoveTo(target, controller, lastResult_, hasResult_) ? Stage::MovingDownToPickup : Stage::Failed;
+        SetStageFromResult(MoveTo(target, controller, lastResult_, hasResult_), Stage::MovingDownToPickup);
     }
-    else if (stage_ == Stage::MovingDownToPickup && state.mode == robotics::RobotMode::Idle)
+    else if (stage_ == Stage::MovingDownToPickup && idle)
     {
-        stage_ = CommandGripper(255, gripper, lastResult_, hasResult_) ? Stage::Closing : Stage::Failed;
+        SetStageFromResult(CommandGripper(255, gripper, lastResult_, hasResult_), Stage::Closing);
     }
     else if (!taskPaused_ && stage_ == Stage::Closing && boxGrasped && state.tcpPoseValid)
     {
@@ -339,7 +340,7 @@ void PickPlaceMission::Update(const robotics::RobotState& state, robotics::IRobo
         graspedBoxPoseInBase_ = graspBoxPoseInBase;
         recoveryPose_ = MakeAttachedBoxPose(graspBoxPoseInBase, kApproachHeightMeters,
             boxRotationOffsetInTool_, boxOffsetInTool_);
-        stage_ = MoveTo(recoveryPose_, controller, lastResult_, hasResult_) ? Stage::Lifting : Stage::Failed;
+        SetStageFromResult(MoveTo(recoveryPose_, controller, lastResult_, hasResult_), Stage::Lifting);
     }
     else if (!taskPaused_ && stage_ == Stage::Closing && !boxGrasped &&
         gripper.GetState().mode == robotics::GripperMode::Idle &&
@@ -351,17 +352,17 @@ void PickPlaceMission::Update(const robotics::RobotState& state, robotics::IRobo
         else
             stage_ = Stage::Failed;
     }
-    else if (stage_ == Stage::Lifting && state.mode == robotics::RobotMode::Idle)
+    else if (stage_ == Stage::Lifting && idle)
     {
         recoveryPose_ = MakeAttachedBoxPose(graspedBoxPoseInBase_, kTransitBoxHeightMeters,
             boxRotationOffsetInTool_, boxOffsetInTool_);
-        stage_ = MoveTo(recoveryPose_, controller, lastResult_, hasResult_) ? Stage::TransitingToPlacement : Stage::Failed;
+        SetStageFromResult(MoveTo(recoveryPose_, controller, lastResult_, hasResult_), Stage::TransitingToPlacement);
     }
-    else if (stage_ == Stage::RaisingAfterResume && state.mode == robotics::RobotMode::Idle)
+    else if (stage_ == Stage::RaisingAfterResume && idle)
     {
         stage_ = Stage::TransitingToPlacement;
     }
-    else if (stage_ == Stage::TransitingToPlacement && state.mode == robotics::RobotMode::Idle)
+    else if (stage_ == Stage::TransitingToPlacement && idle)
     {
         if (transitWaypointCount_ == 0)
         {
@@ -382,10 +383,10 @@ void PickPlaceMission::Update(const robotics::RobotState& state, robotics::IRobo
                 transitWaypoints_[waypoint].orientationXyzw = QuaternionXyzw(tcpOrientation);
             }
         }
-        stage_ = MovePath(transitWaypoints_, transitWaypointCount_, controller, lastResult_, hasResult_)
-            ? Stage::TransitPathRunning : Stage::Failed;
+        SetStageFromResult(MovePath(transitWaypoints_, transitWaypointCount_, controller,
+            lastResult_, hasResult_), Stage::TransitPathRunning);
     }
-    else if (stage_ == Stage::TransitPathRunning && state.mode == robotics::RobotMode::Idle)
+    else if (stage_ == Stage::TransitPathRunning && idle)
     {
         const glm::dquat boxRotationOffset{boxRotationOffsetInTool_[3], boxRotationOffsetInTool_[0],
             boxRotationOffsetInTool_[1], boxRotationOffsetInTool_[2]};
@@ -395,16 +396,17 @@ void PickPlaceMission::Update(const robotics::RobotState& state, robotics::IRobo
         placementBoxOrientationXyzw_ = QuaternionXyzw(chosenTcp * boxRotationOffset);
         recoveryPose_ = MakeAttachedBoxTarget(placementPoseInBase, kTransitBoxHeightMeters, currentTcp,
             boxOffsetInTool_);
-        stage_ = MoveTo(recoveryPose_, controller, lastResult_, hasResult_) ? Stage::MovingToPlacementOverhead : Stage::Failed;
+        SetStageFromResult(MoveTo(recoveryPose_, controller, lastResult_, hasResult_), Stage::MovingToPlacementOverhead);
     }
-    else if (stage_ == Stage::MovingToPlacementOverhead && state.mode == robotics::RobotMode::Idle)
+    else if (stage_ == Stage::MovingToPlacementOverhead && idle)
     {
         const glm::dquat boxRotationOffset{boxRotationOffsetInTool_[3], boxRotationOffsetInTool_[0],
             boxRotationOffsetInTool_[1], boxRotationOffsetInTool_[2]};
-        stage_ = AlignWristOnly(specification_, state,
-            QuaternionXyzw(Orientation(placementBoxOrientationXyzw_) *
-                glm::inverse(boxRotationOffset)), true, boxOffsetInTool_, controller, lastResult_, hasResult_)
-            ? Stage::AligningAbovePlacement : Stage::Failed;
+        SetStageFromResult(
+            AlignWristOnly(specification_, state,
+                QuaternionXyzw(Orientation(placementBoxOrientationXyzw_) *
+                    glm::inverse(boxRotationOffset)), true, boxOffsetInTool_, controller, lastResult_, hasResult_),
+            Stage::AligningAbovePlacement);
         if (stage_ == Stage::Failed)
         {
             const robotics::Result wristOnlyFailure = lastResult_;
@@ -419,39 +421,40 @@ void PickPlaceMission::Update(const robotics::RobotState& state, robotics::IRobo
             }
         }
     }
-    else if (stage_ == Stage::AligningAbovePlacement && state.mode == robotics::RobotMode::Idle)
+    else if (stage_ == Stage::AligningAbovePlacement && idle)
     {
         recoveryPose_ = MakePlacementTarget(placementPoseInBase, placementBoxOrientationXyzw_, boxRotationOffsetInTool_, boxOffsetInTool_, kApproachHeightMeters);
-        stage_ = MoveTo(recoveryPose_, controller, lastResult_, hasResult_) ? Stage::MovingAbovePlacement : Stage::Failed;
+        SetStageFromResult(MoveTo(recoveryPose_, controller, lastResult_, hasResult_), Stage::MovingAbovePlacement);
     }
-    else if (stage_ == Stage::MovingAbovePlacement && state.mode == robotics::RobotMode::Idle)
+    else if (stage_ == Stage::MovingAbovePlacement && idle)
     {
-        stage_ = MoveTo(MakePlacementTarget(placementPoseInBase, placementBoxOrientationXyzw_,
-            boxRotationOffsetInTool_, boxOffsetInTool_, 0.0), controller, lastResult_, hasResult_)
-            ? Stage::MovingDownToPlacement : Stage::Failed;
+        SetStageFromResult(
+            MoveTo(MakePlacementTarget(placementPoseInBase, placementBoxOrientationXyzw_,
+                boxRotationOffsetInTool_, boxOffsetInTool_, 0.0), controller, lastResult_, hasResult_),
+            Stage::MovingDownToPlacement);
     }
-    else if (stage_ == Stage::MovingDownToPlacement && state.mode == robotics::RobotMode::Idle)
+    else if (stage_ == Stage::MovingDownToPlacement && idle)
     {
-        stage_ = CommandGripper(0, gripper, lastResult_, hasResult_) ? Stage::Opening : Stage::Failed;
+        SetStageFromResult(CommandGripper(0, gripper, lastResult_, hasResult_), Stage::Opening);
     }
     else if (!taskPaused_ && stage_ == Stage::Opening && !boxGrasped)
     {
         placementReleased_ = true;
-        stage_ = MoveTo(recoveryPose_, controller, lastResult_, hasResult_) ? Stage::Retreating : Stage::Failed;
+        SetStageFromResult(MoveTo(recoveryPose_, controller, lastResult_, hasResult_), Stage::Retreating);
     }
-    else if (stage_ == Stage::Retreating && state.mode == robotics::RobotMode::Idle)
+    else if (stage_ == Stage::Retreating && idle)
     {
         if (placementReleased_ && taskSucceeded_ && !boxGrasped)
         {
-            stage_ = SetResult(RequestJ6Unwind(state, controller), lastResult_, hasResult_)
-                ? Stage::UnwindingWrist : Stage::Failed;
+            SetStageFromResult(SetResult(RequestJ6Unwind(state, controller), lastResult_, hasResult_),
+                Stage::UnwindingWrist);
             if (stage_ == Stage::Failed)
                 autoLoopEnabled_ = false;
         }
         else
             stage_ = Stage::UnwindingWrist;
     }
-    else if (stage_ == Stage::UnwindingWrist && state.mode == robotics::RobotMode::Idle)
+    else if (stage_ == Stage::UnwindingWrist && idle)
     {
         const bool wristUnwound = !state.jointPositionRadians.empty() &&
             std::abs(state.jointPositionRadians.back()) <= kJ6UnwindToleranceRadians;
@@ -462,7 +465,7 @@ void PickPlaceMission::Update(const robotics::RobotState& state, robotics::IRobo
         }
         missionSucceeded_ = wristUnwound && taskSucceeded_ && placementReleased_ &&
             BoxCornersFitPlacement(graspBoxPoseInBase, placementPoseInBase);
-        stage_ = missionSucceeded_ ? Stage::Complete : Stage::Failed;
+        SetStageFromResult(missionSucceeded_, Stage::Complete);
         if (missionSucceeded_)
         {
             ++completedMissionCount_;
@@ -472,7 +475,7 @@ void PickPlaceMission::Update(const robotics::RobotState& state, robotics::IRobo
             autoLoopEnabled_ = false;
     }
 
-    if (!collisionStopped && stage_ == Stage::Recovering && state.mode == robotics::RobotMode::Idle)
+    if (!collisionStopped && stage_ == Stage::Recovering && idle)
     {
         stage_ = Stage::Retreating;
     }
@@ -502,8 +505,8 @@ void PickPlaceMission::ApplyActions(const RobotPanelActions& actions,
         missionSucceeded_ = false;
         transitWaypointCount_ = 0;
         autoLoopEnabled_ = true;
-        stage_ = SetResult(RequestJ6Unwind(state, controller), lastResult_, hasResult_)
-            ? Stage::UnwindingBeforeTask : Stage::Failed;
+        SetStageFromResult(SetResult(RequestJ6Unwind(state, controller), lastResult_, hasResult_),
+            Stage::UnwindingBeforeTask);
     }
     if (taskPaused_ && actions.resume)
     {
@@ -530,24 +533,24 @@ void PickPlaceMission::ApplyActions(const RobotPanelActions& actions,
                     const double liftDistance = resumeTransitHeight - currentBoxHeight;
                     recoveryPose_ = MakeAttachedBoxTarget(graspedBoxPoseInBase_, liftDistance, tcpOrientation, boxOffsetInTool_);
                     graspedBoxPoseInBase_.positionMeters[1] = resumeTransitHeight - kTransitBoxHeightMeters;
-                    stage_ = MoveTo(recoveryPose_, controller, lastResult_, hasResult_) ? Stage::RaisingAfterResume : Stage::Failed;
+                    SetStageFromResult(MoveTo(recoveryPose_, controller, lastResult_, hasResult_), Stage::RaisingAfterResume);
                 }
             }
             else if (placementReleased_)
             {
-                stage_ = SetResult(RequestJ6Unwind(state, controller), lastResult_, hasResult_)
-                    ? Stage::UnwindingWrist : Stage::Failed;
+                SetStageFromResult(SetResult(RequestJ6Unwind(state, controller), lastResult_, hasResult_),
+                    Stage::UnwindingWrist);
             }
             else if (stage_ == Stage::Opening)
             {
                 placementReleased_ = true;
-                stage_ = MoveTo(recoveryPose_, controller, lastResult_, hasResult_) ? Stage::Retreating : Stage::Failed;
+                SetStageFromResult(MoveTo(recoveryPose_, controller, lastResult_, hasResult_), Stage::Retreating);
             }
             else
             {
                 placementReleased_ = false;
-                stage_ = SetResult(RequestJ6Unwind(state, controller), lastResult_, hasResult_)
-                    ? Stage::UnwindingBeforeTask : Stage::Failed;
+                SetStageFromResult(SetResult(RequestJ6Unwind(state, controller), lastResult_, hasResult_),
+                    Stage::UnwindingBeforeTask);
             }
     }
     else if (actions.stop)

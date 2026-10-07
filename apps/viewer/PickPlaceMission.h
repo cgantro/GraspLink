@@ -79,6 +79,11 @@ private:
         UnwindingWrist, Recovering, Complete, Failed, RaisingAfterResume
     };
 
+    void SetStageFromResult(bool succeeded, Stage next) noexcept
+    {
+        stage_ = succeeded ? next : Stage::Failed;
+    }
+
     std::array<double, 4> graspOrientationXyzw_{};
     std::array<double, 4> pickupOrientationXyzw_{};
     std::array<double, 4> placementBoxOrientationXyzw_{};

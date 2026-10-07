@@ -123,20 +123,32 @@ target_link_libraries(grasplink_physics PUBLIC
 )
 
 if(BUILD_TESTING)
+  include(GoogleTest)
+
   function(grasplink_add_test target name source)
+    set(discover_tests FALSE)
+    list(FIND ARGN GTEST_DISCOVERY discovery_index)
+    if(NOT discovery_index EQUAL -1)
+      set(discover_tests TRUE)
+      list(REMOVE_AT ARGN ${discovery_index})
+    endif()
     add_executable(${target} ${source})
     target_link_libraries(${target} PRIVATE ${ARGN} GTest::gtest_main)
-    add_test(NAME ${name} COMMAND ${target})
+    if(discover_tests)
+      gtest_discover_tests(${target} TEST_PREFIX "${name}.")
+    else()
+      add_test(NAME ${name} COMMAND ${target})
+    endif()
   endfunction()
 
   grasplink_add_test(grasplink_physics_tests PhysicsWorld tests/PhysicsWorldTests.cpp grasplink_physics)
-  grasplink_add_test(grasplink_control_tests ControlRuntime tests/ControlRuntimeTests.cpp grasplink_robotics)
-  grasplink_add_test(grasplink_kinematics_tests RobotKinematics tests/RobotKinematicsTests.cpp grasplink_robotics)
-  grasplink_add_test(grasplink_inverse_kinematics_tests RobotInverseKinematics tests/RobotInverseKinematicsTests.cpp grasplink_robotics)
-  grasplink_add_test(grasplink_robot_motion_tests RobotMotion tests/RobotMotionTests.cpp grasplink_robotics)
-  grasplink_add_test(grasplink_robot_panel_motion_tests RobotPanelMotion tests/RobotPanelMotionTests.cpp grasplink_robotics)
-  grasplink_add_test(grasplink_gripper_runtime_tests GripperRuntime tests/GripperRuntimeTests.cpp grasplink_robotics)
-  grasplink_add_test(grasplink_gripper_kinematics_tests GripperKinematics tests/GripperKinematicsTests.cpp grasplink_robotics)
+  grasplink_add_test(grasplink_control_tests ControlRuntime tests/ControlRuntimeTests.cpp grasplink_robotics GTEST_DISCOVERY)
+  grasplink_add_test(grasplink_kinematics_tests RobotKinematics tests/RobotKinematicsTests.cpp grasplink_robotics GTEST_DISCOVERY)
+  grasplink_add_test(grasplink_inverse_kinematics_tests RobotInverseKinematics tests/RobotInverseKinematicsTests.cpp grasplink_robotics GTEST_DISCOVERY)
+  grasplink_add_test(grasplink_robot_motion_tests RobotMotion tests/RobotMotionTests.cpp grasplink_robotics GTEST_DISCOVERY)
+  grasplink_add_test(grasplink_robot_panel_motion_tests RobotPanelMotion tests/RobotPanelMotionTests.cpp grasplink_robotics GTEST_DISCOVERY)
+  grasplink_add_test(grasplink_gripper_runtime_tests GripperRuntime tests/GripperRuntimeTests.cpp grasplink_robotics GTEST_DISCOVERY)
+  grasplink_add_test(grasplink_gripper_kinematics_tests GripperKinematics tests/GripperKinematicsTests.cpp grasplink_robotics GTEST_DISCOVERY)
 endif()
 
 # ============================================================
@@ -332,7 +344,7 @@ if(GRASPLINK_BUILD_GRAPHICS)
   )
 
   if(BUILD_TESTING)
-    grasplink_add_test(grasplink_pick_place_mission_tests PickPlaceMission tests/PickPlaceMissionTests.cpp grasplink_application)
+    grasplink_add_test(grasplink_pick_place_mission_tests PickPlaceMission tests/PickPlaceMissionTests.cpp grasplink_application GTEST_DISCOVERY)
     grasplink_add_test(grasplink_gui_composition_tests GuiComposition tests/GuiCompositionTests.cpp grasplink_gui)
     grasplink_add_test(grasplink_quaternion_transform_tests QuaternionTransforms tests/QuaternionTransformTests.cpp grasplink_viewer)
     grasplink_add_test(grasplink_graphics_tests GraphicsResources tests/GraphicsResourceTests.cpp grasplink_graphics)
@@ -379,4 +391,9 @@ if(BUILD_TESTING AND GRASPLINK_BUILD_BENCHMARKS)
     grasplink_robotics
     benchmark::benchmark
   )
+  add_test(NAME RoboticsBenchmarks COMMAND grasplink_robotics_benchmarks --benchmark_min_time=0.01s)
+  set_tests_properties(RoboticsBenchmarks PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    TIMEOUT 30
+    FAIL_REGULAR_EXPRESSION "ERROR OCCURRED;inf/s;nan/s;NaN")
 endif()

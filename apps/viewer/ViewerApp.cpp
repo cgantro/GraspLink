@@ -557,7 +557,7 @@ void ViewerApp::Shutdown()
     m_RobotPanel.reset();
     // 파지 제약은 연결된 Body와 PhysicsWorld를 빌려 쓰므로 Scene, Controller, 물리 시스템이 살아 있을 때 먼저 해제한다.
     m_GripperGraspAdapter.reset();
-    // Controller가 guard를 참조하는 함수를 보관하므로 함수를 지운 뒤 빌린 객체보다 먼저 guard를 파괴한다.
+    // Controller가 검증 함수를 보관하므로 guard 소멸자가 참조를 해제할 때까지 Controller가 살아 있어야 한다.
     m_RobotCollisionGuard.reset();
     // Scene Entity handle을 빌린 Adapter를 Scene보다 먼저 파괴해 소멸 처리 중 이미 삭제된 handle을 참조하지 않게 한다.
     m_RobotTransformAdapter.reset();
