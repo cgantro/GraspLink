@@ -1,55 +1,68 @@
-﻿# Robotics Simulation Goals
+# Robotics Simulation Goals
 
-## 紐⑺몴
+## 목표
 
-?뚮뜑留?援ы쁽?대굹 ?뱀젙 ?섎뱶?⑥뼱? 寃고빀?섏? ?딆? ?숈씪??robotics core瑜?Simulation怨?Real Hardware?먯꽌 ?ъ궗?⑺븳??
+렌더링 구현이나 특정 하드웨어와 결합하지 않은 동일한 robotics core를
+Simulation과 Real Hardware에서 재사용한다.
 
 ```text
 Motion Command
-      ??IRobotController
-      ??Backend
-?쒋? Simulation
-?붴? Hardware
-      ??RobotState
-      ??Kinematics / Physics / Viewer
+      ↓
+IRobotController
+      ↓
+Backend
+├─ Simulation
+└─ Hardware
+      ↓
+RobotState
+      ↓
+Kinematics / Physics / Viewer
 ```
 
-## ?곗꽑?쒖쐞
+## 우선순위
 
-1. **Backend 遺꾨━**
-   - `IRobotController` / `IGripperController`瑜?怨듯넻 contract濡??ъ슜
-   - `SimRobotController`? ?ν썑 Hardware backend瑜?遺꾨━
-   - Viewer??援ъ껜?곸씤 Simulation/Hardware 援ы쁽??吏곸젒 ?섏〈?섏? ?딅뒗??
+1. **Backend 분리**
+   - `IRobotController` / `IGripperController`를 공통 contract로 사용
+   - `SimRobotController`와 향후 Hardware backend를 분리
+   - Viewer는 구체적인 Simulation/Hardware 구현에 직접 의존하지 않는다.
 
 2. **Joint Angle Limit**
-   - model蹂?`minPositionRadians`, `maxPositionRadians`
-   - ?곸슜 ??target 寃利?   - 愿???쒗븳??踰쀬뼱??紐낅졊? ?곹깭???곸슜?섏? ?딅뒗??
+   - model별 `minPositionRadians`, `maxPositionRadians`
+   - 적용 전 target 검증
+   - 관절 제한을 벗어난 명령은 상태에 적용하지 않는다.
 
 3. **Velocity / Acceleration Limit**
-   - model蹂?理쒕? ?띾룄 ?ъ슜
-   - 紐⑺몴 媛곷룄瑜?利됱떆 ?곸슜?섏? ?딄퀬 ?쒓컙???곕씪 ?곹깭瑜?蹂??   - `velocityScale`? model 理쒕? ?띾룄?????鍮꾩쑉濡??ъ슜
-   - Joint-space `accelerationScale`? ??Β룰?利앺븯吏留?愿??媛?띾룄瑜??쒗븳?섏? ?딅뒗?? Cartesian `MoveLinear`怨?`MoveLinearPath`??吏곸꽑쨌?뚯쟾 媛?띾룄 ?쒗븳???곸슜???섎굹??寃쎈줈 ?꾨줈?뚯씪???ъ슜?쒕떎.
-   - ?쒖“??理쒕? 媛?띾룄 媛믪씠 ?뺤씤?섍린 ?꾩뿉???꾩쓽 ?곸닔瑜??ㅼ젣 ?ъ뼇?쇰줈 痍④툒?섏? ?딆쓬
-   - Simulation??媛?띾룄 媛믪씠 ?꾩슂?섎㈃ ?쒖“???ъ뼇怨?遺꾨━?댁꽌 愿由?
+   - model별 최대 속도 사용
+   - 목표 각도를 즉시 적용하지 않고 시간에 따라 상태를 변화
+   - `velocityScale`은 model 최대 속도에 대한 비율로 사용
+   - 현재 `accelerationScale`은 저장·검증만 하며 실제 가속도 제한이나 ramp는 적용하지 않는다.
+   - 제조사 최대 가속도 값이 확인되기 전에는 임의 상수를 실제 사양으로 취급하지 않음
+   - Simulation용 가속도 값이 필요하면 제조사 사양과 분리해서 관리
+
 4. **Fixed Control Loop**
-   - Rendering FPS? ?쒖뼱 二쇨린瑜?遺꾨━
-   - accumulator 湲곕컲 怨좎젙 `dt`濡?Controller瑜?Update
-   - Rendering frame??`dt`瑜?Controller??吏곸젒 ?꾨떖?섏? ?딅뒗??
-   - `FixedControlLoop`???뱀젙 Controller 援ы쁽??吏곸젒 ?섏〈?섏? ?딅뒗??
-   - callback ?뺥깭濡?怨좎젙 timestep???꾨떖?쒕떎.
-   - hard real-time scheduler媛 ?꾨땲硫?thread/sleep??吏곸젒 愿由ы븯吏 ?딅뒗??
+   - Rendering FPS와 제어 주기를 분리
+   - accumulator 기반 고정 `dt`로 Controller를 Update
+   - Rendering frame의 `dt`를 Controller에 직접 전달하지 않는다.
+   - `FixedControlLoop`는 특정 Controller 구현에 직접 의존하지 않는다.
+   - callback 형태로 고정 timestep을 전달한다.
+   - hard real-time scheduler가 아니며 thread/sleep을 직접 관리하지 않는다.
 
 ```text
 Render Frame
-    ??    ??frameDelta
-    ??FixedControlLoop
-    ??    ?쒋? accumulator += frameDelta
-    ??    ?붴? while accumulator >= fixedDt
-           ??           ?쒋? callback(fixedDt)
-           ?붴? accumulator -= fixedDt
+    │
+    │ frameDelta
+    ▼
+FixedControlLoop
+    │
+    ├─ accumulator += frameDelta
+    │
+    └─ while accumulator >= fixedDt
+           │
+           ├─ callback(fixedDt)
+           └─ accumulator -= fixedDt
 ```
 
-??
+예:
 
 ```text
 fixedDt = 0.004 s
@@ -61,7 +74,7 @@ tick(0.004)
 remaining accumulator = 0.002 s
 ```
 
-Rendering FPS媛 蹂?섎뜑?쇰룄 Controller????긽 ?숈씪??`fixedDt`瑜?諛쏅뒗??
+Rendering FPS가 변하더라도 Controller는 항상 동일한 `fixedDt`를 받는다.
 
 ```text
 Rendering
@@ -77,13 +90,13 @@ fixed dt
 ...
 ```
 
-5. **Physics Base Integration ??implemented**
-   - `modules/physics`??Jolt 珥덇린?붿? Body ?앹꽦쨌??젣쨌step留??대떦?쒕떎.
-   - Viewer ECS integration? Entity ?ㅼ젙 而댄룷?뚰듃瑜??쎌뼱 Body瑜??앹꽦?섍퀬 ?섎챸???곌껐?쒕떎.
-   - Render FPS? ?낅┰?곸씤 fixed step?먯꽌 Kinematic ?낅젰怨?Dynamic 寃곌낵 諛섏쁺??泥섎━?쒕떎.
-   - SceneRoot ?꾨옒 Entity??World pose瑜?遺紐???뻾?щ줈 Local Transform???섎룎由곕떎.
+5. **Physics Base Integration — implemented**
+   - `modules/physics`는 Jolt 초기화와 Body 생성·삭제·step만 담당한다.
+   - Viewer ECS integration은 Entity 설정 컴포넌트를 읽어 Body를 생성하고 수명을 연결한다.
+   - Render FPS와 독립적인 fixed step에서 Kinematic 입력과 Dynamic 결과 반영을 처리한다.
+   - SceneRoot 아래 Entity는 World pose를 부모 역행렬로 Local Transform에 되돌린다.
 
-理쒖냼 援ы쁽 踰붿쐞:
+최소 구현 범위:
 
 ```text
 PhysicsWorld
@@ -97,33 +110,39 @@ Kinematic Entity Transform -> Physics
 Dynamic Physics World pose -> Entity Local Transform
 ```
 
-援ъ“:
+구조:
 
 ```text
 Jolt Physics
-    ??Position / Rotation
-    ??Flecs Transform
-    ??Renderer
+    ↓
+Position / Rotation
+    ↓
+Flecs Transform
+    ↓
+Renderer
 ```
 
-Jolt ?꾩슜 ??낆? `modules/physics` ?대???寃⑸━?쒕떎. Simulation integration?먮뒗 GLM怨??꾨줈?앺듃??`PhysicsBodyHandle`留?蹂댁씠硫?Jolt `BodyID`???몄텧?섏? ?딅뒗??
+Jolt 전용 타입은 `modules/physics` 내부에 격리한다. Simulation integration에는 GLM과
+프로젝트의 `PhysicsBodyHandle`만 보이며 Jolt `BodyID`는 노출하지 않는다.
 
-6. **Robot Model / FK ??implemented**
-   - HCR-12A Joint State濡쒕???base 湲곗? link pose? ToolFrame pose 怨꾩궛
-   - Joint hierarchy 湲곕컲 kinematic chain ?뺤쓽
-   - ToolFrame ?ы븿
-   - parent-relative transform 湲곗??쇰줈 援ъ꽦
-   - bind pivot ?ъ씠??李⑥씠瑜??꾩쟻 ?뚯쟾???곸슜??base-frame pose瑜?怨꾩궛?쒕떎.
-   - FK ToolFrame??怨좎젙 怨듦뎄 蹂?섏쓣 ?뷀빐 Robot base 湲곗? TCP瑜?怨꾩궛?쒕떎. ToolFrame???덈뒗 Simulation Controller??紐⑤뜽 湲곕컲 `tcpPoseValid=true` ?곹깭瑜??쒓났?섎ŉ ?ㅼ젣 ?μ튂 痢≪젙媛믪씠 ?꾨땲??
+6. **Robot Model / FK — implemented**
+   - HCR-12A Joint State로부터 base 기준 link pose와 ToolFrame pose 계산
+   - Joint hierarchy 기반 kinematic chain 정의
+   - ToolFrame 포함
+   - parent-relative transform 기준으로 구성
+   - bind pivot 사이의 차이를 누적 회전에 적용해 base-frame pose를 계산한다.
+   - FK ToolFrame에 고정 공구 변환을 더해 Robot base 기준 TCP를 계산한다. ToolFrame이 있는 Simulation Controller는 모델 기반 `tcpPoseValid=true` 상태를 제공하며 실제 장치 측정값이 아니다.
 
 ```text
 q1 ... q6
-    ??Forward Kinematics
-    ??ToolFrame Position
+    ↓
+Forward Kinematics
+    ↓
+ToolFrame Position
 ToolFrame Orientation
 ```
 
-寃利????
+검증 대상:
 
 ```text
 Zero Pose
@@ -134,22 +153,24 @@ Multiple Joint Pose
 Tool Frame
 ```
 
-FK 寃곌낵? GLB ToolFrame 寃곌낵瑜?鍮꾧탳?쒕떎.
+FK 결과와 GLB ToolFrame 결과를 비교한다.
 
-7. **IK / Cartesian Motion - implemented**
-   - `MovePose()`??IK 寃곌낵瑜?`MoveJoint()`???꾨떖?쒕떎. `MoveLinear()`? 寃쎈줈 ?쒕낯??IK瑜?誘몃━ 怨꾩궛?섍퀬 TCP 媛?띉룰컧???꾨줈?뚯씪濡?異붿쥌?쒕떎. ?쒓퀎? ?ㅽ뙣 ?숈옉? [濡쒕큸 ?대룞怨??뚯?](ROBOT_MOTION_AND_GRASP.md)瑜?李멸퀬?쒕떎.
-   - 紐⑺몴 TCP Pose?먯꽌 Joint State 怨꾩궛
-   - 珥덇린 諛⑹떇? Damped Least Squares 湲곕컲 iterative IK
-   - `MovePose()`濡?IK 寃곌낵瑜?`MoveJoint()`???곌껐?섍퀬 `MoveLinear()`?먯꽌 吏곸꽑 ?꾩튂쨌理쒕떒 ?뚯쟾 寃쎈줈??IK瑜?怨꾩궛?쒕떎. ?곸꽭 怨꾩빟? [濡쒕큸 ?대룞怨??뚯?](ROBOT_MOTION_AND_GRASP.md)瑜?李멸퀬?쒕떎.
+7. **IK / Cartesian Motion — implemented**
+   - 목표 TCP Pose에서 Joint State 계산
+   - 초기 방식은 Damped Least Squares 기반 iterative IK
+   - `MovePose()`로 IK 결과를 `MoveJoint()`에 연결하고 `MoveLinear()`에서 직선 위치·최단 회전 경로의 IK를 계산한다. 상세 계약은 [로봇 이동과 파지](ROBOT_MOTION_AND_GRASP.md)를 참고한다.
 
 ```text
 Target TCP Pose
-      ??IK
-      ??Joint Target
-      ??Joint Controller
+      ↓
+IK
+      ↓
+Joint Target
+      ↓
+Joint Controller
 ```
 
-寃????ぉ:
+검토 항목:
 
 - Position Error
 - Orientation Error
@@ -160,25 +181,31 @@ Target TCP Pose
 - Maximum Iteration
 - Unreachable Target
 
-8. **Gripper Runtime Controller ???먯쑀怨듦컙 媛쒗룓 援ы쁽**
-   - `IGripperController` contract? 2F-85 specification? 以鍮꾨맖
-   - `SimGripperController`媛 raw ?붿껌???곗냽 `closureFraction` ?곹깭濡?媛깆떊
-   - `GripperKinematics`??master/mimic Local ?뚯쟾??`GripperTransformAdapter`媛 GLB bind???곸슜
-   - raw ?꾩튂???좏삎 fraction 留ㅽ븨怨?湲곕낯 master ?띾룄 0.1..1.0 rad/s???쒖“???ъ뼇???꾨땶 ?쒕??덉씠??媛??   - ?꾩옱 臾쇰━ ?묒큺???곕Ⅸ 媛쒗룓 ?뺤?? ?묒そ ?먮걹??怨좎젙 constraint ?뚯?瑜??쒓났?쒕떎. force쨌?꾨쪟쨌?묒큺 ?댄썑 媛쒕퀎 ?먭????곸쓳? 怨꾩궛?섏? ?딅뒗??
+8. **Gripper Runtime Controller — 자유공간 개폐 구현**
+   - `IGripperController` contract와 2F-85 specification은 준비됨
+   - `SimGripperController`가 raw 요청을 연속 `closureFraction` 상태로 갱신
+   - `GripperKinematics`의 master/mimic Local 회전을 `GripperTransformAdapter`가 GLB bind에 적용
+   - raw 위치의 선형 fraction 매핑과 기본 master 속도 0.1..1.0 rad/s는 제조사 사양이 아닌 시뮬레이션 가정
+   - 현재 물리 접촉에 따른 개폐 정지와 양쪽 손끝의 고정 constraint 파지를 제공한다. force·전류·접촉 이후 개별 손가락 적응은 계산하지 않는다.
 
 ```text
 positionRequest
 0 ... 255
-     ??GripperState.closureFraction [0,1]
-     ??master linkage angle q
-     ??mimic relation
-     ??Gripper Joint State
-     ??GLB 愿??Local ?뚯쟾 ??World 蹂????湲곗〈 7媛?Kinematic proxy
+     ↓
+GripperState.closureFraction [0,1]
+     ↓
+master linkage angle q
+     ↓
+mimic relation
+     ↓
+Gripper Joint State
+     ↓
+GLB 관절 Local 회전 → World 변환 → 기존 7개 Kinematic proxy
 ```
 
-4 ms留덈떎 Controller 媛깆떊 ???붋룰렇由ы띁 ?먯꽭 ?곸슜 ??World 蹂??媛깆떊 ??Jolt step ??World 蹂???ш갚???쒖꽌?? GUI???명꽣?섏씠?ㅼ뿉 ?붿껌??蹂대궡硫?Entity瑜?吏곸젒 蹂寃쏀븯吏 ?딅뒗?? ?꾩옱 怨꾩빟怨?寃利앹? [洹몃━???고????ㅺ퀎](GRIPPER_RUNTIME_DESIGN.md)???뺣━?쒕떎.
+4 ms마다 Controller 갱신 → 팔·그리퍼 자세 적용 → World 변환 갱신 → Jolt step → World 변환 재갱신 순서다. GUI는 인터페이스에 요청을 보내며 Entity를 직접 변경하지 않는다. 현재 계약과 검증은 [그리퍼 런타임 설계](GRIPPER_RUNTIME_DESIGN.md)에 정리한다.
 
-Free-space 愿怨?
+Free-space 관계:
 
 ```text
 LeftOuter  = +q
@@ -192,43 +219,54 @@ RightTip   = +q
 ```
 
 9. **Robot / Gripper Physics**
-   - GLB?먯꽌 留뚮뱺 Convex Hull??蹂꾨룄 Kinematic link proxy Entity??遺숈씠??湲곕컲? 援ы쁽??   - proxy??FK??base-frame link pose瑜??곕Ⅴ硫?愿???쒖빟?대굹 ?좏겕瑜??몃뒗 articulated dynamics???꾨떂
-   - Kinematic gripper collision proxy??援ы쁽??   - ?묒そ ?먮걹 ?묒큺, ?묒큺 ???뺤?, ?뚯? constraint? 臾쇱껜 ?대컲??援ы쁽?덈떎. ?ㅼ젣 ?샕룸쭏李? 媛쒕퀎 ?먭????곸쓳, Robot/Gripper 愿???숈뿭?숈? 援ы쁽?섏? ?딆븯??
+   - GLB에서 만든 Convex Hull을 별도 Kinematic link proxy Entity에 붙이는 기반은 구현됨
+   - proxy는 FK의 base-frame link pose를 따르며 관절 제약이나 토크를 푸는 articulated dynamics는 아님
+   - Kinematic gripper collision proxy는 구현됨
+   - 접촉 기반 그리퍼 정지·grasp 판단, 부착 상태별 collision filter 및 실제 Robot/Gripper 동역학은 다음 단계
 
 ```text
 Robot Link
-    ??Collision Shape
-    ??Rigid / Kinematic Body
+    ↓
+Collision Shape
+    ↓
+Rigid / Kinematic Body
 
 Gripper Finger
-    ??Collision
-    ??Constraint
-    ??Contact
+    ↓
+Collision
+    ↓
+Constraint
+    ↓
+Contact
 ```
 
-援ы쁽 ???
+구현 대상:
 
 - Robot Link Collider
 - Gripper Link Collider
 - Joint Constraint
-- Self Collision ?뺤콉
+- Self Collision 정책
 - Environment Collision
 - Object Contact
 
 10. **Physics / Grasp**
-   - 2F-85??free-space mimic 愿怨꾨뒗 臾쇱껜 ?묒큺 ?꾧퉴吏 ?ъ슜
-   - 臾쇱껜 ?묒큺 ?댄썑?먮뒗 ?⑥닚 `jointAngle = masterAngle * multiplier` 愿怨꾨쭔 媛뺤젣?섏? ?딅뒗??
-   - ?묒큺 ?댄썑 finger adaptation? Physics / Constraint 怨꾩링?먯꽌 泥섎━?쒕떎.
+   - 2F-85의 free-space mimic 관계는 물체 접촉 전까지 사용
+   - 물체 접촉 이후에는 단순 `jointAngle = masterAngle * multiplier` 관계만 강제하지 않는다.
+   - 접촉 이후 finger adaptation은 Physics / Constraint 계층에서 처리한다.
 
 ```text
 Finger Closing
-      ??Object Contact
-      ??Constraint Response
-      ??Finger Adaptation
-      ??Grasp State
+      ↓
+Object Contact
+      ↓
+Constraint Response
+      ↓
+Finger Adaptation
+      ↓
+Grasp State
 ```
 
-援ы쁽 ???
+구현 대상:
 
 - ContactWhileClosing
 - ContactWhileOpening
@@ -238,32 +276,37 @@ Finger Closing
 - Detach
 - Release
 
-11. **Safety ?뺤옣**
-   - software stop ?곹깭
+11. **Safety 확장**
+   - software stop 상태
    - watchdog
    - E-Stop state model
    - zero offset
-   - invalid state 李⑤떒
-   - NaN / Inf command 李⑤떒
+   - invalid state 차단
+   - NaN / Inf command 차단
    - command timeout
 
-?ㅼ젣 E-Stop ?뚮줈瑜?software `Stop()`???泥댄븯吏 ?딅뒗??
+실제 E-Stop 회로를 software `Stop()`이 대체하지 않는다.
 
 ## Physics Integration
 
 ```text
 Flecs Entity
-?쒋? Transform / Render Components
-?쒋? RigidBody
-?붴? Colliders
-       ??       ??PhysicsSystemModule
+├─ Transform / Render Components
+├─ RigidBody
+└─ Colliders
+       │
+       ▼
+PhysicsSystemModule
   - config observer / private runtime binding
-  - Local ??World 蹂?섍낵 fixed-step ?숆린??       ??       ??PhysicsWorld
+  - Local ↔ World 변환과 fixed-step 동기화
+       │
+       ▼
+PhysicsWorld
   - PhysicsBodyHandle API
-  - Jolt ?대? 援ы쁽
+  - Jolt 내부 구현
 ```
 
-??븷:
+역할:
 
 ```text
 Flecs
@@ -273,42 +316,46 @@ PhysicsWorld
 = Jolt lifetime / rigid body / collision / fixed step
 
 PhysicsSystemModule
-= Flecs component ?댁꽍 / Body ?곌껐 / Transform ?숆린??
+= Flecs component 해석 / Body 연결 / Transform 동기화
+
 Renderer
-= 寃곌낵 ?쒓컖??```
+= 결과 시각화
+```
 
-??怨꾩링? 湲곕뒫 以묐났???꾨땲?? `PhysicsWorld`??Flecs瑜?紐곕씪???섍퀬, ViewerApp? Body handle?대굹
-醫뚰몴 蹂???몃??ы빆??吏곸젒 愿由ы븯吏 ?딆븘???쒕떎. `PhysicsBodyBinding`? Entity??遺숇뒗 private
-runtime component?대ŉ Entity??臾쇰━ ?ㅼ젙???쒓굅????observer媛 Jolt Body瑜???젣?쒕떎.
+두 계층은 기능 중복이 아니다. `PhysicsWorld`는 Flecs를 몰라야 하고, ViewerApp은 Body handle이나
+좌표 변환 세부사항을 직접 관리하지 않아야 한다. `PhysicsBodyBinding`은 Entity에 붙는 private
+runtime component이며 Entity나 물리 설정이 제거될 때 observer가 Jolt Body를 삭제한다.
 
-Collider 諛??ш린??meter ?⑥쐞?대ŉ Entity scale???먮룞 怨깊븯吏 ?딅뒗?? Robot Link? Dynamic Entity??unit
-scale???곌퀬, Floor???뚮뜑 GLB scale怨??낅┰??collider ?ш린瑜?紐낆떆?쒕떎. Dynamic Body 議곗긽 ?꾨옒??Dynamic
-Body??binding ?앹꽦 ??嫄곕??쒕떎. Dynamic Entity??parent媛 scale/shear瑜?媛吏??寃쎌슦??吏??踰붿쐞媛 ?꾨땲??
+Collider 반 크기는 meter 단위이며 Entity scale을 자동 곱하지 않는다. Robot Link와 Dynamic Entity는 unit
+scale을 쓰고, Floor는 렌더 GLB scale과 독립된 collider 크기를 명시한다. Dynamic Body 조상 아래의 Dynamic
+Body는 binding 생성 시 거부된다. Dynamic Entity의 parent가 scale/shear를 가지는 경우도 지원 범위가 아니다.
 
-## 援ы쁽 ?쒖꽌
+## 구현 순서
 
 ```text
-1. robotics/core + model/backend 遺꾨━
-                    ??
+1. robotics/core + model/backend 분리
+                    ✅
+
 2. Joint angle / velocity limit
-                    ??湲곕낯 援ы쁽
+                    ✅ 기본 구현
 
 3. Fixed Control Loop
-                    ??250 Hz fixed step
+                    ✅ 250 Hz fixed step
 
-4. Jolt Physics 理쒖냼 湲곕컲
+4. Jolt Physics 최소 기반
    - PhysicsWorld
    - Gravity
    - Floor
    - Dynamic Box
-   - ECS ?ㅼ젙 而댄룷?뚰듃? lifetime ?곕룞
-   - Robot J1~J6 Kinematic collision proxy
-                    ??湲곕낯 湲곕컲
+   - ECS 설정 컴포넌트와 lifetime 연동
+   - Robot Base Environment collider and J1~J6 Kinematic collision proxies
+                    ✅ 기본 기반
 
 5. Robot Model / FK
    - Kinematic Chain
    - ToolFrame
-   - FK 寃利?                    ??援ы쁽
+   - FK 검증
+                    ✅ 구현
 
 6. IK / MoveLinear
 
@@ -316,22 +363,33 @@ Body??binding ?앹꽦 ??嫄곕??쒕떎. Dynamic Entity??parent媛 scale/shear�
    - 2F-85 request
    - master q
    - free-space mimic
-                    ???먯쑀怨듦컙 backend / 湲곌뎄??/ GLB쨌proxy ?곌껐
-   - Force / contact stop / grasp
-                    ???꾩냽 臾쇰━ ?묒뾽
+                    ✅ 자유공간 backend / 기구학 / GLB·proxy 연결
+   - Contact-based stop and fixed-constraint grasp are implemented. Force and individual finger adaptation are not simulated.
+
 
 8. Robot / Gripper Physics
-   - Asset 硫붿떆 湲곕컲 Gripper Kinematic collider proxy
-                    ??湲곕낯 湲곕컲
+   - Asset 메시 기반 Gripper Kinematic collider proxy
+                    ✅ 기본 기반
    - Constraint / articulated dynamics
-                    ???ㅼ쓬 臾쇰━ ?뺤옣
+                    ← 다음 물리 확장
 
 9. Physics / Grasp
-   - Contact? under-actuated adaptation
+   - Contact와 under-actuated adaptation
    - Attach / Detach / Release
-                    ??誘멸뎄??
+                    ← 미구현
+
 10. Safety
     - Watchdog
     - E-Stop State
     - Zero Offset
 ```
+
+
+## Next implementation order
+
+1. **Self Collision** - define an Allowed Collision Matrix to exclude adjacent links and other intentional contacts.
+2. **RRT-Connect**
+3. **Joint Trajectory**
+4. **M&S Metrics**
+
+The planner-facing state validity contract is `joint limits + self collision + environment collision`. Keep the current controller and mission contracts unchanged while adding these planning features.
