@@ -50,6 +50,7 @@ add_library(grasplink_robotics STATIC
   modules/robotics/src/kinematics/RobotKinematics.cpp
   modules/robotics/src/kinematics/RobotInverseKinematics.cpp
   modules/robotics/src/kinematics/GripperKinematics.cpp
+  modules/robotics/src/planning/WristAlignmentPlanner.cpp
 )
 
 target_include_directories(grasplink_robotics PUBLIC
@@ -77,6 +78,7 @@ target_sources(grasplink_robotics PUBLIC
   modules/robotics/include/robotics/kinematics/detail/AlternativeIkSeeds.h
   modules/robotics/include/robotics/kinematics/detail/PoseMath.h
   modules/robotics/include/robotics/kinematics/GripperKinematics.h
+  modules/robotics/include/robotics/planning/WristAlignmentPlanner.h
 )
 
 
@@ -135,8 +137,7 @@ if(BUILD_TESTING)
   add_test(NAME RobotMotion COMMAND grasplink_robot_motion_tests)
 
   add_executable(grasplink_robot_panel_motion_tests tests/RobotPanelMotionTests.cpp)
-  target_include_directories(grasplink_robot_panel_motion_tests PRIVATE modules/gui/include)
-  target_link_libraries(grasplink_robot_panel_motion_tests PRIVATE grasplink_robotics glm::glm)
+  target_link_libraries(grasplink_robot_panel_motion_tests PRIVATE grasplink_robotics)
   add_test(NAME RobotPanelMotion COMMAND grasplink_robot_panel_motion_tests)
 
   add_executable(grasplink_gripper_runtime_tests tests/GripperRuntimeTests.cpp)

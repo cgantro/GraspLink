@@ -1,39 +1,60 @@
-#include "gui/panels/detail/RobotPanelMotion.h"
-
 #include "robotics/backends/simulation/SimRobotController.h"
 #include "robotics/models/hanwha/Hcr12a.h"
+#include "robotics/planning/WristAlignmentPlanner.h"
 #include "TestSupport.h"
-
-#include <glm/gtc/constants.hpp>
 
 #include <array>
 #include <cmath>
 #include <iostream>
 
 using namespace grasplink::robotics;
-using grasplink::gui::detail::PlanWristOnlyTarget;
+using grasplink::robotics::planning::PlanWristOnlyTarget;
 using grasplink::robotics::backends::simulation::SimRobotController;
 
 namespace
 {
+struct Quaternion
+{
+    double w;
+    double x;
+    double y;
+    double z;
+};
+
+Quaternion Multiply(const Quaternion& a, const Quaternion& b)
+{
+    return {
+        a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z,
+        a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
+        a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
+        a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w};
+}
+
+std::array<double, 4> RotatedOrientationXyzw(const RobotState& state,
+    const std::array<double, 3>& axis, double angleRadians)
+{
+    const Quaternion current{state.tcpPose.orientationXyzw[3], state.tcpPose.orientationXyzw[0],
+        state.tcpPose.orientationXyzw[1], state.tcpPose.orientationXyzw[2]};
+    const double halfAngle = angleRadians * 0.5;
+    const double sine = std::sin(halfAngle);
+    const Quaternion rotation{std::cos(halfAngle), axis[0] * sine, axis[1] * sine, axis[2] * sine};
+    const Quaternion target = Multiply(rotation, current);
+    return {target.x, target.y, target.z, target.w};
+}
+
 void CheckWristTargetChangesOnlyJ6()
 {
     SimRobotController controller(models::hanwha::kHcr12a);
     Require(static_cast<bool>(controller.Connect()), "wrist planning controller connects");
     JointVector downFacingJoints(6, 0.0);
-    downFacingJoints[4] = glm::half_pi<double>();
+    downFacingJoints[4] = 1.57079632679489661923;
     Require(static_cast<bool>(controller.MoveJoint({downFacingJoints, 1.0, 1.0})),
         "the wrist first reaches the down-facing grasp orientation");
     for (int tick = 0; tick < 1000 && controller.GetState().mode == RobotMode::Moving; ++tick)
         controller.Update(0.01);
     Require(controller.GetState().mode == RobotMode::Idle, "the down-facing wrist orientation is reached");
     const RobotState state = controller.GetState();
-    const glm::dquat current{
-        state.tcpPose.orientationXyzw[3], state.tcpPose.orientationXyzw[0],
-        state.tcpPose.orientationXyzw[1], state.tcpPose.orientationXyzw[2]};
-    const glm::dvec3 j6Axis = glm::normalize(glm::dvec3{0.0, -1.0, 0.0});
-    const glm::dquat target = glm::angleAxis(0.35, j6Axis) * current;
-    const std::array<double, 4> targetXyzw{target.x, target.y, target.z, target.w};
+    const std::array<double, 4> targetXyzw = RotatedOrientationXyzw(state, {0.0, -1.0, 0.0}, 0.35);
 
     const auto plan = PlanWristOnlyTarget(models::hanwha::kHcr12a, state, targetXyzw);
     Require(plan.has_value(), "an on-axis TCP accepts a pure J6 rotation");
@@ -64,9 +85,8 @@ void CheckWristTargetChangesOnlyJ6()
     Require(!PlanWristOnlyTarget(models::hanwha::kHcr12a, offAxisTcp, targetXyzw).has_value(),
         "wrist alignment is rejected when the actual TCP is offset from the J6 axis");
 
-    const glm::dquat otherAxisTarget = glm::angleAxis(0.2, glm::dvec3{1.0, 0.0, 0.0}) * current;
     Require(!PlanWristOnlyTarget(models::hanwha::kHcr12a, state,
-        {otherAxisTarget.x, otherAxisTarget.y, otherAxisTarget.z, otherAxisTarget.w}).has_value(),
+        RotatedOrientationXyzw(state, {1.0, 0.0, 0.0}, 0.2)).has_value(),
         "a requested tilt is rejected because J6 cannot produce it alone");
 }
 
@@ -75,21 +95,18 @@ void CheckWristTargetRespectsJ6Limits()
     SimRobotController controller(models::hanwha::kHcr12a);
     Require(static_cast<bool>(controller.Connect()), "limit fixture controller connects");
     JointVector start(6, 0.0);
-    start.back() = glm::radians(350.0);
+    constexpr double pi = 3.14159265358979323846;
+    start.back() = 350.0 * pi / 180.0;
     Require(static_cast<bool>(controller.MoveJoint({start, 1.0, 1.0})), "J6 moves to 350 degrees");
     for (int tick = 0; tick < 1000 && controller.GetState().mode == RobotMode::Moving; ++tick)
         controller.Update(0.01);
     Require(controller.GetState().mode == RobotMode::Idle, "J6 reaches 350 degrees");
 
     const RobotState state = controller.GetState();
-    const glm::dquat current{
-        state.tcpPose.orientationXyzw[3], state.tcpPose.orientationXyzw[0],
-        state.tcpPose.orientationXyzw[1], state.tcpPose.orientationXyzw[2]};
-    const glm::dquat target = glm::angleAxis(glm::radians(20.0), glm::dvec3{0.0, 0.0, 1.0}) * current;
     const auto plan = PlanWristOnlyTarget(models::hanwha::kHcr12a, state,
-        {target.x, target.y, target.z, target.w});
+        RotatedOrientationXyzw(state, {0.0, 0.0, 1.0}, 20.0 * pi / 180.0));
     Require(plan.has_value(), "an equivalent J6 target inside the official range remains available");
-    RequireNear(plan->jointPositionRadians.back(), glm::radians(10.0), 1e-9,
+    RequireNear(plan->jointPositionRadians.back(), 10.0 * pi / 180.0, 1e-9,
         "J6 target is represented at 10 degrees rather than exceeding its 360 degree upper limit");
     Require(plan->jointPositionRadians.back() >= models::hanwha::kHcr12a.joints[5].minPositionRadians &&
         plan->jointPositionRadians.back() <= models::hanwha::kHcr12a.joints[5].maxPositionRadians,

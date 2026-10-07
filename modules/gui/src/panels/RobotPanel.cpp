@@ -1,7 +1,6 @@
 #include "gui/panels/RobotPanel.h"
-#include "gui/panels/detail/RobotPanelMotion.h"
-
 #include "robotics/backends/simulation/SimRobotController.h"
+#include "robotics/planning/WristAlignmentPlanner.h"
 
 #include <glm/gtc/constants.hpp>
 #include <glm/gtc/quaternion.hpp>
@@ -230,7 +229,7 @@ void RobotPanel::DrawContents(robotics::backends::simulation::SimRobotController
         const std::optional<std::array<double, 3>> attachedOffset = carryingBox
             ? std::optional<std::array<double, 3>>{boxOffsetInTool_}
             : std::nullopt;
-        const auto plan = detail::PlanWristOnlyTarget(
+        const auto plan = robotics::planning::PlanWristOnlyTarget(
             controller.GetSpecification(), state, targetOrientation, attachedOffset);
         if (!plan)
         {
