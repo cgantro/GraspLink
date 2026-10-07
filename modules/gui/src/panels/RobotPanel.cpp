@@ -366,6 +366,19 @@ void RobotPanel::DrawContents(robotics::backends::simulation::SimRobotController
             glm::inverse(glm::dquat{boxRotationOffsetInTool_[3], boxRotationOffsetInTool_[0],
                 boxRotationOffsetInTool_[1], boxRotationOffsetInTool_[2]})), true)
             ? Stage::AligningAbovePlacement : Stage::Failed;
+        if (stage_ == Stage::Failed)
+        {
+            const robotics::Result wristOnlyFailure = lastResult_;
+            recoveryPose_ = makePlacementTarget(kTransitBoxHeightMeters);
+            if (moveTo(recoveryPose_))
+                stage_ = Stage::AligningAbovePlacement;
+            else
+            {
+                lastResult_.message = "RobotPanel: J6-only alignment failed (" + wristOnlyFailure.message +
+                    "); compensated TCP alignment also failed: " + lastResult_.message;
+                hasResult_ = true;
+            }
+        }
     }
     else if (stage_ == Stage::AligningAbovePlacement && state.mode == robotics::RobotMode::Idle)
     {
