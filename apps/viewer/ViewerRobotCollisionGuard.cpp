@@ -44,7 +44,8 @@ ViewerRobotCollisionGuard::ViewerRobotCollisionGuard(
       m_World(world),
       m_PhysicsWorld(physicsWorld),
       m_CandidateState(robotController.GetStateView()),
-      m_SafeJointPositions(robotController.GetStateView().jointPositionRadians)
+      m_SafeJointPositions(robotController.GetStateView().jointPositionRadians),
+      m_PhysicsSystem(physicsSystem)
 {
     std::vector<Entity> pending{robotRoot};
     while (!pending.empty())
@@ -58,7 +59,7 @@ ViewerRobotCollisionGuard::ViewerRobotCollisionGuard(
             if (layer == grasplink::physics::CollisionLayer::Environment &&
                 entityName != nullptr && std::strcmp(entityName, "Base_CollisionProxy") == 0)
             {
-                m_BaseEnvironmentBodyHandle = physicsSystem.GetBodyHandle(entity.GetHandle());
+                m_BaseEnvironmentEntity = entity.GetHandle();
             }
             if (layer == grasplink::physics::CollisionLayer::Robot ||
                 layer == grasplink::physics::CollisionLayer::Gripper)
@@ -67,10 +68,6 @@ ViewerRobotCollisionGuard::ViewerRobotCollisionGuard(
         const auto children = entity.GetChildren();
         pending.insert(pending.end(), children.begin(), children.end());
     }
-
-    m_CollisionBodyHandles.reserve(m_CollisionEntities.size());
-    for (const flecs::entity entity : m_CollisionEntities)
-        m_CollisionBodyHandles.push_back(physicsSystem.GetBodyHandle(entity));
 
     m_RobotController.SetJointPoseCollisionValidator([this](const grasplink::robotics::JointVector& candidateJoints)
     {
@@ -131,6 +128,8 @@ void ViewerRobotCollisionGuard::ApplyJointPose(const grasplink::robotics::RobotS
 
 bool ViewerRobotCollisionGuard::RobotAssemblyOverlapsEnvironment() const
 {
+    // Collider 설정 변경으로 Jolt Body가 재생성될 수 있으므로 매 검사마다 Entity에서 현재 handle을 조회한다.
+    const auto baseEnvironmentBodyHandle = m_PhysicsSystem.GetBodyHandle(m_BaseEnvironmentEntity);
     for (std::size_t i = 0; i < m_CollisionEntities.size(); ++i)
     {
         const Entity entity(m_CollisionEntities[i]);
@@ -143,13 +142,18 @@ bool ViewerRobotCollisionGuard::RobotAssemblyOverlapsEnvironment() const
         target.position = glm::vec3(worldMatrix[3]);
         target.rotation = glm::normalize(glm::quat_cast(axes));
         const flecs::entity collisionEntity = m_CollisionEntities[i];
+        const auto collisionBodyHandle = m_PhysicsSystem.GetBodyHandle(collisionEntity);
+        // Physics Body가 없는 proxy는 겹침이 없다고 간주하지 않고 안전하지 않은 자세로 처리한다.
+        if (!collisionBodyHandle.IsValid())
+            return true;
+
         const char* entityName = collisionEntity.name();
         const bool isLink1 = entityName != nullptr &&
             std::strcmp(entityName, "Link1_CollisionProxy") == 0;
-        const bool overlapsEnvironment = isLink1 && m_BaseEnvironmentBodyHandle.IsValid()
+        const bool overlapsEnvironment = isLink1 && baseEnvironmentBodyHandle.IsValid()
             ? m_PhysicsWorld.OverlapsEnvironmentAt(
-                m_CollisionBodyHandles[i], target, m_BaseEnvironmentBodyHandle)
-            : m_PhysicsWorld.OverlapsEnvironmentAt(m_CollisionBodyHandles[i], target);
+                collisionBodyHandle, target, baseEnvironmentBodyHandle)
+            : m_PhysicsWorld.OverlapsEnvironmentAt(collisionBodyHandle, target);
         if (overlapsEnvironment)
             return true;
     }

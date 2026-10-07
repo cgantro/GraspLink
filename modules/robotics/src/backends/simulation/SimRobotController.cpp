@@ -169,8 +169,7 @@ std::vector<JointVector> SimRobotController::BuildIkSeeds(const JointVector& sta
         addSeed(std::move(candidate));
     }
 
-    // 모델마다 관절 범위가 다르므로 남은 관절도 범위의 1/4 지점을 시작각으로 시험한다.
-    // 이 표본은 가능한 IK 해를 전부 증명하지는 않지만, 현재 주변 해와 다른 어깨·팔꿈치·손목 구성을 찾는 데 쓴다.
+    // 대체 seed는 현재 자세와 J1·J3·J5를 허용 범위의 반대편으로 반사한 조합만 포함하며, 가능한 IK 해 전체를 열거하지 않는다.
     return seeds;
 }
 

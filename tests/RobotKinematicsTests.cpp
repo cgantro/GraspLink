@@ -120,6 +120,13 @@ int main()
         invalidSpecification.toolFrameInLastJoint.rotation.w = std::numeric_limits<double>::quiet_NaN();
         RequireInvalidModel(invalidSpecification, "non-finite ToolFrame quaternion rejected");
 
+        auto tinyQuaternionSpecification = models::hanwha::kHcr12a;
+        tinyQuaternionSpecification.toolFrameInLastJoint.rotation = {1.0e-20, 0.0, 0.0, 0.0};
+        RobotKinematics tinyQuaternionKinematics(tinyQuaternionSpecification);
+        const auto& tinyQuaternionResult = tinyQuaternionKinematics.Update(state);
+        RequireNear(tinyQuaternionResult.toolFrameInBaseFrame.rotation.w, 1.0, 1e-12,
+            "tiny finite ToolFrame quaternion is normalized");
+
         invalidSpecification = models::hanwha::kHcr12a;
         invalidSpecification.joints = nullptr;
         RequireInvalidModel(invalidSpecification, "missing joint array rejected");

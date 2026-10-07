@@ -82,11 +82,11 @@ private:
     grasplink::viewer::robotics::GripperTransformAdapter& m_GripperTransformAdapter;
     flecs::world& m_World;
     grasplink::physics::PhysicsWorld& m_PhysicsWorld;
-    grasplink::physics::PhysicsBodyHandle m_BaseEnvironmentBodyHandle;
     grasplink::robotics::RobotState m_CandidateState;
     grasplink::robotics::JointVector m_SafeJointPositions;
     std::vector<flecs::entity> m_CollisionEntities;
-    std::vector<grasplink::physics::PhysicsBodyHandle> m_CollisionBodyHandles;
+    flecs::entity m_BaseEnvironmentEntity;
+    grasplink::simulation::PhysicsSystemModule& m_PhysicsSystem;
     bool m_ValidatorRegistered = false;
 };
 }

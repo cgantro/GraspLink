@@ -1,4 +1,5 @@
 #include "robotics/kinematics/RobotKinematics.h"
+#include "robotics/kinematics/detail/PoseMath.h"
 
 #include <cmath>
 #include <stdexcept>
@@ -11,56 +12,11 @@ using models::Axis3;
 using models::Pose3;
 using models::QuaternionWxyz;
 using models::Vec3;
-
-double Length(const Vec3& value)
-{
-    return std::sqrt(value.x * value.x + value.y * value.y + value.z * value.z);
-}
-
-Vec3 Add(const Vec3& left, const Vec3& right)
-{
-    return {left.x + right.x, left.y + right.y, left.z + right.z};
-}
-
-Vec3 Subtract(const Vec3& left, const Vec3& right)
-{
-    return {left.x - right.x, left.y - right.y, left.z - right.z};
-}
-
-QuaternionWxyz Normalize(const QuaternionWxyz& value)
-{
-    const double length = std::sqrt(
-        value.w * value.w + value.x * value.x + value.y * value.y + value.z * value.z);
-    if (!std::isfinite(length) || length <= 1.0e-12)
-        throw std::invalid_argument("RobotKinematics: invalid quaternion");
-    return {value.w / length, value.x / length, value.y / length, value.z / length};
-}
-
-QuaternionWxyz Multiply(const QuaternionWxyz& left, const QuaternionWxyz& right)
-{
-    return Normalize({
-        left.w * right.w - left.x * right.x - left.y * right.y - left.z * right.z,
-        left.w * right.x + left.x * right.w + left.y * right.z - left.z * right.y,
-        left.w * right.y - left.x * right.z + left.y * right.w + left.z * right.x,
-        left.w * right.z + left.x * right.y - left.y * right.x + left.z * right.w});
-}
-
-QuaternionWxyz MultiplyRaw(const QuaternionWxyz& left, const QuaternionWxyz& right)
-{
-    return {
-        left.w * right.w - left.x * right.x - left.y * right.y - left.z * right.z,
-        left.w * right.x + left.x * right.w + left.y * right.z - left.z * right.y,
-        left.w * right.y - left.x * right.z + left.y * right.w + left.z * right.x,
-        left.w * right.z + left.x * right.y - left.y * right.x + left.z * right.w};
-}
-
-Vec3 Rotate(const QuaternionWxyz& rotation, const Vec3& value)
-{
-    const QuaternionWxyz vector{0.0, value.x, value.y, value.z};
-    const QuaternionWxyz inverse{rotation.w, -rotation.x, -rotation.y, -rotation.z};
-    const QuaternionWxyz result = MultiplyRaw(MultiplyRaw(rotation, vector), inverse);
-    return {result.x, result.y, result.z};
-}
+using detail::Add;
+using detail::Length;
+using detail::Normalize;
+using detail::Rotate;
+using detail::Subtract;
 
 QuaternionWxyz AxisRotation(const Axis3& axis, double angle)
 {
@@ -139,7 +95,7 @@ const RobotKinematicState& RobotKinematics::Update(const JointVector& jointPosit
             {joint.axis.x / axisLength, joint.axis.y / axisLength, joint.axis.z / axisLength});
         // 회전: axis-angle은 관절 Local 회전이며 parent * local로 누적한다. Local 점에는 관절 회전 후 부모 회전이 적용된다.
         const QuaternionWxyz localRotation = AxisRotation(joint.axis, angle);
-        const QuaternionWxyz worldRotation = Multiply(parentRotation, localRotation);
+        const QuaternionWxyz worldRotation = Normalize(detail::Multiply(parentRotation, localRotation));
 
         state_.jointLocalRotations[i] = localRotation;
         state_.linkPosesInBaseFrame[i] = {jointPosition, worldRotation};
@@ -156,7 +112,7 @@ const RobotKinematicState& RobotKinematics::Update(const JointVector& jointPosit
         const auto& tool = specification_.toolFrameInLastJoint;
         state_.toolFrameInBaseFrame = {
             Add(parentPosition, Rotate(parentRotation, tool.positionMeters)),
-            Multiply(parentRotation, Normalize(tool.rotation))};
+            Normalize(detail::Multiply(parentRotation, Normalize(tool.rotation)))};
     }
     return state_;
 }
