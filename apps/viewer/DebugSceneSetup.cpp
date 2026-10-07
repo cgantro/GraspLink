@@ -129,7 +129,7 @@ std::array<float, 3> RandomPlacementAreaPosition()
 
 float RandomPlanarRotationRadians()
 {
-    std::uniform_real_distribution<float> angle{0.0F, 6.28318530718F};
+    std::uniform_real_distribution<float> angle{-1.57079632679F, 1.57079632679F};
     return angle(RandomGenerator());
 }
 

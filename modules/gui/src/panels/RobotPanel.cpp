@@ -27,6 +27,7 @@ constexpr double kLinearVelocityMetersPerSecond = 2.0;
 constexpr double kAngularVelocityRadiansPerSecond = 8.0;
 constexpr double kLinearAccelerationMetersPerSecondSquared = 30.0;
 constexpr double kAngularAccelerationRadiansPerSecondSquared = 120.0;
+constexpr double kJ6UnwindToleranceRadians = glm::radians(1.0);
 constexpr double kBoxSideMeters = 0.04;
 constexpr double kPlacementAreaSideMeters = kBoxSideMeters * 1.7320508;
 
@@ -260,6 +261,22 @@ void RobotPanel::DrawContents(robotics::backends::simulation::SimRobotController
     {
         stage_ = moveTo(recoveryPose_) ? Stage::Recovering : Stage::Failed;
     }
+    else if (stage_ == Stage::UnwindingBeforeTask && state.mode == robotics::RobotMode::Idle)
+    {
+        if (state.jointPositionRadians.empty() ||
+            std::abs(state.jointPositionRadians.back()) > kJ6UnwindToleranceRadians)
+        {
+            lastResult_ = {robotics::ErrorCode::Fault, "RobotPanel: J6 did not return to the 0 degree unwind position"};
+            hasResult_ = true;
+            stage_ = Stage::Failed;
+        }
+        else
+        {
+            const auto approach = makeBoxTarget(graspBoxPoseInBase, kApproachHeightMeters,
+                graspOrientationXyzw_);
+            stage_ = moveTo(approach) ? Stage::MovingAbovePickup : Stage::Failed;
+        }
+    }
     else if (stage_ == Stage::MovingAbovePickup && state.mode == robotics::RobotMode::Idle)
     {
         const double boxYawRadians = glm::radians(YawDegrees(graspBoxPoseInBase.orientationXyzw));
@@ -381,7 +398,10 @@ void RobotPanel::DrawContents(robotics::backends::simulation::SimRobotController
             else
             {
                 unwindTarget.back() = 0.0;
-                lastResult_ = controller.MoveJoint({std::move(unwindTarget), 1.0, 1.0});
+                robotics::JointMoveCommand unwindCommand;
+                unwindCommand.targetPositionRadians = std::move(unwindTarget);
+                unwindCommand.preserveJointTurns = true;
+                lastResult_ = controller.MoveJoint(unwindCommand);
                 hasResult_ = true;
                 stage_ = lastResult_.Ok() ? Stage::UnwindingWrist : Stage::Failed;
             }
@@ -391,7 +411,14 @@ void RobotPanel::DrawContents(robotics::backends::simulation::SimRobotController
     }
     else if (stage_ == Stage::UnwindingWrist && state.mode == robotics::RobotMode::Idle)
     {
-        missionSucceeded_ = taskSucceeded_ && placementReleased_ &&
+        const bool wristUnwound = !state.jointPositionRadians.empty() &&
+            std::abs(state.jointPositionRadians.back()) <= kJ6UnwindToleranceRadians;
+        if (!wristUnwound)
+        {
+            lastResult_ = {robotics::ErrorCode::Fault, "RobotPanel: J6 did not return to the 0 degree unwind position"};
+            hasResult_ = true;
+        }
+        missionSucceeded_ = wristUnwound && taskSucceeded_ && placementReleased_ &&
             BoxCornersFitPlacement(graspBoxPoseInBase, placementPoseInBase);
         stage_ = missionSucceeded_ ? Stage::Complete : Stage::Failed;
         if (missionSucceeded_)
@@ -444,7 +471,8 @@ void RobotPanel::DrawContents(robotics::backends::simulation::SimRobotController
         ImGui::EndTable();
     }
     ImGui::TextUnformatted("Angle values are current joint positions, not travel percentages.");
-    const bool canStart = stage_ == Stage::Ready || stage_ == Stage::Complete || stage_ == Stage::Failed;
+    const bool canStart = !boxGrasped &&
+        (stage_ == Stage::Ready || stage_ == Stage::Complete || stage_ == Stage::Failed);
     // 첫 임무는 버튼으로 시작하고 성공 뒤에는 Viewer가 상자를 옮기고 Ready로 돌려놓아 자동으로 다음 임무를 시작한다.
     const bool startRequested = canStart && orientationReady_ &&
         (ImGui::Button("Run random pick and place") || (autoLoopEnabled_ && stage_ == Stage::Ready));
@@ -455,10 +483,23 @@ void RobotPanel::DrawContents(robotics::backends::simulation::SimRobotController
         missionSucceeded_ = false;
         transitWaypointCount_ = 0;
         autoLoopEnabled_ = true;
-        const auto approach = makeBoxTarget(graspBoxPoseInBase, kApproachHeightMeters,
-            graspOrientationXyzw_);
-        recoveryPose_ = approach;
-        stage_ = moveTo(approach) ? Stage::MovingAbovePickup : Stage::Failed;
+        auto unwindTarget = state.jointPositionRadians;
+        if (unwindTarget.empty())
+        {
+            lastResult_ = {robotics::ErrorCode::InvalidCommand, "RobotPanel: current joint positions are unavailable"};
+            hasResult_ = true;
+            stage_ = Stage::Failed;
+        }
+        else
+        {
+            unwindTarget.back() = 0.0;
+            robotics::JointMoveCommand unwindCommand;
+            unwindCommand.targetPositionRadians = std::move(unwindTarget);
+            unwindCommand.preserveJointTurns = true;
+            lastResult_ = controller.MoveJoint(unwindCommand);
+            hasResult_ = true;
+            stage_ = lastResult_.Ok() ? Stage::UnwindingBeforeTask : Stage::Failed;
+        }
     }
     if (ImGui::Button("Stop robot"))
     {

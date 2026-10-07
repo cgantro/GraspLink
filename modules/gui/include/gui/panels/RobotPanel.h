@@ -41,6 +41,7 @@ private:
     enum class Stage
     {
         Ready,
+        UnwindingBeforeTask,
         MovingAbovePickup,
         AligningAbovePickup,
         MovingDownToPickup,

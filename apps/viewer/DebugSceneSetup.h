@@ -51,7 +51,7 @@ std::array<float, 3> RandomGraspBoxPosition();
  */
 std::array<float, 3> RandomPlacementAreaPosition();
 
-/** @brief 바닥에 놓인 상자와 목표판에 사용할 임의의 Y축 회전각 [rad]을 반환한다. */
+/** @brief 바닥에 놓인 상자와 목표판에 사용할 −90°에서 +90° 사이의 임의 Y축 회전각 [rad]을 반환한다. */
 float RandomPlanarRotationRadians();
 
 /** @brief 바닥 위에 상자 한 변의 약 1.73배인 정사각 목표 영역을 그린다. 상자 면적의 세 배이며 충돌 형상은 추가하지 않는다. */

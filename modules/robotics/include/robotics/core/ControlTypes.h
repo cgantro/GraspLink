@@ -71,7 +71,7 @@ struct CartesianPose
     std::array<double, 4> orientationXyzw{0.0, 0.0, 0.0, 1.0};
 };
 
-/** @brief J1부터 Jn까지의 절대 목표각 [rad]과 제어 구현가 적용할 속도·가속도 비율을 담는다. */
+/** @brief J1부터 Jn까지의 목표각 [rad]과 제어 구현가 적용할 속도·가속도 비율을 담는다. */
 struct JointMoveCommand
 {
     JointVector targetPositionRadians;
@@ -81,6 +81,9 @@ struct JointMoveCommand
 
     /// 제어 구현별 해석이 다를 수 있다. Simulation은 값을 저장하지만 가속도 제한 계산에는 사용하지 않는다.
     double accelerationScale = 1.0;
+
+    /// true이면 요청한 관절각에 2π를 더하거나 빼 현재 자세에 가까운 등가각으로 바꾸지 않는다. J6을 중앙 0 rad로 풀 때 사용한다.
+    bool preserveJointTurns = false;
 };
 
 // TCP는 공구 끝의 작업 기준점이다. TCP 목표에서 관절 목표를 구하는 역기구학(IK)과 경로 실행이 있어야 직선 이동할 수 있다.

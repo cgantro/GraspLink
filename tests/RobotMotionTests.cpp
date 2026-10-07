@@ -195,6 +195,30 @@ void CheckEquivalentJointTargetUsesNearestLegalTurn()
     Require(j1Ticks > 500, "J1 does not cross its hard limit to take an unavailable short rotation");
 }
 
+void CheckExplicitWristUnwindPreservesZeroRepresentation()
+{
+    SimRobotController controller(models::hanwha::kHcr12a);
+    Require(static_cast<bool>(controller.Connect()), "wrist unwind controller connects");
+
+    JointMoveCommand nearNegativeLimit;
+    nearNegativeLimit.targetPositionRadians.assign(6, 0.0);
+    nearNegativeLimit.targetPositionRadians.back() = -314.5 * 3.14159265358979323846 / 180.0;
+    nearNegativeLimit.preserveJointTurns = true;
+    Require(static_cast<bool>(controller.MoveJoint(nearNegativeLimit)), "J6 accepts its explicit negative-turn representation");
+    AdvanceUntilIdle(controller, 0.01);
+    RequireNear(controller.GetState().jointPositionRadians.back(), nearNegativeLimit.targetPositionRadians.back(), 1e-8,
+        "J6 reaches negative 314.5 degrees without changing to an equivalent turn");
+
+    JointMoveCommand unwind;
+    unwind.targetPositionRadians = controller.GetState().jointPositionRadians;
+    unwind.targetPositionRadians.back() = 0.0;
+    unwind.preserveJointTurns = true;
+    Require(static_cast<bool>(controller.MoveJoint(unwind)), "explicit J6 unwind request is accepted");
+    AdvanceUntilIdle(controller, 0.01);
+    RequireNear(controller.GetState().jointPositionRadians.back(), 0.0, 1e-8,
+        "J6 returns to the central zero degree representation instead of the nearby negative 360 degree turn");
+}
+
 void CheckEnvironmentCollisionCanBeRetried()
 {
     SimRobotController controller(models::hanwha::kHcr12a, models::Pose3{{0.04, 0.0, 0.0}, {}});
@@ -695,6 +719,7 @@ int main()
     {
         CheckMovePoseAndFailurePreservation();
         CheckEquivalentJointTargetUsesNearestLegalTurn();
+        CheckExplicitWristUnwindPreservesZeroRepresentation();
         CheckHomeSeedCanReachFoldedButValidPosture();
         CheckEnvironmentCollisionCanBeRetried();
         CheckCollisionAwareIkSelectsAnotherBranch();

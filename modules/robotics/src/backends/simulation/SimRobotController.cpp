@@ -328,7 +328,8 @@ Result SimRobotController::MoveJoint(const JointMoveCommand& command)
     // 명령을 받는 순간 관절각 q를 바꾸지 않는다. 이후 Update 호출이 정해진 속도 안에서 현재 상태를 목표까지 진행시킨다.
     // 움직이는 도중 새 명령이 들어오면 대기열에 쌓지 않고 현재 목표를 새 목표로 바꾼다.
     targetPositionRadians_ = command.targetPositionRadians;
-    AlignEquivalentJointAngles(targetPositionRadians_, state_.jointPositionRadians, *specification_);
+    if (!command.preserveJointTurns)
+        AlignEquivalentJointAngles(targetPositionRadians_, state_.jointPositionRadians, *specification_);
     velocityScale_ = command.velocityScale;
     accelerationScale_ = command.accelerationScale;
     linearPath_.clear();
