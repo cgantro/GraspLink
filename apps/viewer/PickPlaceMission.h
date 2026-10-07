@@ -51,10 +51,8 @@ public:
     /** @brief 패널에서 받은 시작, 재개, 정지 입력을 임무 명령으로 처리한다. */
     void ApplyActions(const RobotPanelActions& actions,
         const robotics::RobotState& state,
-        robotics::IRobotController& controller,
-        robotics::IGripperController& gripper, bool boxGrasped,
-        const robotics::CartesianPose& graspBoxPoseInBase,
-        const robotics::CartesianPose& placementPoseInBase);
+        robotics::IRobotController& controller, bool boxGrasped,
+        const robotics::CartesianPose& graspBoxPoseInBase);
     /** @brief 화면과 테스트에 필요한 임무 상태를 복사 없이 읽기 전용으로 제공한다. */
     [[nodiscard]] PickPlaceMissionSnapshot Snapshot() const;
 

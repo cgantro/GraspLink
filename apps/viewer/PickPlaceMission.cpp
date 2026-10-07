@@ -164,8 +164,13 @@ robotics::CartesianPose MakeBoxTarget(const robotics::CartesianPose& boxPose, do
 }
 
 robotics::CartesianPose MakeAttachedBoxTarget(const robotics::CartesianPose& boxPose, double heightOffset,
-    const glm::dquat& tcpOrientation, const std::array<double, 3>& boxOffsetInTool)
+    const std::array<double, 4>& targetBoxOrientation, const std::array<double, 4>& boxRotationOffsetInTool,
+    const std::array<double, 3>& boxOffsetInTool)
 {
+    const glm::dquat boxRotationOffset{boxRotationOffsetInTool[3], boxRotationOffsetInTool[0],
+        boxRotationOffsetInTool[1], boxRotationOffsetInTool[2]};
+    const glm::dquat tcpOrientation = glm::normalize(
+        Orientation(targetBoxOrientation) * glm::inverse(boxRotationOffset));
     const glm::dvec3 boxOffset = tcpOrientation *
         glm::dvec3{boxOffsetInTool[0], boxOffsetInTool[1], boxOffsetInTool[2]};
     robotics::CartesianPose target{};
@@ -174,27 +179,6 @@ robotics::CartesianPose MakeAttachedBoxTarget(const robotics::CartesianPose& box
         boxPose.positionMeters[1] + heightOffset - boxOffset.y,
         boxPose.positionMeters[2] - boxOffset.z};
     return target;
-}
-
-robotics::CartesianPose MakePlacementTarget(const robotics::CartesianPose& placementPose,
-    const std::array<double, 4>& placementBoxOrientation, const std::array<double, 4>& boxRotationOffsetInTool,
-    const std::array<double, 3>& boxOffsetInTool, double heightOffset)
-{
-    const glm::dquat boxRotationOffset{boxRotationOffsetInTool[3], boxRotationOffsetInTool[0],
-        boxRotationOffsetInTool[1], boxRotationOffsetInTool[2]};
-    const glm::dquat tcpOrientation = glm::normalize(
-        Orientation(placementBoxOrientation) * glm::inverse(boxRotationOffset));
-    return MakeAttachedBoxTarget(placementPose, heightOffset, tcpOrientation, boxOffsetInTool);
-}
-
-robotics::CartesianPose MakeAttachedBoxPose(const robotics::CartesianPose& boxPose, double heightOffset,
-    const std::array<double, 4>& boxRotationOffsetInTool, const std::array<double, 3>& boxOffsetInTool)
-{
-    const glm::dquat rotationOffset{boxRotationOffsetInTool[3], boxRotationOffsetInTool[0],
-        boxRotationOffsetInTool[1], boxRotationOffsetInTool[2]};
-    const glm::dquat tcpOrientation = glm::normalize(
-        Orientation(boxPose.orientationXyzw) * glm::inverse(rotationOffset));
-    return MakeAttachedBoxTarget(boxPose, heightOffset, tcpOrientation, boxOffsetInTool);
 }
 
 robotics::Result MoveTo(const robotics::CartesianPose& pose, robotics::IRobotController& controller)
@@ -345,8 +329,8 @@ void PickPlaceMission::Update(const robotics::RobotState& state, robotics::IRobo
         // Constraint는 파지 순간의 물체와 그리퍼 상대 자세를 유지한다. 이 차이를 TCP의 Local 좌표로 저장하면 방향이 바뀌어도 목표 위치에 상자 중심을 맞출 수 있다.
         CaptureAttachedBoxOffset(graspBoxPoseInBase, state, boxOffsetInTool_, boxRotationOffsetInTool_);
         graspedBoxPoseInBase_ = graspBoxPoseInBase;
-        recoveryPose_ = MakeAttachedBoxPose(graspBoxPoseInBase, kApproachHeightMeters,
-            boxRotationOffsetInTool_, boxOffsetInTool_);
+        recoveryPose_ = MakeAttachedBoxTarget(graspBoxPoseInBase, kApproachHeightMeters,
+            graspBoxPoseInBase.orientationXyzw, boxRotationOffsetInTool_, boxOffsetInTool_);
         SetStageFromResult(MoveTo(recoveryPose_, controller), Stage::Lifting);
     }
     else if (gripperCloseFinished)
@@ -359,8 +343,8 @@ void PickPlaceMission::Update(const robotics::RobotState& state, robotics::IRobo
     }
     else if (stage_ == Stage::Lifting && idle)
     {
-        recoveryPose_ = MakeAttachedBoxPose(graspedBoxPoseInBase_, kTransitBoxHeightMeters,
-            boxRotationOffsetInTool_, boxOffsetInTool_);
+        recoveryPose_ = MakeAttachedBoxTarget(graspedBoxPoseInBase_, kTransitBoxHeightMeters,
+            graspedBoxPoseInBase_.orientationXyzw, boxRotationOffsetInTool_, boxOffsetInTool_);
         SetStageFromResult(MoveTo(recoveryPose_, controller), Stage::TransitingToPlacement);
     }
     else if (stage_ == Stage::RaisingAfterResume && idle)
@@ -398,8 +382,8 @@ void PickPlaceMission::Update(const robotics::RobotState& state, robotics::IRobo
         const glm::dquat chosenTcp = ClosestSquarePlacementOrientation(
             Orientation(placementPoseInBase.orientationXyzw), boxRotationOffset, currentTcp);
         placementBoxOrientationXyzw_ = QuaternionXyzw(chosenTcp * boxRotationOffset);
-        recoveryPose_ = MakeAttachedBoxTarget(placementPoseInBase, kTransitBoxHeightMeters, currentTcp,
-            boxOffsetInTool_);
+        recoveryPose_ = MakeAttachedBoxTarget(placementPoseInBase, kTransitBoxHeightMeters,
+            QuaternionXyzw(currentTcp * boxRotationOffset), boxRotationOffsetInTool_, boxOffsetInTool_);
         SetStageFromResult(MoveTo(recoveryPose_, controller), Stage::MovingToPlacementOverhead);
     }
     else if (stage_ == Stage::MovingToPlacementOverhead && idle)
@@ -414,8 +398,8 @@ void PickPlaceMission::Update(const robotics::RobotState& state, robotics::IRobo
         if (stage_ == Stage::Failed)
         {
             const robotics::Result wristOnlyFailure = lastResult_;
-            recoveryPose_ = MakePlacementTarget(placementPoseInBase, placementBoxOrientationXyzw_,
-                boxRotationOffsetInTool_, boxOffsetInTool_, kTransitBoxHeightMeters);
+            recoveryPose_ = MakeAttachedBoxTarget(placementPoseInBase, kTransitBoxHeightMeters,
+                placementBoxOrientationXyzw_, boxRotationOffsetInTool_, boxOffsetInTool_);
             if (SetResult(MoveTo(recoveryPose_, controller)))
                 stage_ = Stage::AligningAbovePlacement;
             else
@@ -427,14 +411,15 @@ void PickPlaceMission::Update(const robotics::RobotState& state, robotics::IRobo
     }
     else if (stage_ == Stage::AligningAbovePlacement && idle)
     {
-        recoveryPose_ = MakePlacementTarget(placementPoseInBase, placementBoxOrientationXyzw_, boxRotationOffsetInTool_, boxOffsetInTool_, kApproachHeightMeters);
+        recoveryPose_ = MakeAttachedBoxTarget(placementPoseInBase, kApproachHeightMeters,
+            placementBoxOrientationXyzw_, boxRotationOffsetInTool_, boxOffsetInTool_);
         SetStageFromResult(MoveTo(recoveryPose_, controller), Stage::MovingAbovePlacement);
     }
     else if (stage_ == Stage::MovingAbovePlacement && idle)
     {
         SetStageFromResult(
-            MoveTo(MakePlacementTarget(placementPoseInBase, placementBoxOrientationXyzw_,
-                boxRotationOffsetInTool_, boxOffsetInTool_, 0.0), controller),
+            MoveTo(MakeAttachedBoxTarget(placementPoseInBase, 0.0, placementBoxOrientationXyzw_,
+                boxRotationOffsetInTool_, boxOffsetInTool_), controller),
             Stage::MovingDownToPlacement);
     }
     else if (stage_ == Stage::MovingDownToPlacement && idle)
@@ -489,11 +474,8 @@ void PickPlaceMission::Update(const robotics::RobotState& state, robotics::IRobo
 }
 
 void PickPlaceMission::ApplyActions(const RobotPanelActions& actions,
-    const robotics::RobotState& state,
-    robotics::IRobotController& controller,
-    robotics::IGripperController& gripper, bool boxGrasped,
-    const robotics::CartesianPose& graspBoxPoseInBase,
-    const robotics::CartesianPose& placementPoseInBase)
+    const robotics::RobotState& state, robotics::IRobotController& controller, bool boxGrasped,
+    const robotics::CartesianPose& graspBoxPoseInBase)
 {
     const bool canStart = !taskPaused_ && !boxGrasped &&
         (stage_ == Stage::Ready || stage_ == Stage::Complete || stage_ == Stage::Failed);
@@ -533,7 +515,8 @@ void PickPlaceMission::ApplyActions(const RobotPanelActions& actions,
                     const double currentBoxHeight = graspedBoxPoseInBase_.positionMeters[1];
                     const double resumeTransitHeight = std::max(currentBoxHeight, kTransitBoxHeightMeters);
                     const double liftDistance = resumeTransitHeight - currentBoxHeight;
-                    recoveryPose_ = MakeAttachedBoxTarget(graspedBoxPoseInBase_, liftDistance, tcpOrientation, boxOffsetInTool_);
+                    recoveryPose_ = MakeAttachedBoxTarget(graspedBoxPoseInBase_, liftDistance,
+                        graspedBoxPoseInBase_.orientationXyzw, boxRotationOffsetInTool_, boxOffsetInTool_);
                     graspedBoxPoseInBase_.positionMeters[1] = resumeTransitHeight - kTransitBoxHeightMeters;
                     SetStageFromResult(MoveTo(recoveryPose_, controller), Stage::RaisingAfterResume);
                 }

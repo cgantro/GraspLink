@@ -43,24 +43,33 @@ public:
     {
         ++jointRequests;
         lastJointCommand = command;
-        state.mode = RobotMode::Moving;
+        if (jointResult)
+            state.mode = RobotMode::Moving;
         return jointResult;
     }
     Result MoveLinear(const LinearMoveCommand& command) override
     {
         ++linearRequests;
         lastLinearCommand = command;
-        state.mode = RobotMode::Moving;
+        if (linearResult)
+            state.mode = RobotMode::Moving;
         return linearResult;
     }
     Result MoveLinearPath(const LinearPathMoveCommand& command) override
     {
         ++pathRequests;
         lastPathCommand = command;
-        state.mode = RobotMode::Moving;
+        if (pathResult)
+            state.mode = RobotMode::Moving;
         return pathResult;
     }
-    Result Stop() override { state.mode = RobotMode::Stopped; return stopResult; }
+    Result Stop() override
+    {
+        ++stopRequests;
+        if (stopResult)
+            state.mode = RobotMode::Stopped;
+        return stopResult;
+    }
     RobotState GetState() const override { return state; }
     void Update(double) override {}
 
@@ -75,6 +84,7 @@ public:
     int jointRequests = 0;
     int linearRequests = 0;
     int pathRequests = 0;
+    int stopRequests = 0;
 
 private:
     bool connected = false;
@@ -94,15 +104,12 @@ void CheckStartAndPauseResumeWithHeldObject()
     CartesianPose goal = state.tcpPose;
 
     mission.Update(controller.GetStateView(), controller, gripper, false, box, goal);
-    mission.ApplyActions({true, false, false}, controller.GetStateView(), controller,
-        gripper, false, box, goal);
+    mission.ApplyActions({true, false, false}, controller.GetStateView(), controller, false, box);
     ASSERT_EQ(mission.Snapshot().stageLabel, "Unwinding J6 before pickup");
 
-    mission.ApplyActions({false, false, true}, controller.GetStateView(), controller,
-        gripper, false, box, goal);
+    mission.ApplyActions({false, false, true}, controller.GetStateView(), controller, false, box);
     ASSERT_TRUE(mission.Snapshot().paused);
-    mission.ApplyActions({false, true, false}, controller.GetStateView(), controller,
-        gripper, true, box, goal);
+    mission.ApplyActions({false, true, false}, controller.GetStateView(), controller, true, box);
     const auto resumed = mission.Snapshot();
     ASSERT_FALSE(resumed.paused);
     ASSERT_EQ(resumed.stageLabel, "Lifting to resume height");
@@ -123,8 +130,7 @@ void CheckUnreachablePickupFailsWithoutMotion()
     const CartesianPose goal = initial.tcpPose;
 
     mission.Update(controller.GetStateView(), controller, gripper, false, unreachableBox, goal);
-    mission.ApplyActions({true, false, false}, controller.GetStateView(), controller,
-        gripper, false, unreachableBox, goal);
+    mission.ApplyActions({true, false, false}, controller.GetStateView(), controller, false, unreachableBox);
     ASSERT_EQ(mission.Snapshot().stageLabel, "Unwinding J6 before pickup");
 
     mission.Update(controller.GetStateView(), controller, gripper, false, unreachableBox, goal);
@@ -156,7 +162,7 @@ TEST(PickPlaceMissionTests, RejectedStartCommandFailsImmediately)
     grasplink::viewer::PickPlaceMission mission(models::hanwha::kHcr12a);
 
     mission.Update(controller.state, controller, gripper, false, {}, {});
-    mission.ApplyActions({true, false, false}, controller.state, controller, gripper, false, {}, {});
+    mission.ApplyActions({true, false, false}, controller.state, controller, false, {});
 
     const auto snapshot = mission.Snapshot();
     EXPECT_EQ(controller.jointRequests, 1);
@@ -174,7 +180,7 @@ TEST(PickPlaceMissionTests, AcceptedCommandWaitsForControllerToBecomeIdle)
     grasplink::viewer::PickPlaceMission mission(models::hanwha::kHcr12a);
 
     mission.Update(controller.state, controller, gripper, false, {}, {});
-    mission.ApplyActions({true, false, false}, controller.state, controller, gripper, false, {}, {});
+    mission.ApplyActions({true, false, false}, controller.state, controller, false, {});
     mission.Update(controller.state, controller, gripper, false, {}, {});
 
     EXPECT_EQ(mission.Snapshot().stageLabel, "Unwinding J6 before pickup");
@@ -192,7 +198,7 @@ TEST(PickPlaceMissionTests, EnvironmentContactRequestsRetreat)
     box.positionMeters = {0.4, 0.2, 0.1};
 
     mission.Update(controller.state, controller, gripper, false, box, {});
-    mission.ApplyActions({true, false, false}, controller.state, controller, gripper, false, box, {});
+    mission.ApplyActions({true, false, false}, controller.state, controller, false, box);
     controller.state.mode = RobotMode::Idle;
     controller.state.jointPositionRadians.back() = 0.0;
     mission.Update(controller.state, controller, gripper, false, box, {});
@@ -217,7 +223,7 @@ TEST(PickPlaceMissionTests, UnrelatedControllerErrorDoesNotTriggerCollisionRecov
     box.positionMeters = {0.4, 0.2, 0.1};
 
     mission.Update(controller.state, controller, gripper, false, box, {});
-    mission.ApplyActions({true, false, false}, controller.state, controller, gripper, false, box, {});
+    mission.ApplyActions({true, false, false}, controller.state, controller, false, box);
     controller.state.mode = RobotMode::Idle;
     mission.Update(controller.state, controller, gripper, false, box, {});
     controller.state.mode = RobotMode::Moving;
@@ -227,4 +233,44 @@ TEST(PickPlaceMissionTests, UnrelatedControllerErrorDoesNotTriggerCollisionRecov
 
     EXPECT_EQ(mission.Snapshot().stageLabel, "Moving above the box");
     EXPECT_EQ(controller.linearRequests, 1);
+}
+
+TEST(PickPlaceMissionTests, RejectedStopDoesNotPauseMission)
+{
+    ScriptedRobotController controller;
+    StubGripper gripper;
+    ASSERT_TRUE(gripper.Connect());
+    controller.stopResult = {ErrorCode::Fault, "stop rejected"};
+    grasplink::viewer::PickPlaceMission mission(models::hanwha::kHcr12a);
+
+    mission.ApplyActions({false, false, true}, controller.state, controller, false, {});
+
+    const auto snapshot = mission.Snapshot();
+    EXPECT_EQ(controller.stopRequests, 1);
+    EXPECT_FALSE(snapshot.paused);
+    EXPECT_EQ(snapshot.stageLabel, "Ready");
+    EXPECT_FALSE(snapshot.lastRequestAccepted);
+    EXPECT_EQ(snapshot.lastMessage, "stop rejected");
+}
+
+TEST(PickPlaceMissionTests, ResumeWithHeldObjectRequiresValidTcpFeedback)
+{
+    ScriptedRobotController controller;
+    StubGripper gripper;
+    ASSERT_TRUE(gripper.Connect());
+    grasplink::viewer::PickPlaceMission mission(models::hanwha::kHcr12a);
+    mission.ApplyActions({false, false, true}, controller.state, controller, false, {});
+    ASSERT_TRUE(mission.Snapshot().paused);
+    controller.state.valid = false;
+    controller.state.tcpPoseValid = false;
+
+    mission.ApplyActions({false, true, false}, controller.state, controller, true, {});
+
+    const auto snapshot = mission.Snapshot();
+    EXPECT_FALSE(snapshot.paused);
+    EXPECT_EQ(snapshot.stageLabel, "Failed");
+    EXPECT_FALSE(snapshot.lastRequestAccepted);
+    EXPECT_EQ(snapshot.lastMessage, "RobotPanel: TCP feedback is unavailable for safe resume");
+    EXPECT_EQ(controller.jointRequests, 0);
+    EXPECT_EQ(controller.linearRequests, 0);
 }

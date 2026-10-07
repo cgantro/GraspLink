@@ -514,8 +514,7 @@ void ViewerApp::MainLoop()
                 simulationController.GetSpecification(), boxPose, placementPose, missionView};
             const auto panelActions = m_RobotPanel->DrawContents(robotPanelView);
             m_PickPlaceMission.ApplyActions({panelActions.start, panelActions.resume, panelActions.stop},
-                simulationController.GetStateView(),
-                *m_RobotController, *m_GripperController, graspState.grasped, boxPose, placementPose);
+                simulationController.GetStateView(), *m_RobotController, graspState.grasped, boxPose);
             if (m_PickPlaceMission.ConsumeSuccessEvent())
             {
                 const auto nextPosition = viewer_debug::RandomGraspBoxPosition();
