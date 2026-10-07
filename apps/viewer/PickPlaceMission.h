@@ -79,10 +79,8 @@ private:
         UnwindingWrist, Recovering, Complete, Failed, RaisingAfterResume
     };
 
-    void SetStageFromResult(bool succeeded, Stage next) noexcept
-    {
-        stage_ = succeeded ? next : Stage::Failed;
-    }
+    bool SetResult(robotics::Result result);
+    void SetStageFromResult(robotics::Result result, Stage next);
 
     std::array<double, 4> graspOrientationXyzw_{};
     std::array<double, 4> pickupOrientationXyzw_{};
