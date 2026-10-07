@@ -12,7 +12,7 @@ namespace grasplink::robotics::backends::simulation
  * 이 Simulation은 raw 위치 범위의 양 끝을 열린 비율 0과 닫힌 비율 1로 선형 대응시킨다.
  * 기구 계산은 연속 비율을 사용하고 actualPosition만 표시용 정수로 반올림한다.
  * raw speed는 아래 프로젝트 각속도 범위에 대응하며 제조사 속도 사양이 아니다.
- * 힘, 전류, 접촉 검출과 접촉 뒤 손가락 적응은 계산하지 않는다.
+ * 힘과 전류는 계산하지 않으며 접촉 검출은 Simulation 물리 adapter가 제공한다.
  */
 struct SimGripperMotionSettings
 {
@@ -24,7 +24,7 @@ struct SimGripperMotionSettings
 };
 
 /**
- * @brief 접촉을 계산하지 않고 위치·속도 code에 따라 Gripper의 개폐 상태를 갱신한다.
+ * @brief 위치·속도 code로 Gripper를 움직이고 외부 물리 접촉 feedback으로 개폐를 멈춘다.
  * @details GetState는 내부 저장소와 분리된 복사본을 반환한다.
  * 연속 개폐 비율을 쓰려면 valid와 closureFractionValid를 확인한다.
  * 목표 도달은 장애물 없는 공간에서 요청 위치에 왔다는 뜻이지 접촉이나 파지 성공이 아니다.
@@ -91,6 +91,24 @@ public:
      */
     void Update(double dtSeconds) override;
 
+    /**
+     * @brief 물리 계산 뒤 발견한 접촉 방향을 기록하고 현재 개폐 위치에서 멈춘다.
+     * @details opening은 열면서 닿았는지 뜻한다. 닫으며 닿으면 같은 닫힘 요청을 반복해도 다시 밀어 넣지 않는다.
+     * 접촉 여부는 Jolt adapter가 계산하며 이 함수는 파지 성공이나 힘 [N]을 판정하지 않는다.
+     */
+    void ApplyContactFeedback(bool opening);
+
+    /** @brief 마지막 수락한 명령이 현재 위치보다 닫힌 위치를 요청했는지 반환한다. 접촉 정지 뒤에도 유지된다. */
+    [[nodiscard]] bool IsClosingRequested() const noexcept;
+
+    /** @brief 마지막 수락한 명령이 현재 위치보다 열린 위치를 요청했는지 반환한다. */
+    [[nodiscard]] bool IsOpeningRequested() const noexcept;
+
+    /** @brief 열기, Reset, Disconnect로 이전 파지를 해제해야 할 때 증가하는 번호를 반환한다. */
+    [[nodiscard]] std::uint64_t GetReleaseRevision() const noexcept { return releaseRevision_; }
+    /** @brief 범위 검사를 통과한 새 명령을 수락할 때 증가하는 번호를 반환한다. */
+    [[nodiscard]] std::uint64_t GetCommandRevision() const noexcept { return commandRevision_; }
+
 private:
     bool IsAtTarget() const noexcept;
     void UpdateRawPosition() noexcept;
@@ -108,6 +126,10 @@ private:
 
     // 현재 명령의 raw speed를 프로젝트 설정값에 대응시켜 정한 자유공간 master 관절의 각속도 [rad/s]다.
     double masterVelocityRadiansPerSecond_ = 0.0;
+    bool contactStopped_ = false;
+    int requestedDirection_ = 0;
+    std::uint64_t releaseRevision_ = 0;
+    std::uint64_t commandRevision_ = 0;
 };
 
 } // namespace grasplink::robotics::backends::simulation

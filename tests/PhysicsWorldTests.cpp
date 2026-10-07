@@ -58,17 +58,67 @@ int main()
         PhysicsWorld world;
         auto platform = OffsetPlatform();
         const auto handle = world.CreateBody(platform);
+        Require(world.GetCollisionLayer(handle) == CollisionLayer::Environment, "body reports its collision category");
         RequireNear(world.GetBodyTransform(handle).position.y, 0.0, 1e-5, "body origin after creation");
+        BodyDescription robotProxy;
+        robotProxy.motionType = BodyMotionType::Kinematic;
+        robotProxy.collisionLayer = CollisionLayer::Robot;
+        robotProxy.transform.position = {0.0F, 0.72F, 0.0F};
+        CollisionShapeDescription robotBox;
+        robotBox.halfExtentsMeters = {0.1F, 0.1F, 0.1F};
+        robotProxy.shapes.push_back(robotBox);
+        const auto robotHandle = world.CreateBody(robotProxy);
+        const auto robotPose = robotProxy.transform;
+        Require(world.OverlapsEnvironmentAt(robotHandle, robotPose), "robot query detects the offset environment platform");
+        for (int query = 0; query < 5000; ++query)
+            Require(world.OverlapsEnvironmentAt(robotHandle, robotPose), "repeated environment overlap query stays valid");
+
+        BodyDescription secondEnvironment;
+        secondEnvironment.motionType = BodyMotionType::Static;
+        secondEnvironment.collisionLayer = CollisionLayer::Environment;
+        secondEnvironment.transform = robotPose;
+        CollisionShapeDescription secondEnvironmentBox;
+        secondEnvironmentBox.halfExtentsMeters = {0.1F, 0.1F, 0.1F};
+        secondEnvironment.shapes.push_back(secondEnvironmentBox);
+        const auto secondEnvironmentHandle = world.CreateBody(secondEnvironment);
+        Require(world.OverlapsEnvironmentAt(robotHandle, robotPose, handle),
+            "ignoring one environment body still detects another overlapping environment body");
+        secondEnvironment.transform.position.x = 10.0F;
+        world.SetBodyTransform(secondEnvironmentHandle, secondEnvironment.transform);
+        Require(!world.OverlapsEnvironmentAt(robotHandle, robotPose, handle),
+            "ignoring the only overlapping environment body clears the overlap result");
+        world.DestroyBody(secondEnvironmentHandle);
+
+        world.DestroyBody(robotHandle);
         CheckContact(world, 0.0F, 0.85F);
         platform.transform.position.x = 1.5F;
         world.SetBodyTransform(handle, platform.transform);
         RequireNear(world.GetBodyTransform(handle).position.x, 1.5, 1e-5, "body origin after teleport");
         CheckContact(world, 1.5F, 0.85F);
 
+        BodyDescription teleportedDynamic;
+        teleportedDynamic.motionType = BodyMotionType::Dynamic;
+        teleportedDynamic.collisionLayer = CollisionLayer::DynamicObject;
+        CollisionShapeDescription teleportShape;
+        teleportShape.type = CollisionShapeType::Sphere;
+        teleportShape.radiusMeters = 0.1F;
+        teleportedDynamic.shapes.push_back(teleportShape);
+        teleportedDynamic.transform.position.y = 10.0F;
+        const auto dynamicHandle = world.CreateBody(teleportedDynamic);
+        world.Step(0.5);
+        Transform resetPose;
+        resetPose.position = {2.0F, 5.0F, 0.0F};
+        world.SetBodyTransform(dynamicHandle, resetPose);
+        world.Step(0.004);
+        RequireNear(world.GetBodyTransform(dynamicHandle).position.y, 5.0 - 0.5 * 9.81 * 0.004 * 0.004,
+            1e-4, "dynamic teleport clears previous velocity");
+        world.DestroyBody(dynamicHandle);
+
         platform.motionType = BodyMotionType::Kinematic;
         platform.collisionLayer = CollisionLayer::Robot;
         platform.transform.position = {3.0F, 0.0F, 0.0F};
         const auto moving = world.CreateBody(platform);
+        Require(world.GetCollisionLayer(moving) == CollisionLayer::Robot, "moving robot proxy category is available for contact policy");
         auto target = platform.transform;
         target.position.y = 0.25F;
         target.rotation = glm::angleAxis(0.4F, glm::vec3{0.0F, 1.0F, 0.0F}) * target.rotation;

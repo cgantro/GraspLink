@@ -2,8 +2,10 @@
 #include "robotics/models/hanwha/Hcr12a.h"
 #include "assets/GltfLoader.h"
 #include "scene/SceneManager.h"
+#include "PhysicsWorld.h"
 #include "simulation/components/PhysicsComponents.h"
 #include "simulation/robotics/RobotPhysicsAdapter.h"
+#include "simulation/systems/PhysicsSystemModule.h"
 #include "systems/TransformSystemModule.h"
 #include "TestSupport.h"
 
@@ -95,22 +97,66 @@ int main()
         scenes.LoadScene<Scene>();
         scenes.OnUpdate(0.0F);
         ExpectThrows<std::runtime_error>([&] { adapter.Apply(fk.Update(state)); }, "removed Scene invalidates physics proxy bindings");
-        // 볼록 껍질은 꼭짓점 집합을 감싸는 단순 충돌 표면이다. 현재 모델에서는 121개가 만들어지므로 150개 상한으로 링크별 구분은 유지하면서 예상 밖의 증가를 검출한다.
+        // 여섯 팔 Link에는 현재 121개 볼록 껍질이 만들어지고 Base의 hull은 별도로 집계한다. 전체 수의 150개 상한으로 형상 복잡도의 예상 밖 증가를 검출한다.
         const auto actualModel = GltfLoader::LoadGLB(std::filesystem::path("assets") / "HCR12A_2F-85.glb");
         Entity actualRoot = scenes.GetActiveScene()->CreateEntity("ActualRobot");
         grasplink::simulation::RobotPhysicsAdapter actualAdapter(
             *scenes.GetActiveScene(), actualRoot, models::hanwha::kHcr12a, actualModel);
         std::size_t actualHullCount = 0;
+        Entity baseProxy = actualRoot.GetChild("Base_CollisionProxy");
+        Require(baseProxy.IsValid(), "actual Base mesh creates a fixed collision proxy");
+        Require(baseProxy.Get<RigidBody>().motionType == grasplink::physics::BodyMotionType::Static,
+            "Base proxy does not move with the arm joints");
+        Require(baseProxy.Get<RigidBody>().collisionLayer == grasplink::physics::CollisionLayer::Environment,
+            "Base proxy participates in Environment overlap checks");
+        Require(!baseProxy.Get<Colliders>().shapes.empty(), "actual Base mesh produces collision hulls");
+        Require(baseProxy.GetParent() == actualRoot, "Base collider follows the placed robot root");
+        const auto& baseShape = baseProxy.Get<Colliders>().shapes.front();
+        Require(baseShape.type == grasplink::physics::CollisionShapeType::ConvexHull,
+            "Base geometry uses the same supported convex hull shape type as arm links");
+        for (const glm::vec3& point : baseShape.pointsMeters)
+            Require(std::abs(point.x) < 0.25F && point.y >= -0.01F && point.y < 0.25F && std::abs(point.z) < 0.25F,
+                "Base hull points come from the GLB Base geometry in robot-root coordinates");
+
+        grasplink::robotics::kinematics::RobotKinematics actualKinematics(models::hanwha::kHcr12a);
+        RobotState homeState;
+        homeState.valid = true;
+        homeState.jointPositionRadians.assign(models::hanwha::kHcr12a.jointCount, 0.0);
+        actualAdapter.Apply(actualKinematics.Update(homeState));
+        grasplink::physics::PhysicsWorld physics;
+        grasplink::simulation::PhysicsSystemModule physicsSystem(world, physics);
+        TransformSystemModule::UpdateWorldTransforms(world);
+        physicsSystem.Step(0.004);
+        TransformSystemModule::UpdateWorldTransforms(world);
+        Entity link1Proxy = actualRoot.GetChild("Link1_CollisionProxy");
+        const glm::mat4 link1World = link1Proxy.GetWorldMatrix();
+        grasplink::physics::Transform link1Pose;
+        link1Pose.position = glm::vec3(link1World[3]);
+        const auto link1Body = physicsSystem.GetBodyHandle(link1Proxy.GetHandle());
+        const auto baseBody = physicsSystem.GetBodyHandle(baseProxy.GetHandle());
+        Require(physics.IsBodyValid(link1Body), "home Link1 has a Jolt body for overlap validation");
+        Require(physics.IsBodyValid(baseBody), "fixed Base has a Jolt body for overlap validation");
+        // 두 GLB 충돌 형상은 J1 베어링에서 실제로 겹치므로, Base 하나만 제외한 검사와 기본 검사를 함께 확인한다.
+        Require(physics.OverlapsEnvironmentAt(link1Body, link1Pose),
+            "home Link1 intersects Base at their modeled bearing");
+        Require(!physics.OverlapsEnvironmentAt(link1Body, link1Pose, baseBody),
+            "home Link1 passes validation when only its exact adjacent Base body is excluded");
+
         for (const auto& proxy : actualRoot.GetChildren())
         {
+            if (proxy.GetHandle().name() == "Base_CollisionProxy")
+            {
+                actualHullCount += proxy.GetHandle().get<Colliders>().shapes.size();
+                continue;
+            }
             const auto& shapes = proxy.GetHandle().get<Colliders>().shapes;
             Require(!shapes.empty(), "actual robot link retains collision coverage");
             actualHullCount += shapes.size();
             std::cout << proxy.GetHandle().name() << ": " << shapes.size() << " hulls\n";
         }
         std::cout << "Actual robot hulls: " << actualHullCount << '\n';
-        Require(actualRoot.GetChildren().size() == 6, "actual arm keeps six independent rigid links");
-        Require(actualHullCount <= 150, "actual arm collider complexity stays within runtime budget");
+        Require(actualRoot.GetChildren().size() == 7, "actual robot keeps one Base and six independent arm collision proxies");
+        Require(actualHullCount <= 150, "actual robot collider complexity stays within runtime budget");
         std::cout << "Rigid-link geometry ownership and proxy pose checks passed\n";
         return 0;
     }

@@ -1,13 +1,14 @@
 #include "simulation/systems/PhysicsSystemModule.h"
 
 #include "PhysicsWorld.h"
+#include "diagnostics/Logger.h"
 #include "simulation/components/PhysicsComponents.h"
 #include "components/TransformComponents.h"
 
 #include <glm/gtx/matrix_decompose.hpp>
 
 #include <cmath>
-#include <iostream>
+#include <string>
 #include <unordered_set>
 #include <vector>
 
@@ -157,6 +158,7 @@ struct PhysicsBodyBinding
 struct PhysicsSystemModule::Impl
 {
     grasplink::physics::PhysicsWorld& physicsWorld;
+    grasplink::diagnostics::Logger* logger;
     flecs::query<const RigidBody, const Colliders> bodyQuery;
     flecs::query<const grasplink::simulation::detail::PhysicsBodyBinding> bindingQuery;
     std::vector<BodySnapshot> bodies;
@@ -171,8 +173,9 @@ struct PhysicsSystemModule::Impl
     flecs::observer colliderRemoveObserver;
     flecs::observer bodyBindingRemoveObserver;
 
-    Impl(flecs::world& worldValue, grasplink::physics::PhysicsWorld& physicsWorldValue)
-        : physicsWorld(physicsWorldValue),
+    Impl(flecs::world& worldValue, grasplink::physics::PhysicsWorld& physicsWorldValue,
+        grasplink::diagnostics::Logger* loggerValue)
+        : physicsWorld(physicsWorldValue), logger(loggerValue),
           bodyQuery(worldValue.query<const RigidBody, const Colliders>()),
           bindingQuery(worldValue.query<const grasplink::simulation::detail::PhysicsBodyBinding>())
     {
@@ -255,15 +258,15 @@ struct PhysicsSystemModule::Impl
         if (!HasUnitScale(entity, AllowsVisualScale(rigidBody)) ||
             !HasSupportedPhysicsParents(entity, rigidBody.motionType))
         {
-            std::cerr << "PhysicsSystemModule: unsupported scale/parent hierarchy (Dynamic requires identity ancestors): "
-                      << entity.id() << '\n';
+            LogBodyIssue(grasplink::diagnostics::LogLevel::Warning,
+                "unsupported scale or parent hierarchy (Dynamic requires identity ancestors)", entity.id());
             return false;
         }
         Transform bodyTransform;
         if (!TryGetPhysicsTransform(entity, bodyTransform))
         {
-            std::cerr << "PhysicsSystemModule: could not calculate Entity World Transform for "
-                      << entity.id() << '\n';
+            LogBodyIssue(grasplink::diagnostics::LogLevel::Error,
+                "could not calculate Entity World Transform", entity.id());
             return false;
         }
 
@@ -282,9 +285,32 @@ struct PhysicsSystemModule::Impl
         }
         catch (const std::exception& error)
         {
-            std::cerr << "PhysicsSystemModule: failed to create Body for Entity "
-                      << entity.id() << ": " << error.what() << '\n';
+            LogBodyIssue(grasplink::diagnostics::LogLevel::Error,
+                "failed to create Body", entity.id(), error.what());
             return false;
+        }
+    }
+
+    void LogBodyIssue(grasplink::diagnostics::LogLevel level, const char* message,
+        flecs::entity_t entityId, const char* detail = nullptr) noexcept
+    {
+        if (!logger)
+            return;
+        try
+        {
+            std::string entry = "PhysicsSystemModule: ";
+            entry += message;
+            entry += " for Entity ";
+            entry += std::to_string(entityId);
+            if (detail)
+            {
+                entry += ": ";
+                entry += detail;
+            }
+            logger->Write(level, "physics.body_configuration", entry);
+        }
+        catch (...)
+        {
         }
     }
 
@@ -427,8 +453,9 @@ struct PhysicsSystemModule::Impl
 
 PhysicsSystemModule::PhysicsSystemModule(
     flecs::world& world,
-    grasplink::physics::PhysicsWorld& physicsWorld)
-    : m_Impl(std::make_unique<Impl>(world, physicsWorld))
+    grasplink::physics::PhysicsWorld& physicsWorld,
+    grasplink::diagnostics::Logger* logger)
+    : m_Impl(std::make_unique<Impl>(world, physicsWorld, logger))
 {
 }
 
@@ -437,6 +464,14 @@ PhysicsSystemModule::~PhysicsSystemModule() = default;
 void PhysicsSystemModule::Step(double fixedDeltaSeconds)
 {
     m_Impl->Step(fixedDeltaSeconds);
+}
+
+grasplink::physics::PhysicsBodyHandle PhysicsSystemModule::GetBodyHandle(flecs::entity entity) const
+{
+    if (entity.id() == 0 || !entity.is_alive() || !entity.has<detail::PhysicsBodyBinding>())
+        return {};
+    const auto handle = entity.get<detail::PhysicsBodyBinding>().handle;
+    return m_Impl->physicsWorld.IsBodyValid(handle) ? handle : grasplink::physics::PhysicsBodyHandle{};
 }
 
 }

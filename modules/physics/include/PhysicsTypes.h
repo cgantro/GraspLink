@@ -33,6 +33,35 @@ struct PhysicsBodyHandle
     }
 };
 
+/**
+ * @brief PhysicsWorld가 소유하는 두 물체 사이의 고정 연결을 가리킨다.
+ * @details 연결은 두 물체의 상대 위치와 회전을 유지하는 Jolt constraint다.
+ * 핸들은 연결 자체를 소유하지 않으며 World 번호와 재사용하지 않는 연결 번호로 삭제된 연결을 구별한다.
+ */
+struct PhysicsConstraintHandle
+{
+    std::uint64_t value = 0;
+    std::uint64_t worldToken = 0;
+    [[nodiscard]] bool IsValid() const noexcept { return value != 0 && worldToken != 0; }
+};
+
+/**
+ * @brief Jolt가 실제 충돌 검사에서 발견한 두 물체의 접촉을 복사해 보관한다.
+ * @details snapshot은 물리 계산이 끝난 시점에 읽는 값의 복사본이며 Body 메모리를 소유하지 않는다.
+ * normal은 장면 전체 기준 World 방향이고 first에서 second를 향한다.
+ * point는 first 표면에서 접촉한 지점의 World 위치 [m]다.
+ * penetrationMeters는 겹침 깊이 [m]이며 음수이면 다음 이동을 대비해 미리 발견한 간격이다.
+ * 같은 두 물체에서도 서로 다른 충돌 모양이 닿으면 여러 항목이 생길 수 있다.
+ */
+struct ContactSnapshot
+{
+    PhysicsBodyHandle first;
+    PhysicsBodyHandle second;
+    glm::vec3 normal{0.0F};
+    float penetrationMeters = 0.0F;
+    glm::vec3 point{0.0F};
+};
+
 
 /**
  * @brief 물체의 위치와 회전을 함께 나타낸다.

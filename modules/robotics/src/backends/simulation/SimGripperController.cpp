@@ -59,11 +59,16 @@ Result SimGripperController::Connect()
     targetClosureFraction_ = 0.0;
     masterVelocityRadiansPerSecond_ = 0.0;
     connected_ = true;
+    contactStopped_ = false;
+    requestedDirection_ = 0;
     return Result::Success();
 }
 
 void SimGripperController::Disconnect() noexcept
 {
+    ++releaseRevision_;
+    contactStopped_ = false;
+    requestedDirection_ = 0;
     connected_ = false;
     state_ = {};
     state_.mode = GripperMode::Disconnected;
@@ -102,6 +107,9 @@ Result SimGripperController::Reset()
         return Failure(ErrorCode::NotConnected, "SimGripperController: not connected");
 
     const bool reachedRequestedPosition = IsAtTarget();
+    ++releaseRevision_;
+    contactStopped_ = false;
+    requestedDirection_ = 0;
     masterVelocityRadiansPerSecond_ = 0.0;
     state_.activated = false;
     state_.activationStatus = 0;
@@ -133,8 +141,25 @@ Result SimGripperController::Command(const GripperCommand& command)
 
     const double positionRange = static_cast<double>(
         specification_->positionRequestMax - specification_->positionRequestMin);
-    targetClosureFraction_ = static_cast<double>(
+    ++commandRevision_;
+    const double requestedClosure = static_cast<double>(
         command.positionRequest - specification_->positionRequestMin) / positionRange;
+
+    // 접촉 정지 뒤 같은 방향으로 더 닫으라는 반복 요청은 정지를 해제하지 않는다.
+    // 열린 목표가 들어오면 파지 해제 번호를 바꾸므로 Reset 후 즉시 Activate한 경우도 adapter가 놓치지 않는다.
+    const int direction = requestedClosure > state_.closureFraction ? 1 :
+        requestedClosure < state_.closureFraction ? -1 : 0;
+    if (direction < 0)
+        ++releaseRevision_;
+    if (contactStopped_ && direction != 0 && direction == requestedDirection_)
+    {
+        targetClosureFraction_ = requestedClosure;
+        state_.requestedPositionEcho = command.positionRequest;
+        return Result::Success();
+    }
+    targetClosureFraction_ = requestedClosure;
+    requestedDirection_ = direction;
+    contactStopped_ = false;
 
     const double speedRange = static_cast<double>(
         specification_->speedRequestMax - specification_->speedRequestMin);
@@ -159,6 +184,7 @@ Result SimGripperController::Stop()
         return Failure(ErrorCode::NotConnected, "SimGripperController: not connected");
 
     const bool reachedRequestedPosition = IsAtTarget();
+    requestedDirection_ = 0;
     masterVelocityRadiansPerSecond_ = 0.0;
     state_.goToActive = false;
     state_.mode = GripperMode::Stopped;
@@ -171,6 +197,27 @@ Result SimGripperController::Stop()
 GripperState SimGripperController::GetState() const
 {
     return state_;
+}
+
+void SimGripperController::ApplyContactFeedback(bool opening)
+{
+    if (!connected_ || !state_.activated || requestedDirection_ == 0)
+        return;
+    contactStopped_ = true;
+    state_.goToActive = false;
+    state_.mode = GripperMode::Stopped;
+    state_.objectStatus = opening ? GripperObjectStatus::ContactWhileOpening : GripperObjectStatus::ContactWhileClosing;
+    masterVelocityRadiansPerSecond_ = 0.0;
+}
+
+bool SimGripperController::IsClosingRequested() const noexcept
+{
+    return connected_ && state_.activated && requestedDirection_ > 0;
+}
+
+bool SimGripperController::IsOpeningRequested() const noexcept
+{
+    return connected_ && state_.activated && requestedDirection_ < 0;
 }
 
 void SimGripperController::Update(double dtSeconds)

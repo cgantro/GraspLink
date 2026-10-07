@@ -254,6 +254,29 @@ std::vector<grasplink::physics::CollisionShapeDescription> BuildLinkShapes(
     }
     return shapes;
 }
+
+std::vector<grasplink::physics::CollisionShapeDescription> BuildBaseShapes(
+    const ModelResource& model,
+    const std::vector<glm::mat4>& nodeTransforms,
+    const std::unordered_map<std::string, const NodeData*>& nodesByName,
+    const std::unordered_set<std::string>& movingNodes)
+{
+    const auto baseIterator = nodesByName.find("Base");
+    if (baseIterator == nodesByName.end()) return {};
+
+    const std::size_t baseIndex = static_cast<std::size_t>(baseIterator->second - model.nodes.data());
+    // Base 메시도 Link와 같은 연결 부품 및 16 cm 셀 기준으로 나눠 실제 오목한 공간을 볼록 껍질 하나로 메우지 않는다.
+    auto shapes = BuildLinkShapes(model, nodeTransforms, *baseIterator->second, *baseIterator->second, movingNodes);
+    // 분할된 Base 기준 정점을 proxy 자식 Entity가 사용할 RobotRoot 기준 좌표로 옮긴다.
+    const glm::mat4 rootInverse = model.rootNodeIndex < 0
+        ? glm::mat4(1.0F)
+        : glm::inverse(nodeTransforms.at(static_cast<std::size_t>(model.rootNodeIndex)));
+    const glm::mat4 baseToRobotRoot = rootInverse * nodeTransforms[baseIndex];
+    for (auto& shape : shapes)
+        for (glm::vec3& point : shape.pointsMeters)
+            point = glm::vec3(baseToRobotRoot * glm::vec4(point, 1.0F));
+    return shapes;
+}
 }
 
 RobotPhysicsAdapter::RobotPhysicsAdapter(
@@ -275,6 +298,18 @@ RobotPhysicsAdapter::RobotPhysicsAdapter(
     std::unordered_set<std::string> movingNodes;
     for (std::size_t i = 0; i < specification.jointCount; ++i)
         movingNodes.emplace(specification.joints[i].name);
+
+    auto baseShapes = BuildBaseShapes(model, nodeTransforms, nodesByName, movingNodes);
+    if (!baseShapes.empty())
+    {
+        base_ = scene.CreateEntity("Base_CollisionProxy");
+        base_.SetParent(robotRoot);
+        base_.Add<RobotCollisionProxy>()
+            .set<RigidBody>(RigidBody{
+                grasplink::physics::BodyMotionType::Static,
+                grasplink::physics::CollisionLayer::Environment})
+            .set<Colliders>(Colliders{std::move(baseShapes)});
+    }
 
     links_.reserve(specification.linkCount);
     for (std::size_t i = 0; i < specification.linkCount; ++i)

@@ -8,7 +8,13 @@
 #include <Jolt/Core/TempAllocator.h>
 
 #include <Jolt/Physics/PhysicsSystem.h>
+#include <Jolt/Physics/Body/BodyLock.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
+#include <Jolt/Physics/Body/BodyLockMulti.h>
+#include <Jolt/Physics/Collision/ContactListener.h>
+#include <Jolt/Physics/Collision/CollideShape.h>
+#include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
+#include <Jolt/Physics/Constraints/FixedConstraint.h>
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayer.h>
 #include <Jolt/Physics/Collision/ObjectLayer.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
@@ -23,6 +29,9 @@
 #include <mutex>
 #include <stdexcept>
 #include <thread>
+#include <map>
+#include <unordered_map>
+#include <tuple>
 
 namespace grasplink::physics
 {
@@ -111,6 +120,15 @@ CollisionLayer Category(JPH::ObjectLayer layer)
 {
     return static_cast<CollisionLayer>(layer % CategoryCount);
 }
+
+class EnvironmentLayerFilter final : public JPH::ObjectLayerFilter
+{
+public:
+    bool ShouldCollide(JPH::ObjectLayer layer) const override
+    {
+        return Category(layer) == CollisionLayer::Environment;
+    }
+};
 
 } // namespace ObjectLayers
 
@@ -280,6 +298,78 @@ JPH::BodyID ToBodyID(PhysicsBodyHandle handle)
 } // namespace
 
 
+// 접촉 listener는 Jolt가 충돌을 발견할 때 알려주는 callback 객체다.
+// callback은 여러 worker에서 동시에 실행되고 Body는 이미 잠겨 있으므로 World를 조작하거나 BodyInterface로 다시 잠그지 않는다.
+// 충돌 모양 쌍을 키로 삼아 현재 접촉만 유지하고, 삭제 callback에서는 Body에 접근하지 않고 저장된 번호만 사용한다.
+class ContactCollector final : public JPH::ContactListener
+{
+public:
+    struct Key
+    {
+        std::uint32_t first, firstShape, second, secondShape;
+        bool operator<(const Key& other) const
+        {
+            return std::tie(first, firstShape, second, secondShape) <
+                std::tie(other.first, other.firstShape, other.second, other.secondShape);
+        }
+    };
+    std::mutex mutex;
+    std::map<Key, ContactSnapshot> contacts;
+    std::map<Key, ContactSnapshot> removed;
+    std::map<Key, ContactSnapshot> sleeping;
+    std::uint64_t worldToken = 0;
+
+    void Record(const JPH::Body& first, const JPH::Body& second, const JPH::ContactManifold& manifold)
+    {
+        const Key key{first.GetID().GetIndexAndSequenceNumber(), manifold.mSubShapeID1.GetValue(),
+            second.GetID().GetIndexAndSequenceNumber(), manifold.mSubShapeID2.GetValue()};
+        std::lock_guard lock(mutex);
+        sleeping.erase(key);
+        removed.erase(key);
+        contacts[key] = {{key.first, worldToken}, {key.second, worldToken},
+            ToGlmPosition(JPH::RVec3(manifold.mWorldSpaceNormal)), manifold.mPenetrationDepth,
+            ToGlmPosition(manifold.GetWorldSpaceContactPointOn1(0))};
+    }
+
+    void OnContactAdded(const JPH::Body& first, const JPH::Body& second,
+        const JPH::ContactManifold& manifold, JPH::ContactSettings&) override
+    {
+        Record(first, second, manifold);
+    }
+
+    void OnContactPersisted(const JPH::Body& first, const JPH::Body& second,
+        const JPH::ContactManifold& manifold, JPH::ContactSettings&) override
+    {
+        Record(first, second, manifold);
+    }
+
+    void OnContactRemoved(const JPH::SubShapeIDPair& pair) override
+    {
+        std::lock_guard lock(mutex);
+        const Key key{pair.GetBody1ID().GetIndexAndSequenceNumber(), pair.GetSubShapeID1().GetValue(),
+            pair.GetBody2ID().GetIndexAndSequenceNumber(), pair.GetSubShapeID2().GetValue()};
+        if (const auto entry = contacts.find(key); entry != contacts.end())
+        {
+            removed[key] = entry->second;
+            contacts.erase(entry);
+        }
+    }
+
+    void RemoveBody(std::uint32_t id)
+    {
+        std::lock_guard lock(mutex);
+        auto eraseBody = [id](auto& entries)
+        {
+            for (auto entry = entries.begin(); entry != entries.end();)
+                if (entry->first.first == id || entry->first.second == id) entry = entries.erase(entry);
+                else ++entry;
+        };
+        eraseBody(contacts);
+        eraseBody(removed);
+        eraseBody(sleeping);
+    }
+};
+
 struct PhysicsWorld::Impl
 {
     // PhysicsSystem은 아래 필터 객체를 참조만 한다. C++은 멤버를 선언한 역순으로 파괴하므로 필터를 먼저 선언해 PhysicsSystem보다 나중에 해제한다.
@@ -287,12 +377,24 @@ struct PhysicsWorld::Impl
     ObjectVsBroadPhaseLayerFilterImpl objectVsBroadPhaseLayerFilter;
     ObjectLayerPairFilterImpl objectLayerPairFilter;
 
+    // listener는 PhysicsSystem이 빌려 쓰므로 먼저 선언해 PhysicsSystem보다 나중에 파괴한다.
+    ContactCollector contactCollector;
+
     JPH::PhysicsSystem physicsSystem;
 
     std::unique_ptr<JPH::TempAllocatorImpl> tempAllocator;
 
     std::unique_ptr<JPH::JobSystemThreadPool> jobSystem;
     const std::uint64_t worldToken = g_NextWorldToken.fetch_add(1, std::memory_order_relaxed);
+
+    struct FixedBinding
+    {
+        PhysicsBodyHandle anchor;
+        PhysicsBodyHandle object;
+        JPH::Ref<JPH::TwoBodyConstraint> constraint;
+    };
+    std::unordered_map<std::uint64_t, FixedBinding> constraints;
+    std::uint64_t nextConstraint = 1;
 
     Impl()
     {
@@ -328,12 +430,24 @@ struct PhysicsWorld::Impl
             objectVsBroadPhaseLayerFilter,
             objectLayerPairFilter);
 
+        contactCollector.worldToken = worldToken;
+        physicsSystem.SetContactListener(&contactCollector);
+
         // 좌표: World의 +Y가 위쪽이다. 중력 벡터의 단위는 m/s²이며 각 Body의 가속도로 적용된다.
         physicsSystem.SetGravity(JPH::Vec3(0.0F, -9.81F, 0.0F));
 
         JPH::PhysicsSettings settings = physicsSystem.GetPhysicsSettings();
         settings.mPenetrationSlop = 0.002F;
         physicsSystem.SetPhysicsSettings(settings);
+    }
+
+    ~Impl()
+    {
+        // constraint는 Body 참조를 보관하므로 PhysicsSystem과 Body가 살아 있을 때 먼저 제거한다.
+        for (const auto& entry : constraints)
+            physicsSystem.RemoveConstraint(entry.second.constraint.GetPtr());
+        constraints.clear();
+        physicsSystem.SetContactListener(nullptr);
     }
 };
 
@@ -373,11 +487,44 @@ void PhysicsWorld::Step(double fixedDeltaSeconds)
     // 이 호출은 시간을 더 잘게 나누지 않고 Jolt 계산을 한 번 수행한다. Jolt 내부의 병렬 작업은 jobSystem이 맡는다.
     constexpr int CollisionSteps = 1;
 
+    {
+        // Jolt는 물체가 잠들어 계산을 쉬기 시작할 때도 접촉 삭제를 알린다.
+        // 잠든 접촉은 자세가 바뀌지 않으므로 유지하되 어느 물체든 깨면 이전 접촉을 버리고 이번 충돌 검사 결과를 기다린다.
+        std::lock_guard lock(impl_->contactCollector.mutex);
+        auto& collector = impl_->contactCollector;
+        const auto& bodies = impl_->physicsSystem.GetBodyInterface();
+        for (auto entry = collector.sleeping.begin(); entry != collector.sleeping.end();)
+        {
+            if (!IsBodyValid(entry->second.first) || !IsBodyValid(entry->second.second) ||
+                bodies.IsActive(ToBodyID(entry->second.first)) || bodies.IsActive(ToBodyID(entry->second.second)))
+            {
+                collector.contacts.erase(entry->first);
+                entry = collector.sleeping.erase(entry);
+            }
+            else ++entry;
+        }
+    }
+
     impl_->physicsSystem.Update(
         static_cast<float>(fixedDeltaSeconds),
         CollisionSteps,
         impl_->tempAllocator.get(),
         impl_->jobSystem.get());
+
+    {
+        // 삭제 callback 안에서는 Body에 접근할 수 없다. 모든 worker가 끝난 이 시점에서만 두 Body의 수면 상태를 확인한다.
+        std::lock_guard lock(impl_->contactCollector.mutex);
+        auto& collector = impl_->contactCollector;
+        const auto& bodies = impl_->physicsSystem.GetBodyInterface();
+        for (const auto& entry : collector.removed)
+            if (IsBodyValid(entry.second.first) && IsBodyValid(entry.second.second) &&
+                !bodies.IsActive(ToBodyID(entry.second.first)) && !bodies.IsActive(ToBodyID(entry.second.second)))
+            {
+                collector.sleeping[entry.first] = entry.second;
+                collector.contacts[entry.first] = entry.second;
+            }
+        collector.removed.clear();
+    }
 }
 
 
@@ -509,6 +656,84 @@ bool PhysicsWorld::IsBodyValid(PhysicsBodyHandle handle) const
         .IsAdded(bodyID);
 }
 
+BodyMotionType PhysicsWorld::GetBodyMotionType(PhysicsBodyHandle handle) const
+{
+    if (!IsBodyValid(handle))
+        throw std::invalid_argument("Invalid PhysicsBodyHandle.");
+    switch (impl_->physicsSystem.GetBodyInterface().GetMotionType(ToBodyID(handle)))
+    {
+    case JPH::EMotionType::Static: return BodyMotionType::Static;
+    case JPH::EMotionType::Kinematic: return BodyMotionType::Kinematic;
+    case JPH::EMotionType::Dynamic: return BodyMotionType::Dynamic;
+    }
+    throw std::logic_error("Unsupported Jolt motion type.");
+}
+
+CollisionLayer PhysicsWorld::GetCollisionLayer(PhysicsBodyHandle handle) const
+{
+    if (!IsBodyValid(handle))
+        throw std::invalid_argument("Invalid PhysicsBodyHandle.");
+    const JPH::ObjectLayer layer = impl_->physicsSystem.GetBodyInterface().GetObjectLayer(ToBodyID(handle));
+    return ObjectLayers::Category(layer);
+}
+
+std::vector<ContactSnapshot> PhysicsWorld::GetContacts() const
+{
+    std::vector<ContactSnapshot> result;
+    std::lock_guard lock(impl_->contactCollector.mutex);
+    for (const auto& entry : impl_->contactCollector.contacts)
+        if (IsBodyValid(entry.second.first) && IsBodyValid(entry.second.second))
+            result.push_back(entry.second);
+    return result;
+}
+
+PhysicsConstraintHandle PhysicsWorld::CreateFixedConstraint(PhysicsBodyHandle anchor, PhysicsBodyHandle object)
+{
+    if (GetBodyMotionType(anchor) != BodyMotionType::Kinematic || GetBodyMotionType(object) != BodyMotionType::Dynamic)
+        throw std::invalid_argument("Fixed grasp requires a kinematic anchor and a dynamic object.");
+
+    JPH::Ref<JPH::TwoBodyConstraint> constraint;
+    {
+        const JPH::BodyID ids[]{ToBodyID(anchor), ToBodyID(object)};
+        JPH::BodyLockMultiWrite lock(impl_->physicsSystem.GetBodyLockInterface(), ids, 2);
+        JPH::Body* first = lock.GetBody(0);
+        JPH::Body* second = lock.GetBody(1);
+        if (!first || !second)
+            throw std::invalid_argument("Fixed grasp body no longer exists.");
+
+        // WorldSpace는 장면 전체 좌표를 뜻한다. 양쪽 연결점을 물체의 현재 무게중심(COM) 위치에 같게 두면 생성 순간 물체가 뛰지 않는다.
+        // 양쪽 기준 축도 같은 World 방향으로 두면 각 Body의 현재 회전 차이가 그대로 보존된다.
+        // Jolt가 World 연결점을 각 Body COM 기준 좌표로 바꾸므로 모델 원점과 COM의 차이를 호출자가 더하지 않는다.
+        JPH::FixedConstraintSettings settings;
+        settings.mPoint1 = second->GetCenterOfMassPosition();
+        settings.mPoint2 = settings.mPoint1;
+        constraint = settings.Create(*first, *second);
+    }
+    const std::uint64_t id = impl_->nextConstraint++;
+    impl_->constraints.emplace(id, Impl::FixedBinding{anchor, object, constraint});
+    impl_->physicsSystem.AddConstraint(constraint.GetPtr());
+    impl_->physicsSystem.GetBodyInterface().ActivateBody(ToBodyID(object));
+    return {id, impl_->worldToken};
+}
+
+bool PhysicsWorld::IsConstraintValid(PhysicsConstraintHandle handle) const
+{
+    return handle.IsValid() && handle.worldToken == impl_->worldToken && impl_->constraints.find(handle.value) != impl_->constraints.end();
+}
+
+void PhysicsWorld::DestroyConstraint(PhysicsConstraintHandle handle)
+{
+    if (!IsConstraintValid(handle))
+        return;
+    auto entry = impl_->constraints.find(handle.value);
+    const PhysicsBodyHandle object = entry->second.object;
+    impl_->physicsSystem.RemoveConstraint(entry->second.constraint.GetPtr());
+    impl_->constraints.erase(entry);
+    // 해제 후에는 Dynamic 물체가 기존 속도와 중력을 이어받는다. 잠든 물체도 다음 Step에서 떨어질 수 있도록 깨운다.
+    if (IsBodyValid(object))
+        impl_->physicsSystem.GetBodyInterface().ActivateBody(ToBodyID(object));
+}
+
 
 Transform PhysicsWorld::GetBodyTransform(
     PhysicsBodyHandle handle) const
@@ -534,6 +759,68 @@ Transform PhysicsWorld::GetBodyTransform(
 }
 
 
+bool PhysicsWorld::OverlapsEnvironmentAt(
+    PhysicsBodyHandle handle,
+    const Transform& targetTransform) const
+{
+    return OverlapsEnvironmentAtImpl(handle, targetTransform, nullptr);
+}
+
+bool PhysicsWorld::OverlapsEnvironmentAt(
+    PhysicsBodyHandle handle,
+    const Transform& targetTransform,
+    PhysicsBodyHandle ignoredEnvironmentBody) const
+{
+    if (!IsBodyValid(ignoredEnvironmentBody))
+        throw std::invalid_argument("Invalid ignored Environment PhysicsBodyHandle.");
+    if (GetCollisionLayer(ignoredEnvironmentBody) != CollisionLayer::Environment)
+        throw std::invalid_argument("Only an Environment body can be ignored in an environment overlap query.");
+
+    return OverlapsEnvironmentAtImpl(handle, targetTransform, &ignoredEnvironmentBody);
+}
+
+bool PhysicsWorld::OverlapsEnvironmentAtImpl(
+    PhysicsBodyHandle handle,
+    const Transform& targetTransform,
+    const PhysicsBodyHandle* ignoredEnvironmentBody) const
+{
+    if (!IsBodyValid(handle))
+        throw std::invalid_argument("Invalid PhysicsBodyHandle.");
+    ValidateTransform(targetTransform);
+
+    const JPH::Shape* shape = nullptr;
+    {
+        JPH::BodyLockRead lock(impl_->physicsSystem.GetBodyLockInterface(), ToBodyID(handle));
+        if (!lock.Succeeded())
+            return false;
+        shape = lock.GetBody().GetShape();
+    }
+    const JPH::Quat rotation = ToJoltRotation(glm::normalize(targetTransform.rotation));
+    // 공개 자세는 Body 원점 기준이고 Jolt 형상은 무게중심(COM) 기준으로 검사한다. 비대칭 그리퍼 형상에서도 두 기준점 차이를 보정한다.
+    const JPH::RVec3 centerOfMass = ToJoltPosition(targetTransform.position) + rotation * shape->GetCenterOfMass();
+    const JPH::RMat44 centerOfMassTransform = JPH::RMat44::sRotationTranslation(rotation, centerOfMass);
+    JPH::CollideShapeSettings settings;
+    // 겹침 여부만 필요하므로 첫 접촉에서 끝내고 모든 접촉 지점을 저장하지 않는다.
+    JPH::AnyHitCollisionCollector<JPH::CollideShapeCollector> collector;
+    const ObjectLayers::EnvironmentLayerFilter environmentOnly;
+    const JPH::BodyID ignoredBodyId = ignoredEnvironmentBody
+        ? ToBodyID(*ignoredEnvironmentBody)
+        : JPH::BodyID{};
+    const JPH::IgnoreSingleBodyFilter bodyFilter(ignoredBodyId);
+    impl_->physicsSystem.GetNarrowPhaseQuery().CollideShape(
+        shape,
+        JPH::Vec3::sOne(),
+        centerOfMassTransform,
+        settings,
+        centerOfMass,
+        collector,
+        {},
+        environmentOnly,
+        bodyFilter);
+    return collector.HadHit();
+}
+
+
 void PhysicsWorld::SetBodyTransform(
     PhysicsBodyHandle handle,
     const Transform& transform)
@@ -541,6 +828,9 @@ void PhysicsWorld::SetBodyTransform(
     if (!IsBodyValid(handle))
         throw std::invalid_argument("Invalid PhysicsBodyHandle.");
     ValidateTransform(transform);
+
+    // 순간이동은 경로 접촉을 계산하지 않는다. 잠든 이전 표면의 접촉도 즉시 버려 새 자세의 충돌 검사 결과만 남긴다.
+    impl_->contactCollector.RemoveBody(handle.value);
 
     // 모델 Body 원점의 World 자세를 그대로 전달한다. 무게중심(COM) 차이를 여기서 다시 더하면 Jolt의 내부 보정과 겹쳐 위치가 어긋난다.
     impl_->physicsSystem
@@ -550,6 +840,11 @@ void PhysicsWorld::SetBodyTransform(
             ToJoltPosition(transform.position),
             ToJoltRotation(glm::normalize(transform.rotation)),
             JPH::EActivation::Activate);
+    if (GetBodyMotionType(handle) == BodyMotionType::Dynamic)
+    {
+        impl_->physicsSystem.GetBodyInterface().SetLinearAndAngularVelocity(
+            ToBodyID(handle), JPH::Vec3::sZero(), JPH::Vec3::sZero());
+    }
 }
 
 
@@ -610,6 +905,15 @@ void PhysicsWorld::DestroyBody(PhysicsBodyHandle handle)
         return;
 
     const JPH::BodyID bodyID = ToBodyID(handle);
+
+    // 연결이 삭제된 Body 메모리를 참조하지 않도록 그 Body에 붙은 모든 constraint를 먼저 제거한다.
+    std::vector<PhysicsConstraintHandle> attached;
+    for (const auto& entry : impl_->constraints)
+        if (entry.second.anchor.value == handle.value || entry.second.object.value == handle.value)
+            attached.push_back({entry.first, impl_->worldToken});
+    for (const auto constraint : attached)
+        DestroyConstraint(constraint);
+    impl_->contactCollector.RemoveBody(handle.value);
 
     JPH::BodyInterface& bodyInterface =
         impl_->physicsSystem.GetBodyInterface();

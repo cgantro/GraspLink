@@ -17,7 +17,7 @@ namespace grasplink::simulation
  * Gripper 전체의 장면 배치는 원래 Entity 계층에 남아 각 proxy의 World 변환에 반영된다.
  * 앱은 Controller 상태에서 관절 회전을 계산하고 원본 관절에 적용한다.
  * Fixed Update가 World 변환을 갱신한 뒤 PhysicsSystemModule이 이를 Body 목표로 전달한다.
- * 이 함수는 모양만 만들며 접촉한 물체를 잡으려고 손가락을 멈추거나 움직이지 않는다.
+ * 이 함수는 모양만 만들고, 물리 계산 뒤 GripperGraspAdapter가 양쪽 손끝 접촉을 보고 개폐 정지와 파지 연결을 수행한다.
  * 입력과 외피를 먼저 검증하므로 실패 시 일부 proxy만 남지 않는다.
  * @param scene root와 새 proxy Entity를 소유하는 Scene이다.
  * @param robotRoot Gripper 계층을 포함하는 생성된 로봇 루트 Entity다.

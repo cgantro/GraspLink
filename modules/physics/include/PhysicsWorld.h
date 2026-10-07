@@ -62,6 +62,34 @@ public:
     bool IsBodyValid(
         PhysicsBodyHandle handle) const;
 
+    /** @brief 유효한 Body를 움직이는 주체인 Static, Kinematic, Dynamic 중 하나를 반환한다. */
+    [[nodiscard]] BodyMotionType GetBodyMotionType(PhysicsBodyHandle handle) const;
+
+    /** @brief 현재 Body의 충돌 그룹을 반환한다. 접촉 snapshot에서 장면 바닥 접촉과 물체 접촉을 구별할 때 사용한다. */
+    [[nodiscard]] CollisionLayer GetCollisionLayer(PhysicsBodyHandle handle) const;
+
+    /**
+     * @brief 마지막 물리 계산에서 남아 있는 접촉 값을 복사한다.
+     * @details Jolt worker callback은 내부 mutex로 보호한 접촉 목록만 갱신하며 이 함수는 Step이 끝난 뒤 호출한다.
+     * 삭제된 Body의 항목은 반환하지 않는다. 이 API를 포함한 World 조작과 Step은 호출자 스레드에서 순서대로 실행해야 한다.
+     */
+    [[nodiscard]] std::vector<ContactSnapshot> GetContacts() const;
+
+    /**
+     * @brief Kinematic 기준 물체에 Dynamic 물체의 현재 상대 자세를 고정하는 연결을 만든다.
+     * @details 연결은 Jolt가 물리 계산에서 상대 위치와 회전을 유지하도록 한다.
+     * 물체의 위치를 직접 옮기거나 Scene 부모를 바꾸지 않으며 실제 마찰이나 그리퍼 힘 [N]을 계산하는 모델은 아니다.
+     * Step과 접촉 callback이 끝난 뒤 호출해야 하며 연결된 Body가 삭제되면 연결도 먼저 제거한다.
+     * @throws std::invalid_argument 핸들이 무효이거나 필요한 움직임 종류와 다를 때 발생한다.
+     */
+    PhysicsConstraintHandle CreateFixedConstraint(PhysicsBodyHandle anchor, PhysicsBodyHandle object);
+
+    /** @brief 연결이 이 World에 남아 있는지 확인한다. */
+    [[nodiscard]] bool IsConstraintValid(PhysicsConstraintHandle handle) const;
+
+    /** @brief 물리 연결을 해제한다. 무효이거나 다른 World의 핸들은 무시한다. */
+    void DestroyConstraint(PhysicsConstraintHandle handle);
+
     /**
      * @brief Body의 모델 기준점 위치와 회전을 World 좌표로 읽는다.
      * @param handle 이 World에서 생성한 유효한 Body 핸들.
@@ -74,11 +102,36 @@ public:
         PhysicsBodyHandle handle) const;
 
     /**
+     * @brief 물리 계산을 진행하기 전에 지정 자세의 Body 형상이 Environment와 겹치는지 확인한다.
+     * @param handle 이 PhysicsWorld가 만든 형상을 조회할 Body 핸들이다.
+     * @param targetTransform 검사할 Body 원점의 World 위치 [m]와 회전이다.
+     * @return Jolt 형상 검사에서 Environment와 겹치면 true다.
+     * @details Kinematic Body는 Static Environment를 밀거나 막지 않으므로 Contact callback만으로 목표 침투를 예방할 수 없다.
+     * 이 검사는 현재 목표 자세 하나를 검사하며 이동 구간 전체의 장애물 회피 경로를 만들지는 않는다.
+     */
+    [[nodiscard]] bool OverlapsEnvironmentAt(
+        PhysicsBodyHandle handle,
+        const Transform& targetTransform) const;
+
+    /**
+     * @brief Body가 지정한 Environment와의 접촉만 제외하고 나머지 Environment와 겹치는지 확인한다.
+     * @param handle 검사할 Body handle이다.
+     * @param targetTransform 검사할 Body 원점의 World 위치와 회전이다.
+     * @param ignoredEnvironmentBody 검사에서 제외할 Environment Body handle이다.
+     * @details 두 Body가 실제로 맞닿아 있어야 하는 연결부에서만 사용한다. 예를 들어 로봇의 Link1과 Base가 관절에서 맞닿는 경우 Base만 제외할 수 있으며, 다른 바닥이나 장애물 검사는 계속 수행한다.
+     * @throws std::invalid_argument 제외할 Body handle이 유효하지 않거나 Environment로 분류되지 않은 경우 발생한다.
+     */
+    [[nodiscard]] bool OverlapsEnvironmentAt(
+        PhysicsBodyHandle handle,
+        const Transform& targetTransform,
+        PhysicsBodyHandle ignoredEnvironmentBody) const;
+
+    /**
      * @brief Body를 지정한 World 위치와 회전에 즉시 배치한다. 이동 경로를 따라가지는 않는다.
      * @param handle 이 World에서 생성한 유효한 Body 핸들.
      * @param transform 목표 위치 [m]와 회전.
      * @throws std::invalid_argument 핸들이 무효이거나 자세 성분이 유한하지 않고 회전이 0인 경우.
-     * @details 경로를 따라가는 이동이 아니라 Reset/Teleport용 직접 배치다. 회전은 전달 전에 정규화된다.
+     * @details 경로를 따라가는 이동이 아니라 Reset/Teleport용 직접 배치다. 회전은 전달 전에 정규화되며 Dynamic Body는 기존 속도도 초기화한다.
      */
     void SetBodyTransform(
         PhysicsBodyHandle handle,
@@ -113,6 +166,11 @@ public:
         PhysicsBodyHandle handle);
 
 private:
+    [[nodiscard]] bool OverlapsEnvironmentAtImpl(
+        PhysicsBodyHandle handle,
+        const Transform& targetTransform,
+        const PhysicsBodyHandle* ignoredEnvironmentBody) const;
+
     // Jolt 타입과 자원은 Impl에서 관리한다.
     struct Impl;
 

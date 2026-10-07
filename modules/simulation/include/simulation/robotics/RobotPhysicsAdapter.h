@@ -24,7 +24,7 @@ namespace grasplink::simulation
  * 연결된 삼각형 덩어리를 나눈 뒤 삼각형 중심이 속한 16 cm 셀에 정점을 모아 각 셀의 ConvexHull을 만든다.
  * ConvexHull은 점을 둘러싼 볼록한 모양이므로 실제 메시의 오목한 부분을 채울 수 있다.
  * 삼각형은 셀 경계에서 자르지 않는다.
- * 현재 HCR-12A에서는 여섯 팔 Link에 121개 껍질을 만들며 Base 충돌 모양은 만들지 않는다.
+ * 현재 HCR-12A에서는 여섯 팔 Link에 단순 충돌 껍질을 만들고 GLB의 Base 메시도 고정 충돌 모양으로 등록한다.
  * Scene이 충돌 proxy Entity를 소유하고 이 어댑터는 Entity 핸들만 빌려 보관한다.
  * Scene이 먼저 제거되면 Apply가 저장한 Entity를 찾지 못해 실패한다.
  */
@@ -64,6 +64,8 @@ private:
         std::size_t jointIndex = 0;
     };
 
+    /// Scene이 소유하며 GLB Base 메시를 담는 고정 Environment 충돌 proxy Entity.
+    Entity base_;
     std::vector<LinkBinding> links_;
 };
 
