@@ -2,7 +2,6 @@
 
 #include "robotics/runtime/FixedControlLoop.h"
 #include "diagnostics/Logger.h"
-#include "diagnostics/Profiler.h"
 #include "assets/GraphicsTypes.h"
 #include "PickPlaceMission.h"
 #include "robotics/models/hanwha/Hcr12a.h"
@@ -86,7 +85,6 @@ public:
 private:
     ViewerOptions m_Options;
     grasplink::diagnostics::Logger m_Logger;
-    grasplink::diagnostics::Profiler m_Profiler;
     bool Init();
 
     // Window와 OpenGL Context를 만든 뒤, 이 Context를 필요로 하는 GPU 자원과 ECS 및 Scene을 초기화한다.

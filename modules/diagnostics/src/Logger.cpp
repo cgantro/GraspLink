@@ -74,23 +74,6 @@ void Logger::RecordMetric(const std::string& name, double value, const std::stri
     }
 }
 
-void Logger::RecordProfile(const std::string& name, std::int64_t durationNanoseconds, bool failed) noexcept
-{
-    try
-    {
-        Record record;
-        record.kind = RecordKind::Profile;
-        record.name = name;
-        record.durationNanoseconds = durationNanoseconds;
-        record.failed = failed;
-        Enqueue(std::move(record));
-    }
-    catch (...)
-    {
-        m_DroppedRecords.fetch_add(1, std::memory_order_relaxed);
-    }
-}
-
 void Logger::Flush() noexcept
 {
     try
@@ -145,7 +128,7 @@ void Logger::Enqueue(Record record) noexcept
             {
                 const auto expendable = std::find_if(m_Queue.begin(), m_Queue.end(), [](const Record& queued)
                 {
-                    return queued.kind != RecordKind::Log || queued.level == LogLevel::Debug || queued.level == LogLevel::Info;
+                    return queued.kind == RecordKind::Metric || queued.level == LogLevel::Debug || queued.level == LogLevel::Info;
                 });
                 if (record.kind != RecordKind::Log || record.level != LogLevel::Error || expendable == m_Queue.end())
                 {
@@ -270,12 +253,6 @@ void Logger::WriteRecord(const Record& record)
         m_Output << ",\"unit\":\"";
         WriteEscapedJson(m_Output, record.unit);
         m_Output.put('\"');
-        break;
-    case RecordKind::Profile:
-        m_Output << ",\"type\":\"profile\",\"name\":\"";
-        WriteEscapedJson(m_Output, record.name);
-        m_Output << "\",\"duration_ns\":" << record.durationNanoseconds
-            << ",\"failed\":" << (record.failed ? "true" : "false");
         break;
     }
     m_Output << "}\n";

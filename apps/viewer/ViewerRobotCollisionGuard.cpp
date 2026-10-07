@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <glm/gtc/quaternion.hpp>
+#include <tracy/Tracy.hpp>
 
 namespace grasplink::viewer
 {
@@ -124,6 +125,7 @@ void ViewerRobotCollisionGuard::ApplyJointPose(const grasplink::robotics::RobotS
 
 bool ViewerRobotCollisionGuard::RobotAssemblyOverlapsEnvironment() const
 {
+    ZoneScopedN("CollisionCheck");
     // Collider 설정 변경으로 Jolt Body가 재생성될 수 있으므로 매 검사마다 Entity에서 현재 handle을 조회한다.
     const auto baseEnvironmentBodyHandle = m_PhysicsSystem.GetBodyHandle(m_BaseEnvironmentEntity);
     for (std::size_t i = 0; i < m_CollisionEntities.size(); ++i)

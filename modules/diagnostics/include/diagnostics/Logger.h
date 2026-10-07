@@ -66,7 +66,6 @@ public:
     void RecordMetric(const std::string& name, double value, const std::string& unit) noexcept;
 
     /** @brief 한 번의 작업이 걸린 시간을 나노초 단위로 대기열에 추가한다. */
-    void RecordProfile(const std::string& name, std::int64_t durationNanoseconds, bool failed) noexcept;
 
     /** @brief 대기 중인 기록을 파일에 반영할 때까지 기다린다. */
     void Flush() noexcept;
@@ -84,8 +83,7 @@ private:
     enum class RecordKind
     {
         Log,
-        Metric,
-        Profile
+        Metric
     };
 
     struct Record
@@ -98,8 +96,6 @@ private:
         std::string message;
         std::string unit;
         double value = 0.0;
-        std::int64_t durationNanoseconds = 0;
-        bool failed = false;
     };
 
     void Enqueue(Record record) noexcept;

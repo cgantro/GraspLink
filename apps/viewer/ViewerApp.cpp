@@ -52,6 +52,7 @@
 #include <memory>
 #include <limits>
 #include <stdexcept>
+#include <tracy/Tracy.hpp>
 
 namespace
 {
@@ -132,7 +133,7 @@ grasplink::robotics::models::Pose3 CalculateViewerTcp(const Entity& robotRoot, c
 
 
 ViewerApp::ViewerApp(ViewerOptions options)
-    : m_Options(options), m_Profiler(m_Logger),
+    : m_Options(options),
       m_ControlLoop(kControlFixedDeltaSeconds, kMaxFrameDeltaSeconds)
 {
 }
@@ -414,7 +415,8 @@ void ViewerApp::MainLoop()
 
     while (!m_Window->ShouldClose())
     {
-        auto frameProfile = m_Profiler.Measure("viewer.frame");
+        ZoneScopedN("Frame");
+        FrameMark;
         const auto currentFrameTime = Clock::now();
         const double frameDeltaSeconds = m_Options.smokeTest ? 1.0 / 60.0
             : std::chrono::duration<double>(currentFrameTime - lastFrameTime).count();
@@ -433,26 +435,30 @@ void ViewerApp::MainLoop()
         // 고정 갱신에서는 Controller 상태를 읽어 FK를 계산하고 Entity 자세와 World 행렬을 만든 뒤 Jolt를 진행한다.
         // PhysicsSystem은 Kinematic Body의 목표 자세를 Jolt에 보내고, Dynamic Body가 계산한 결과를 ECS Local 값으로 되돌린다.
         // 물리 step 뒤 World 행렬을 다시 계산해야 다음 렌더가 부모와 자식의 최신 자세를 사용한다. 창이 최소화되어도 이 시뮬레이션 갱신은 계속된다.
-        const std::size_t fixedTickCount = m_ControlLoop.Advance(frameDeltaSeconds, [this](double fixedDeltaSeconds)
+        m_ControlLoop.Advance(frameDeltaSeconds, [this](double fixedDeltaSeconds)
         {
-            m_Profiler.Trace("simulation.fixed_tick", [this, fixedDeltaSeconds]
+            ZoneScopedN("FixedTick");
             {
                 // 열기·Reset·연결 해제 요청은 물리 계산 전에 파지 제약을 없애야 물체가 다음 계산부터 자유롭게 떨어진다.
                 m_GripperGraspAdapter->BeforePhysicsStep();
                 m_RobotCollisionGuard->CaptureSafeJointPose();
-                m_RobotController->Update(fixedDeltaSeconds);
-                m_GripperController->Update(fixedDeltaSeconds);
-                ApplyControllerPoses();
+                {
+                    ZoneScopedN("RobotUpdate");
+                    m_RobotController->Update(fixedDeltaSeconds);
+                    m_GripperController->Update(fixedDeltaSeconds);
+                    ApplyControllerPoses();
+                }
                 TransformSystemModule::UpdateWorldTransforms(m_World);
                 m_RobotCollisionGuard->RestoreSafePoseIfOverlapping();
-                m_PhysicsSystemModule->Step(fixedDeltaSeconds);
+                {
+                    ZoneScopedN("PhysicsStep");
+                    m_PhysicsSystemModule->Step(fixedDeltaSeconds);
+                }
                 // Jolt가 이번 간격의 접촉을 모두 계산한 뒤 그리퍼에 결과를 돌려준다. 접촉 정지는 다음 고정 갱신부터 개폐 진행을 막는다.
                 m_GripperGraspAdapter->AfterPhysicsStep();
                 TransformSystemModule::UpdateWorldTransforms(m_World);
-            });
+            }
         });
-        m_Profiler.Metric("viewer.frame_delta", frameDeltaSeconds, "s");
-        m_Profiler.Metric("simulation.fixed_ticks_per_frame", static_cast<double>(fixedTickCount), "tick");
 
         // 최소화된 창은 framebuffer의 가로 또는 세로가 0일 수 있으므로, 이때 GPU 렌더링 단계만 건너뛴다.
         int framebufferWidth = 0;
@@ -479,80 +485,83 @@ void ViewerApp::MainLoop()
         m_Renderer->SetSceneViewport(0, 0, sceneWidth, framebufferHeight);
 
         // Scene은 화면 왼쪽 viewport에 그린다. 오른쪽 ImGui sidebar는 같은 창 위에 고정 배치한다.
-        m_Renderer->BeginFrame();
-
-        m_SceneManager->OnUpdate(renderDeltaSeconds);
-        TransformSystemModule::UpdateWorldTransforms(m_World);
-        m_World.progress(renderDeltaSeconds);
-        const auto graspState = m_GripperGraspAdapter->GetState();
-        const glm::mat4 robotBaseWorld = m_RobotRoot->GetWorldMatrix();
-        const glm::mat4 worldToRobotBase = glm::inverse(robotBaseWorld);
-        const glm::quat worldToRobotBaseRotation = glm::inverse(RotationFromWorldMatrix(robotBaseWorld));
-        const glm::mat4 boxWorldMatrix = m_GraspBox->GetWorldMatrix();
-        const glm::vec3 boxInRobotBase(worldToRobotBase * boxWorldMatrix[3]);
-        const glm::quat boxRotationWorld = RotationFromWorldMatrix(boxWorldMatrix);
-        const glm::quat boxRotationInRobotBase = glm::normalize(worldToRobotBaseRotation * boxRotationWorld);
-        const glm::mat4 placementWorldMatrix = m_PlacementArea->GetWorldMatrix();
-        const glm::vec3 placementInRobotBase(worldToRobotBase * placementWorldMatrix[3]);
-        const glm::quat placementRotationWorld = RotationFromWorldMatrix(placementWorldMatrix);
-        const glm::quat placementRotationInRobotBase = glm::normalize(worldToRobotBaseRotation * placementRotationWorld);
-        grasplink::robotics::CartesianPose boxPose;
-        boxPose.positionMeters = {boxInRobotBase.x, boxInRobotBase.y, boxInRobotBase.z};
-        boxPose.orientationXyzw = {boxRotationInRobotBase.x, boxRotationInRobotBase.y,
-            boxRotationInRobotBase.z, boxRotationInRobotBase.w};
-        grasplink::robotics::CartesianPose placementPose;
-        placementPose.positionMeters = {placementInRobotBase.x, placementInRobotBase.y + 0.020, placementInRobotBase.z};
-        placementPose.orientationXyzw = {placementRotationInRobotBase.x, placementRotationInRobotBase.y,
-            placementRotationInRobotBase.z, placementRotationInRobotBase.w};
-        const float sidebarX = displayWidth - sidebarWidth;
-        ImGui::SetNextWindowPos(ImVec2(sidebarX, 0.0F), ImGuiCond_Always);
-        ImGui::SetNextWindowSize(ImVec2(sidebarWidth, displayHeight), ImGuiCond_Always);
-        constexpr ImGuiWindowFlags sidebarFlags = ImGuiWindowFlags_NoTitleBar |
-            ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse |
-            ImGuiWindowFlags_NoSavedSettings;
-        ImGui::Begin("Robot controls", nullptr, sidebarFlags);
-        ImGui::TextUnformatted("GraspLink | HCR-12A");
-        ImGui::Separator();
-        auto& simulationController = static_cast<SimRobotController&>(*m_RobotController);
-        const auto& stateForMission = simulationController.GetStateView();
-        m_PickPlaceMission.Update(stateForMission, *m_RobotController, *m_GripperController,
-            graspState.grasped, boxPose, placementPose);
-        const auto& robotState = simulationController.GetStateView();
-        const auto mission = m_PickPlaceMission.Snapshot();
-        const grasplink::gui::RobotPanelMissionView missionView{mission.stageLabel, mission.lastMessage,
-            mission.completedCount, 2.0, 8.0, mission.paused, mission.missionSucceeded,
-            mission.autoRepeat, mission.hasResult, mission.lastRequestAccepted, mission.canStart};
-        const grasplink::gui::RobotPanelView robotPanelView{robotState,
-            simulationController.GetSpecification(), boxPose, placementPose, missionView};
-        const auto panelActions = m_RobotPanel->DrawContents(robotPanelView);
-        m_PickPlaceMission.ApplyActions({panelActions.start, panelActions.resume, panelActions.stop},
-            simulationController.GetStateView(),
-            *m_RobotController, *m_GripperController, graspState.grasped, boxPose, placementPose);
-        if (m_PickPlaceMission.ConsumeSuccessEvent())
         {
-            const auto nextPosition = viewer_debug::RandomGraspBoxPosition();
-            const auto nextGoalPosition = viewer_debug::RandomPlacementAreaPosition();
-            m_GraspBox->SetLocalPosition({nextPosition[0], nextPosition[1], nextPosition[2]});
-            m_GraspBox->SetLocalRotation(glm::angleAxis(viewer_debug::RandomPlanarRotationRadians(), glm::vec3{0.0F, 1.0F, 0.0F}));
-            m_PlacementArea->SetLocalPosition({nextGoalPosition[0], nextGoalPosition[1], nextGoalPosition[2]});
-            m_PlacementArea->SetLocalRotation(glm::angleAxis(viewer_debug::RandomPlanarRotationRadians(), glm::vec3{0.0F, 1.0F, 0.0F}));
+            ZoneScopedN("Render");
+            m_Renderer->BeginFrame();
+
+            m_SceneManager->OnUpdate(renderDeltaSeconds);
             TransformSystemModule::UpdateWorldTransforms(m_World);
-            const glm::mat4 boxTransform = m_GraspBox->GetWorldMatrix();
-            const auto boxHandle = m_PhysicsSystemModule->GetBodyHandle(m_GraspBox->GetHandle());
-            const glm::quat boxRotation = RotationFromWorldMatrix(boxTransform);
-            m_PhysicsWorld->SetBodyTransform(boxHandle, grasplink::physics::Transform{
-                glm::vec3(boxTransform[3]), boxRotation});
-            m_GripperGraspAdapter->Release();
-            m_PickPlaceMission.PrepareNextTask();
+            m_World.progress(renderDeltaSeconds);
+            const auto graspState = m_GripperGraspAdapter->GetState();
+            const glm::mat4 robotBaseWorld = m_RobotRoot->GetWorldMatrix();
+            const glm::mat4 worldToRobotBase = glm::inverse(robotBaseWorld);
+            const glm::quat worldToRobotBaseRotation = glm::inverse(RotationFromWorldMatrix(robotBaseWorld));
+            const glm::mat4 boxWorldMatrix = m_GraspBox->GetWorldMatrix();
+            const glm::vec3 boxInRobotBase(worldToRobotBase * boxWorldMatrix[3]);
+            const glm::quat boxRotationWorld = RotationFromWorldMatrix(boxWorldMatrix);
+            const glm::quat boxRotationInRobotBase = glm::normalize(worldToRobotBaseRotation * boxRotationWorld);
+            const glm::mat4 placementWorldMatrix = m_PlacementArea->GetWorldMatrix();
+            const glm::vec3 placementInRobotBase(worldToRobotBase * placementWorldMatrix[3]);
+            const glm::quat placementRotationWorld = RotationFromWorldMatrix(placementWorldMatrix);
+            const glm::quat placementRotationInRobotBase = glm::normalize(worldToRobotBaseRotation * placementRotationWorld);
+            grasplink::robotics::CartesianPose boxPose;
+            boxPose.positionMeters = {boxInRobotBase.x, boxInRobotBase.y, boxInRobotBase.z};
+            boxPose.orientationXyzw = {boxRotationInRobotBase.x, boxRotationInRobotBase.y,
+                boxRotationInRobotBase.z, boxRotationInRobotBase.w};
+            grasplink::robotics::CartesianPose placementPose;
+            placementPose.positionMeters = {placementInRobotBase.x, placementInRobotBase.y + 0.020, placementInRobotBase.z};
+            placementPose.orientationXyzw = {placementRotationInRobotBase.x, placementRotationInRobotBase.y,
+                placementRotationInRobotBase.z, placementRotationInRobotBase.w};
+            const float sidebarX = displayWidth - sidebarWidth;
+            ImGui::SetNextWindowPos(ImVec2(sidebarX, 0.0F), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(sidebarWidth, displayHeight), ImGuiCond_Always);
+            constexpr ImGuiWindowFlags sidebarFlags = ImGuiWindowFlags_NoTitleBar |
+                ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse |
+                ImGuiWindowFlags_NoSavedSettings;
+            ImGui::Begin("Robot controls", nullptr, sidebarFlags);
+            ImGui::TextUnformatted("GraspLink | HCR-12A");
+            ImGui::Separator();
+            auto& simulationController = static_cast<SimRobotController&>(*m_RobotController);
+            const auto& stateForMission = simulationController.GetStateView();
+            m_PickPlaceMission.Update(stateForMission, *m_RobotController, *m_GripperController,
+                graspState.grasped, boxPose, placementPose);
+            const auto& robotState = simulationController.GetStateView();
+            const auto mission = m_PickPlaceMission.Snapshot();
+            const grasplink::gui::RobotPanelMissionView missionView{mission.stageLabel, mission.lastMessage,
+                mission.completedCount, 2.0, 8.0, mission.paused, mission.missionSucceeded,
+                mission.autoRepeat, mission.hasResult, mission.lastRequestAccepted, mission.canStart};
+            const grasplink::gui::RobotPanelView robotPanelView{robotState,
+                simulationController.GetSpecification(), boxPose, placementPose, missionView};
+            const auto panelActions = m_RobotPanel->DrawContents(robotPanelView);
+            m_PickPlaceMission.ApplyActions({panelActions.start, panelActions.resume, panelActions.stop},
+                simulationController.GetStateView(),
+                *m_RobotController, *m_GripperController, graspState.grasped, boxPose, placementPose);
+            if (m_PickPlaceMission.ConsumeSuccessEvent())
+            {
+                const auto nextPosition = viewer_debug::RandomGraspBoxPosition();
+                const auto nextGoalPosition = viewer_debug::RandomPlacementAreaPosition();
+                m_GraspBox->SetLocalPosition({nextPosition[0], nextPosition[1], nextPosition[2]});
+                m_GraspBox->SetLocalRotation(glm::angleAxis(viewer_debug::RandomPlanarRotationRadians(), glm::vec3{0.0F, 1.0F, 0.0F}));
+                m_PlacementArea->SetLocalPosition({nextGoalPosition[0], nextGoalPosition[1], nextGoalPosition[2]});
+                m_PlacementArea->SetLocalRotation(glm::angleAxis(viewer_debug::RandomPlanarRotationRadians(), glm::vec3{0.0F, 1.0F, 0.0F}));
+                TransformSystemModule::UpdateWorldTransforms(m_World);
+                const glm::mat4 boxTransform = m_GraspBox->GetWorldMatrix();
+                const auto boxHandle = m_PhysicsSystemModule->GetBodyHandle(m_GraspBox->GetHandle());
+                const glm::quat boxRotation = RotationFromWorldMatrix(boxTransform);
+                m_PhysicsWorld->SetBodyTransform(boxHandle, grasplink::physics::Transform{
+                    glm::vec3(boxTransform[3]), boxRotation});
+                m_GripperGraspAdapter->Release();
+                m_PickPlaceMission.PrepareNextTask();
+            }
+            m_GripperPanel->DrawContents(*m_GripperController, &graspState);
+            m_PhysicsDebugPanel->DrawContents();
+            ImGui::End();
+            m_ColliderOverlay->Draw(*m_Camera, m_PhysicsDebugPanel->IsColliderVisible(),
+                ImVec2(displayWidth - sidebarWidth, displayHeight));
+            m_Renderer->EndFrame();
+            m_GuiModule->EndFrame();
+            m_Window->SwapBuffers();
         }
-        m_GripperPanel->DrawContents(*m_GripperController, &graspState);
-        m_PhysicsDebugPanel->DrawContents();
-        ImGui::End();
-        m_ColliderOverlay->Draw(*m_Camera, m_PhysicsDebugPanel->IsColliderVisible(),
-            ImVec2(displayWidth - sidebarWidth, displayHeight));
-        m_Renderer->EndFrame();
-        m_GuiModule->EndFrame();
-        m_Window->SwapBuffers();
         if (m_Options.smokeTest && ++renderedFrames >= 8)
             break;
     }

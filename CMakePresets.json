@@ -29,13 +29,13 @@
       "name": "ninja-debug",
       "displayName": "Ninja Debug",
       "configurePreset": "ninja",
-      "jobs": 0
+      "jobs": 2
     },
     {
       "name": "ninja-release",
       "displayName": "Ninja Release",
       "configurePreset": "ninja-release",
-      "jobs": 0
+      "jobs": 2
     }
   ]
 }
