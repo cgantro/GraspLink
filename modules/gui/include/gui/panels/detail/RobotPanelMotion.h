@@ -19,11 +19,13 @@ struct WristOnlyTarget
 {
     robotics::JointVector jointPositionRadians;
     double rotationRadians = 0.0;
+    double attachedBoxSweepMeters = 0.0;
 };
 
 /**
  * @brief 지정한 TCP 방향을 J6만 돌려 만들 수 있을 때 그 관절 목표를 계산한다.
- * @details 현재 TCP와 파지 물체 중심이 J6 회전축에서 2 mm보다 더 벗어나 있으면 회전 중 크게 쓸릴 수 있으므로 계산을 거부한다.
+ * @details TCP가 J6 회전축에서 2 mm보다 더 벗어나면 J6만 돌릴 때 공구 끝도 크게 이동하므로 계산을 거부한다.
+ * 파지한 상자는 축에서 벗어난 만큼 회전 중 원호를 그린다. 예상 이동이 20 mm를 넘으면 거부하고, 호출자는 회전 뒤 상자 중심을 다시 목표 위치로 맞춰야 한다.
  * 관절 목표는 J1부터 J5까지 현재값을 그대로 복사하고, J6의 2π 등가값 중 실제 허용 범위에 들어오는 값을 고른다.
  */
 inline std::optional<WristOnlyTarget> PlanWristOnlyTarget(
@@ -62,6 +64,8 @@ inline std::optional<WristOnlyTarget> PlanWristOnlyTarget(
     const glm::dvec3 tcpPosition{
         state.tcpPose.positionMeters[0], state.tcpPose.positionMeters[1], state.tcpPose.positionMeters[2]};
     constexpr double maximumRadialOffsetMeters = 0.002;
+    constexpr double maximumAttachedBoxSweepMeters = 0.02;
+    double attachedBoxRadialOffsetMeters = 0.0;
     const auto radialOffset = [&](const glm::dvec3& point)
     {
         const glm::dvec3 fromPivot = point - pivot;
@@ -75,8 +79,7 @@ inline std::optional<WristOnlyTarget> PlanWristOnlyTarget(
         const glm::dvec3 localOffset{(*boxOffsetInTcpMeters)[0], (*boxOffsetInTcpMeters)[1],
             (*boxOffsetInTcpMeters)[2]};
         const glm::dvec3 boxCenter = tcpPosition + currentOrientation * localOffset;
-        if (glm::length(radialOffset(boxCenter)) > maximumRadialOffsetMeters)
-            return std::nullopt;
+        attachedBoxRadialOffsetMeters = glm::length(radialOffset(boxCenter));
     }
 
     glm::dquat difference = glm::normalize(targetOrientation * glm::inverse(currentOrientation));
@@ -93,6 +96,11 @@ inline std::optional<WristOnlyTarget> PlanWristOnlyTarget(
             return std::nullopt;
         signedRotation = 2.0 * std::atan2(vectorLength, difference.w) * (axisAlignment < 0.0 ? -1.0 : 1.0);
     }
+
+    const double attachedBoxSweepMeters = 2.0 * attachedBoxRadialOffsetMeters *
+        std::sin(std::abs(signedRotation) * 0.5);
+    if (attachedBoxSweepMeters > maximumAttachedBoxSweepMeters)
+        return std::nullopt;
 
     const auto& wrist = specification.joints[specification.jointCount - 1];
     constexpr double fullTurn = 6.28318530717958647692;
@@ -111,6 +119,7 @@ inline std::optional<WristOnlyTarget> PlanWristOnlyTarget(
     result.jointPositionRadians = state.jointPositionRadians;
     result.jointPositionRadians.back() = targetWrist;
     result.rotationRadians = signedRotation;
+    result.attachedBoxSweepMeters = attachedBoxSweepMeters;
     return result;
 }
 

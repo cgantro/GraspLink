@@ -51,8 +51,13 @@ void CheckWristTargetChangesOnlyJ6()
     Require(PlanWristOnlyTarget(models::hanwha::kHcr12a, measuredToolOffset, targetXyzw, axialBoxOffset).has_value(),
         "the measured 1.44 mm fingertip-center offset stays within the bounded wrist sweep");
     const std::array<double, 3> radialBoxOffset{0.02, 0.0, 0.0};
-    Require(!PlanWristOnlyTarget(models::hanwha::kHcr12a, state, targetXyzw, radialBoxOffset).has_value(),
-        "wrist alignment is rejected when the attached box center would sweep around the J6 axis");
+    const auto radialBoxPlan = PlanWristOnlyTarget(models::hanwha::kHcr12a, state, targetXyzw, radialBoxOffset);
+    Require(radialBoxPlan.has_value(), "a small attached-box arc does not block wrist alignment");
+    Require(radialBoxPlan->attachedBoxSweepMeters < 0.02,
+        "the wrist plan reports the attached box center movement during rotation");
+    const std::array<double, 3> largeRadialBoxOffset{0.10, 0.0, 0.0};
+    Require(!PlanWristOnlyTarget(models::hanwha::kHcr12a, state, targetXyzw, largeRadialBoxOffset).has_value(),
+        "a wrist rotation is rejected when the attached box sweep would exceed two centimeters");
 
     RobotState offAxisTcp = state;
     offAxisTcp.tcpPose.positionMeters[0] += 0.01;

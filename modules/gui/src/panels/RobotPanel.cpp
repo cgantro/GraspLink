@@ -235,7 +235,7 @@ void RobotPanel::DrawContents(robotics::backends::simulation::SimRobotController
         if (!plan)
         {
             lastResult_ = {robotics::ErrorCode::Unsupported,
-                "RobotPanel: wrist-only alignment would move the TCP or attached box away from the J6 axis"};
+                "RobotPanel: wrist alignment needs another axis, exceeds a J6 limit, or moves the attached box over 20 mm"};
             hasResult_ = true;
             return false;
         }
