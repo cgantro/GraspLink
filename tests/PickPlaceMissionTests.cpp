@@ -1,9 +1,12 @@
 #include "PickPlaceMission.h"
 #include "robotics/backends/simulation/SimRobotController.h"
+#include "robotics/kinematics/RobotInverseKinematics.h"
 #include "robotics/models/hanwha/Hcr12a.h"
 
 #include <gtest/gtest.h>
 
+#include <cstdint>
+#include <vector>
 namespace
 {
 using namespace grasplink::robotics;
@@ -16,13 +19,21 @@ public:
     bool IsConnected() const noexcept override { return connected_; }
     grasplink::robotics::Result Activate() override { return {}; }
     grasplink::robotics::Result Reset() override { return {}; }
-    grasplink::robotics::Result Command(const grasplink::robotics::GripperCommand&) override { return {}; }
+    grasplink::robotics::Result Command(const grasplink::robotics::GripperCommand& command) override
+    {
+        commands.push_back(command.positionRequest);
+        return {};
+    }
     grasplink::robotics::Result Stop() override { return {}; }
-    grasplink::robotics::GripperState GetState() const override { return {}; }
+    grasplink::robotics::GripperState GetState() const override { return state; }
     void Update(double) override {}
 
 private:
     bool connected_ = false;
+
+public:
+    grasplink::robotics::GripperState state{};
+    std::vector<std::uint8_t> commands;
 };
 
 class ScriptedRobotController final : public IRobotController
@@ -42,7 +53,6 @@ public:
     Result MoveJoint(const JointMoveCommand& command) override
     {
         ++jointRequests;
-        lastJointCommand = command;
         if (jointResult)
             state.mode = RobotMode::Moving;
         return jointResult;
@@ -50,7 +60,6 @@ public:
     Result MoveLinear(const LinearMoveCommand& command) override
     {
         ++linearRequests;
-        lastLinearCommand = command;
         if (linearResult)
             state.mode = RobotMode::Moving;
         return linearResult;
@@ -58,7 +67,6 @@ public:
     Result MoveLinearPath(const LinearPathMoveCommand& command) override
     {
         ++pathRequests;
-        lastPathCommand = command;
         if (pathResult)
             state.mode = RobotMode::Moving;
         return pathResult;
@@ -78,9 +86,6 @@ public:
     Result linearResult{};
     Result pathResult{};
     Result stopResult{};
-    JointMoveCommand lastJointCommand{};
-    LinearMoveCommand lastLinearCommand{};
-    LinearPathMoveCommand lastPathCommand{};
     int jointRequests = 0;
     int linearRequests = 0;
     int pathRequests = 0;
@@ -90,7 +95,58 @@ private:
     bool connected = false;
 };
 
-void CheckStartAndPauseResumeWithHeldObject()
+class ImmediateController final : public IRobotController
+{
+public:
+    explicit ImmediateController(const models::RobotSpecification& specification)
+        : ik_(specification)
+    {
+        state.jointPositionRadians.assign(specification.jointCount, 0.0);
+        state.tcpPose = ik_.EvaluateTcp(state.jointPositionRadians);
+        state.mode = RobotMode::Idle;
+        state.tcpPoseValid = true;
+        state.valid = true;
+    }
+
+    Result Connect() override { return {}; }
+    void Disconnect() noexcept override {}
+    bool IsConnected() const noexcept override { return true; }
+    Result MoveJoint(const JointMoveCommand& command) override
+    {
+        state.jointPositionRadians = command.targetPositionRadians;
+        state.mode = RobotMode::Idle;
+        return {};
+    }
+    Result MoveLinear(const LinearMoveCommand& command) override
+    {
+        state.tcpPose = command.targetPose;
+        state.mode = RobotMode::Idle;
+        return {};
+    }
+    Result MoveLinearPath(const LinearPathMoveCommand& command) override
+    {
+        ++pathRequests;
+        if (!pathResult)
+            return pathResult;
+        state.tcpPose = command.targetPoses.back();
+        state.mode = RobotMode::Idle;
+        return {};
+    }
+    Result Stop() override { state.mode = RobotMode::Stopped; return {}; }
+    RobotState GetState() const override { return state; }
+    void Update(double) override {}
+
+    RobotState state;
+    Result pathResult{};
+    int pathRequests = 0;
+
+private:
+    kinematics::DampedLeastSquaresIk ik_;
+};
+
+}
+
+TEST(PickPlaceMissionTests, StartPauseAndResumeWithHeldObject)
 {
     using namespace grasplink::robotics;
     using grasplink::robotics::backends::simulation::SimRobotController;
@@ -115,7 +171,7 @@ void CheckStartAndPauseResumeWithHeldObject()
     ASSERT_EQ(resumed.stageLabel, "Lifting to resume height");
 }
 
-void CheckUnreachablePickupFailsWithoutMotion()
+TEST(PickPlaceMissionTests, UnreachablePickupFailsWithoutMotion)
 {
     using namespace grasplink::robotics;
     using grasplink::robotics::backends::simulation::SimRobotController;
@@ -140,17 +196,6 @@ void CheckUnreachablePickupFailsWithoutMotion()
     EXPECT_FALSE(failed.lastRequestAccepted);
     EXPECT_FALSE(failed.missionSucceeded);
     EXPECT_EQ(controller.GetStateView().mode, RobotMode::Idle);
-}
-}
-
-TEST(PickPlaceMissionTests, StartPauseAndResumeWithHeldObject)
-{
-    CheckStartAndPauseResumeWithHeldObject();
-}
-
-TEST(PickPlaceMissionTests, UnreachablePickupFailsWithoutMotion)
-{
-    CheckUnreachablePickupFailsWithoutMotion();
 }
 
 TEST(PickPlaceMissionTests, RejectedStartCommandFailsImmediately)
@@ -273,4 +318,91 @@ TEST(PickPlaceMissionTests, ResumeWithHeldObjectRequiresValidTcpFeedback)
     EXPECT_EQ(snapshot.lastMessage, "RobotPanel: TCP feedback is unavailable for safe resume");
     EXPECT_EQ(controller.jointRequests, 0);
     EXPECT_EQ(controller.linearRequests, 0);
+}
+
+TEST(PickPlaceMissionTests, SuccessfulCyclePublishesOneCompletionEvent)
+{
+    ImmediateController controller(models::hanwha::kHcr12a);
+    StubGripper gripper;
+    grasplink::viewer::PickPlaceMission mission(models::hanwha::kHcr12a);
+    CartesianPose box{};
+    box.positionMeters = controller.state.tcpPose.positionMeters;
+    box.positionMeters[1] -= 0.25;
+    CartesianPose placement = box;
+
+    mission.Update(controller.state, controller, gripper, false, box, placement);
+    mission.ApplyActions({true, false, false}, controller.state, controller, false, box);
+    bool boxGrasped = false;
+    for (int tick = 0; tick < 40 && mission.Snapshot().stageLabel != "Complete" &&
+        mission.Snapshot().stageLabel != "Failed"; ++tick)
+    {
+        if (mission.Snapshot().stageLabel == "Closing gripper")
+            boxGrasped = true;
+        if (mission.Snapshot().stageLabel == "Opening gripper")
+            boxGrasped = false;
+        const auto stageBeforeUpdate = mission.Snapshot().stageLabel;
+        mission.Update(controller.state, controller, gripper, boxGrasped, box, placement);
+        if (mission.Snapshot().stageLabel == "Failed")
+            ADD_FAILURE() << "Mission failed while processing " << stageBeforeUpdate
+                << ": " << mission.Snapshot().lastMessage;
+    }
+
+    const auto snapshot = mission.Snapshot();
+    ASSERT_EQ(snapshot.stageLabel, "Complete") << snapshot.lastMessage;
+    EXPECT_TRUE(snapshot.missionSucceeded);
+    EXPECT_EQ(snapshot.completedCount, 1U);
+    EXPECT_TRUE(mission.ConsumeSuccessEvent());
+    EXPECT_FALSE(mission.ConsumeSuccessEvent());
+}
+
+TEST(PickPlaceMissionTests, GripperMissReleasesAndFailsWithoutSuccessEvent)
+{
+    ImmediateController controller(models::hanwha::kHcr12a);
+    StubGripper gripper;
+    gripper.state.mode = GripperMode::Idle;
+    gripper.state.objectStatus = GripperObjectStatus::AtRequestedPosition;
+    grasplink::viewer::PickPlaceMission mission(models::hanwha::kHcr12a);
+    CartesianPose box{};
+    box.positionMeters = controller.state.tcpPose.positionMeters;
+    box.positionMeters[1] -= 0.25;
+
+    mission.Update(controller.state, controller, gripper, false, box, box);
+    mission.ApplyActions({true, false, false}, controller.state, controller, false, box);
+    for (int tick = 0; tick < 40 && mission.Snapshot().stageLabel != "Complete" &&
+        mission.Snapshot().stageLabel != "Failed"; ++tick)
+        mission.Update(controller.state, controller, gripper, false, box, box);
+
+    const auto snapshot = mission.Snapshot();
+    EXPECT_EQ(snapshot.stageLabel, "Failed");
+    EXPECT_FALSE(snapshot.missionSucceeded);
+    EXPECT_EQ(snapshot.completedCount, 0U);
+    EXPECT_EQ(gripper.commands, (std::vector<std::uint8_t>{255, 0}));
+    EXPECT_FALSE(mission.ConsumeSuccessEvent());
+}
+
+TEST(PickPlaceMissionTests, RejectedTransitPathPreservesControllerError)
+{
+    ImmediateController controller(models::hanwha::kHcr12a);
+    controller.pathResult = {ErrorCode::Unsupported, "path execution unavailable"};
+    StubGripper gripper;
+    grasplink::viewer::PickPlaceMission mission(models::hanwha::kHcr12a);
+    CartesianPose box{};
+    box.positionMeters = controller.state.tcpPose.positionMeters;
+    box.positionMeters[1] -= 0.25;
+
+    mission.Update(controller.state, controller, gripper, false, box, box);
+    mission.ApplyActions({true, false, false}, controller.state, controller, false, box);
+    bool boxGrasped = false;
+    for (int tick = 0; tick < 40 && mission.Snapshot().stageLabel != "Complete" &&
+        mission.Snapshot().stageLabel != "Failed"; ++tick)
+    {
+        boxGrasped = mission.Snapshot().stageLabel == "Closing gripper" || boxGrasped;
+        mission.Update(controller.state, controller, gripper, boxGrasped, box, box);
+    }
+
+    const auto snapshot = mission.Snapshot();
+    EXPECT_EQ(snapshot.stageLabel, "Failed");
+    EXPECT_EQ(snapshot.lastMessage, "path execution unavailable");
+    EXPECT_EQ(controller.pathRequests, 1);
+    EXPECT_FALSE(snapshot.missionSucceeded);
 }
