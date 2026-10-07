@@ -11,6 +11,11 @@ namespace grasplink::simulation
 {
 namespace
 {
+// 손끝 표면의 실제 이격만 열기 차단으로 판단하고 수치 잡음을 무시한다.
+constexpr float kOpeningBlockMotionEpsilonMeters = 1.0e-7F;
+// 두 접촉 법선이 충분히 반대일 때에만 물체를 양쪽에서 끼운 것으로 본다.
+constexpr float kOpposingFingerNormalDotThreshold = -0.25F;
+
 bool SameBody(physics::PhysicsBodyHandle first, physics::PhysicsBodyHandle second)
 {
     return first.IsValid() && second.IsValid() && first.value == second.value && first.worldToken == second.worldToken;
@@ -47,6 +52,11 @@ bool GripperGraspAdapter::Bind(const Entity& robotRoot)
 
 void GripperGraspAdapter::BeforePhysicsStep()
 {
+    RefreshBindingAndReleaseState();
+}
+
+void GripperGraspAdapter::RefreshBindingAndReleaseState()
+{
     const auto feedback = controller_.GetState();
     const std::uint64_t revision = controller_.GetReleaseRevision();
     const bool releaseRequested = revision != releaseRevision_ || !feedback.valid || !feedback.activated ||
@@ -67,7 +77,7 @@ void GripperGraspAdapter::BeforePhysicsStep()
 void GripperGraspAdapter::AfterPhysicsStep()
 {
     // 이 조회는 매 틱 수행한다. ECS 설정 변경으로 proxy의 Body가 교체돼도 이전 핸들로 새 Body를 파지하지 않는다.
-    BeforePhysicsStep();
+    RefreshBindingAndReleaseState();
     state_.leftContact = false;
     state_.rightContact = false;
     const auto feedback = controller_.GetState();
@@ -115,7 +125,8 @@ void GripperGraspAdapter::AfterPhysicsStep()
                 const auto& previous = isLeft ? previousLeft_ : previousRight_;
                 const glm::vec3 localPoint = glm::inverse(current.rotation) * (contact.point - current.position);
                 const glm::vec3 previousPoint = previous.position + previous.rotation * localPoint;
-                openingBlocked = openingBlocked || glm::dot(contact.point - previousPoint, normal) > 1.0e-7F;
+                openingBlocked = openingBlocked ||
+                    glm::dot(contact.point - previousPoint, normal) > kOpeningBlockMotionEpsilonMeters;
             }
             // 바닥 같은 Static 환경 접촉은 정지에만 쓰고 파지할 수 있는 Dynamic 물체만 목록에 모은다.
             if (world_.GetBodyMotionType(other) == physics::BodyMotionType::Dynamic)
@@ -131,7 +142,9 @@ void GripperGraspAdapter::AfterPhysicsStep()
     physics::PhysicsBodyHandle graspCandidate;
     for (const auto& candidate : leftObjects)
         if (std::any_of(rightObjects.begin(), rightObjects.end(), [&](const auto& rightCandidate)
-            { return SameBody(candidate.object, rightCandidate.object) && glm::dot(candidate.fingerToObject, rightCandidate.fingerToObject) <= -0.25F; }))
+            { return SameBody(candidate.object, rightCandidate.object) &&
+                glm::dot(candidate.fingerToObject, rightCandidate.fingerToObject) <=
+                    kOpposingFingerNormalDotThreshold; }))
         {
             graspCandidate = candidate.object;
             break;

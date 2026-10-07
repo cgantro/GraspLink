@@ -72,6 +72,9 @@ public:
     [[nodiscard]] GripperGraspState GetState() const;
 
 private:
+    /** @brief 열기·Reset 요청과 교체된 충돌 Body를 확인해 오래된 파지를 해제한다. */
+    void RefreshBindingAndReleaseState();
+
     physics::PhysicsWorld& world_;
     PhysicsSystemModule& system_;
     robotics::backends::simulation::SimGripperController& controller_;
