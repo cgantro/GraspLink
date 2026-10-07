@@ -70,28 +70,9 @@ void LinearPathPlanning(benchmark::State& state)
     command.targetPoses.push_back(MakeTargetPose());
     const CartesianPose startTcp = solver.EvaluateTcp(kSeed);
 
-    const CollisionAwareIkSolver solveCollisionFree =
-        [&solver](const CartesianPose& target, const JointVector& seed, const IkOptions& options,
-            bool& collisionBlocked, IkResult& ikFailure) -> std::optional<IkResult>
-    {
-        collisionBlocked = false;
-        auto result = solver.Solve(target, seed, options);
-        if (!result)
-        {
-            ikFailure = std::move(result);
-            return std::nullopt;
-        }
-        return result;
-    };
-    const EndpointReachabilitySolver solveEndpoint =
-        [&solver](const CartesianPose& target, const JointVector& seed)
-    {
-        return solver.Solve(target, seed);
-    };
-
     LinearPathPlan plan;
     const auto validation = BuildLinearPath(
-        command, kHcr12a, kSeed, startTcp, solveCollisionFree, solveEndpoint, plan);
+        command, kHcr12a, kSeed, startTcp, solver, {}, plan);
     if (!validation)
     {
         state.SkipWithError("LinearPathPlanner benchmark path failed validation");
@@ -101,7 +82,7 @@ void LinearPathPlanning(benchmark::State& state)
     for (auto _ : state)
     {
         const auto result = BuildLinearPath(
-            command, kHcr12a, kSeed, startTcp, solveCollisionFree, solveEndpoint, plan);
+            command, kHcr12a, kSeed, startTcp, solver, {}, plan);
         if (!result)
         {
             state.SkipWithError("LinearPathPlanner failed to build the benchmark path");

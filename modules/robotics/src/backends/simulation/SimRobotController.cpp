@@ -1,6 +1,5 @@
 #include "robotics/backends/simulation/SimRobotController.h"
 #include "robotics/backends/simulation/detail/SimulationMotionPolicy.h"
-#include "robotics/kinematics/detail/AlternativeIkSeeds.h"
 #include "robotics/kinematics/detail/PoseMath.h"
 
 #include <algorithm>
@@ -15,28 +14,6 @@ namespace grasplink::robotics::backends::simulation
 namespace
 {
 constexpr double kPositionEpsilon = 1e-8;
-constexpr double kFullTurnRadians = 2.0 * 3.14159265358979323846;
-
-void AlignEquivalentJointAngles(
-    JointVector& target,
-    const JointVector& reference,
-    const models::RobotSpecification& specification)
-{
-    // 회전 관절은 2π를 더하거나 빼도 같은 방향이므로, 제조사 허용 범위 안에서 현재 각도에 가장 가까운 값을 고른다.
-    for (std::size_t jointIndex = 0; jointIndex < target.size(); ++jointIndex)
-    {
-        const auto& joint = specification.joints[jointIndex];
-        const double minimumTurns = std::ceil((joint.minPositionRadians - target[jointIndex]) / kFullTurnRadians);
-        const double maximumTurns = std::floor((joint.maxPositionRadians - target[jointIndex]) / kFullTurnRadians);
-        if (minimumTurns > maximumTurns)
-            continue;
-
-        const double nearestTurns = std::round((reference[jointIndex] - target[jointIndex]) / kFullTurnRadians);
-        const double legalTurns = std::clamp(nearestTurns, minimumTurns, maximumTurns);
-        target[jointIndex] += legalTurns * kFullTurnRadians;
-    }
-}
-
 Result Failure(ErrorCode code, std::string message)
 {
     // 잘못된 명령 입력은 예외로 던지지 않고 다른 Controller 구현과 같은 Result 오류 값으로 반환한다.
@@ -118,88 +95,6 @@ void SimRobotController::SetJointPoseCollisionValidator(std::function<bool(const
     collisionValidator_ = std::move(validator);
 }
 
-bool SimRobotController::IsJointPathCollisionFree(const JointVector& start, const JointVector& end) const
-{
-    if (!collisionValidator_)
-        return true;
-
-    double maximumJointChange = 0.0;
-    for (std::size_t joint = 0; joint < start.size(); ++joint)
-        maximumJointChange = std::max(maximumJointChange, std::abs(end[joint] - start[joint]));
-    const std::size_t intervals = std::max<std::size_t>(1, static_cast<std::size_t>(std::ceil(
-        maximumJointChange / detail::kDefaultSimulationMotionPolicy.jointCollisionSampleSpacingRadians)));
-    JointVector sample(start.size());
-    for (std::size_t step = 1; step <= intervals; ++step)
-    {
-        const double fraction = static_cast<double>(step) / static_cast<double>(intervals);
-        for (std::size_t joint = 0; joint < start.size(); ++joint)
-            sample[joint] = start[joint] + (end[joint] - start[joint]) * fraction;
-        if (!collisionValidator_(sample))
-            return false;
-    }
-    return true;
-}
-
-std::optional<kinematics::IkResult> SimRobotController::SolveCollisionFreeIk(
-    const CartesianPose& target,
-    const JointVector& start,
-    const kinematics::IkOptions& options,
-    bool& collisionBlocked,
-    kinematics::IkResult& ikFailure)
-{
-    collisionBlocked = false;
-    // 현재 관절각에서 목표에 수렴하면 그 해부터 쓴다. 직전 해를 초기값으로 이어 가므로 경로 중 관절이 다른 가지로 갑자기 바뀌는 일을 줄인다.
-    auto preferred = inverse_.SolveSingleSeed(target, start, options);
-    if (preferred)
-    {
-        AlignEquivalentJointAngles(preferred.jointPositionRadians, start, *specification_);
-        if (!collisionValidator_ || IsJointPathCollisionFree(start, preferred.jointPositionRadians))
-            return preferred;
-        collisionBlocked = true;
-    }
-    else
-    {
-        ikFailure = preferred;
-    }
-
-    // 첫 해가 수렴하지 않거나 충돌 검사에 걸렸을 때만 J1·J3·J5의 대체 자세를 시험한다. 각 대체 해는 관절 허용 범위로 나눈 이동량을 비교해 현재 자세와 가장 가까운 안전한 해를 고른다.
-    bool foundAnyIkSolution = false;
-    std::optional<kinematics::IkResult> bestSolution;
-    double bestNormalizedDistance = std::numeric_limits<double>::infinity();
-    for (const auto& seed : kinematics::detail::BuildAlternativeIkSeeds(start, *specification_))
-    {
-        auto solution = inverse_.SolveSingleSeed(target, seed, options);
-        if (!solution)
-        {
-            ikFailure = std::move(solution);
-            continue;
-        }
-        AlignEquivalentJointAngles(solution.jointPositionRadians, start, *specification_);
-        foundAnyIkSolution = true;
-        if (collisionValidator_ && !IsJointPathCollisionFree(start, solution.jointPositionRadians))
-            continue;
-
-        double normalizedDistance = 0.0;
-        for (std::size_t joint = 0; joint < start.size(); ++joint)
-        {
-            const double range = std::max(1e-12, specification_->joints[joint].maxPositionRadians -
-                specification_->joints[joint].minPositionRadians);
-            const double delta = (solution.jointPositionRadians[joint] - start[joint]) / range;
-            normalizedDistance += delta * delta;
-        }
-        if (normalizedDistance < bestNormalizedDistance)
-        {
-            bestNormalizedDistance = normalizedDistance;
-            bestSolution = std::move(solution);
-        }
-    }
-
-    if (bestSolution)
-        return bestSolution;
-    collisionBlocked = collisionBlocked || foundAnyIkSolution;
-    return std::nullopt;
-}
-
 Result SimRobotController::Connect()
 {
     // 재연결은 이전 명령과 상태를 이어가지 않고 q=0의 새 논리 세션을 만든다.
@@ -258,7 +153,7 @@ Result SimRobotController::MoveJoint(const JointMoveCommand& command)
     // 움직이는 도중 새 명령이 들어오면 대기열에 쌓지 않고 현재 목표를 새 목표로 바꾼다.
     targetPositionRadians_ = command.targetPositionRadians;
     if (!command.preserveJointTurns)
-        AlignEquivalentJointAngles(targetPositionRadians_, state_.jointPositionRadians, *specification_);
+        detail::AlignEquivalentJointAngles(targetPositionRadians_, state_.jointPositionRadians, *specification_);
     velocityScale_ = command.velocityScale;
     accelerationScale_ = command.accelerationScale;
     linearPath_.clear();
@@ -289,7 +184,9 @@ Result SimRobotController::MovePose(const CartesianPose& targetInBase, double ve
         return Failure(ErrorCode::InvalidCommand, "SimRobotController: scale must be in (0, 1]");
     bool collisionBlocked = false;
     kinematics::IkResult ikFailure;
-    auto solution = SolveCollisionFreeIk(targetInBase, state_.jointPositionRadians, {}, collisionBlocked, ikFailure);
+    auto solution = detail::SolveCollisionFreeIk(inverse_, *specification_, collisionValidator_,
+        targetInBase, state_.jointPositionRadians, {}, detail::kDefaultSimulationMotionPolicy,
+        collisionBlocked, ikFailure);
     if (!solution)
         return collisionBlocked ?
             Failure(ErrorCode::EnvironmentContact, "SimRobotController: no collision-free IK solution or joint path") :
@@ -320,21 +217,8 @@ Result SimRobotController::MoveLinearPath(const LinearPathMoveCommand& command)
 
     detail::LinearPathPlan plan;
     const auto result = detail::BuildLinearPath(
-        command,
-        *specification_,
-        state_.jointPositionRadians,
-        inverse_.EvaluateTcp(state_.jointPositionRadians),
-        [this](const CartesianPose& target, const JointVector& start, const kinematics::IkOptions& options,
-            bool& collisionBlocked, kinematics::IkResult& ikFailure)
-        {
-            return SolveCollisionFreeIk(target, start, options, collisionBlocked, ikFailure);
-        },
-        [this](const CartesianPose& target, const JointVector& start)
-        {
-            // 표본 상한 초과와 도달 불가를 구분하는 끝점 검사는 기존 동작처럼 충돌 필터를 적용하지 않는다.
-            return inverse_.Solve(target, start);
-        },
-        plan);
+        command, *specification_, state_.jointPositionRadians,
+        inverse_.EvaluateTcp(state_.jointPositionRadians), inverse_, collisionValidator_, plan);
     if (!result)
         return result;
     if (!plan.hasMotion)

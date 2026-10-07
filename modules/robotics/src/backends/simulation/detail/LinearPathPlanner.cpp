@@ -1,21 +1,140 @@
 #include "robotics/backends/simulation/detail/LinearPathPlanner.h"
 
 #include "robotics/kinematics/detail/PoseMath.h"
+#include "robotics/kinematics/detail/AlternativeIkSeeds.h"
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <string>
 #include <utility>
 
 namespace grasplink::robotics::backends::simulation::detail
 {
+namespace
+{
+constexpr double kFullTurnRadians = 2.0 * 3.14159265358979323846;
+
+bool IsJointPathCollisionFree(
+    const JointVector& start,
+    const JointVector& end,
+    const std::function<bool(const JointVector&)>& collisionValidator,
+    const SimulationMotionPolicy& policy)
+{
+    if (!collisionValidator)
+        return true;
+
+    // 관절 하나의 변화량이 설정한 간격보다 크면 그 사이 자세도 나눠 검사한다. 시작 자세는 이미 검증됐다고 보고 끝 자세까지 확인한다.
+    double maximumJointChange = 0.0;
+    for (std::size_t joint = 0; joint < start.size(); ++joint)
+        maximumJointChange = std::max(maximumJointChange, std::abs(end[joint] - start[joint]));
+    const std::size_t intervals = std::max<std::size_t>(1, static_cast<std::size_t>(std::ceil(
+        maximumJointChange / policy.jointCollisionSampleSpacingRadians)));
+    JointVector sample(start.size());
+    for (std::size_t step = 1; step <= intervals; ++step)
+    {
+        const double fraction = static_cast<double>(step) / static_cast<double>(intervals);
+        for (std::size_t joint = 0; joint < start.size(); ++joint)
+            sample[joint] = start[joint] + (end[joint] - start[joint]) * fraction;
+        if (!collisionValidator(sample))
+            return false;
+    }
+    return true;
+}
+}
+
+void AlignEquivalentJointAngles(
+    JointVector& target,
+    const JointVector& reference,
+    const models::RobotSpecification& specification)
+{
+    // 회전 관절은 2π를 더하거나 빼도 같은 자세다. 허용 범위 안에서 현재 각도와 가장 가까운 표현을 골라 불필요한 한 바퀴 회전을 막는다.
+    for (std::size_t jointIndex = 0; jointIndex < target.size(); ++jointIndex)
+    {
+        const auto& joint = specification.joints[jointIndex];
+        const double minimumTurns = std::ceil((joint.minPositionRadians - target[jointIndex]) / kFullTurnRadians);
+        const double maximumTurns = std::floor((joint.maxPositionRadians - target[jointIndex]) / kFullTurnRadians);
+        if (minimumTurns > maximumTurns)
+            continue;
+
+        const double nearestTurns = std::round((reference[jointIndex] - target[jointIndex]) / kFullTurnRadians);
+        const double legalTurns = std::clamp(nearestTurns, minimumTurns, maximumTurns);
+        target[jointIndex] += legalTurns * kFullTurnRadians;
+    }
+}
+
+std::optional<kinematics::IkResult> SolveCollisionFreeIk(
+    kinematics::DampedLeastSquaresIk& inverse,
+    const models::RobotSpecification& specification,
+    const std::function<bool(const JointVector&)>& collisionValidator,
+    const CartesianPose& target,
+    const JointVector& start,
+    const kinematics::IkOptions& options,
+    const SimulationMotionPolicy& policy,
+    bool& collisionBlocked,
+    kinematics::IkResult& ikFailure)
+{
+    collisionBlocked = false;
+    // 먼저 직전 자세를 seed로 풀어 연속성을 유지한다. 이 해가 없거나 경로가 충돌하면 대체 seed도 검사해 가장 적게 움직이는 안전한 해를 고른다.
+    auto preferred = inverse.SolveSingleSeed(target, start, options);
+    if (preferred)
+    {
+        AlignEquivalentJointAngles(preferred.jointPositionRadians, start, specification);
+        if (!collisionValidator || IsJointPathCollisionFree(
+            start, preferred.jointPositionRadians, collisionValidator, policy))
+            return preferred;
+        collisionBlocked = true;
+    }
+    else
+        ikFailure = preferred;
+
+    // 해는 있지만 모든 해의 경로가 막힌 경우와 목표 자체에 IK 해가 없는 경우를 구분한다.
+    bool foundAnyIkSolution = false;
+    std::optional<kinematics::IkResult> bestSolution;
+    double bestNormalizedDistance = std::numeric_limits<double>::infinity();
+    for (const auto& seed : kinematics::detail::BuildAlternativeIkSeeds(start, specification))
+    {
+        auto solution = inverse.SolveSingleSeed(target, seed, options);
+        if (!solution)
+        {
+            ikFailure = std::move(solution);
+            continue;
+        }
+
+        AlignEquivalentJointAngles(solution.jointPositionRadians, start, specification);
+        foundAnyIkSolution = true;
+        if (collisionValidator && !IsJointPathCollisionFree(
+            start, solution.jointPositionRadians, collisionValidator, policy))
+            continue;
+
+        double normalizedDistance = 0.0;
+        for (std::size_t joint = 0; joint < start.size(); ++joint)
+        {
+            const double range = std::max(1e-12, specification.joints[joint].maxPositionRadians -
+                specification.joints[joint].minPositionRadians);
+            const double delta = (solution.jointPositionRadians[joint] - start[joint]) / range;
+            normalizedDistance += delta * delta;
+        }
+        if (normalizedDistance < bestNormalizedDistance)
+        {
+            bestNormalizedDistance = normalizedDistance;
+            bestSolution = std::move(solution);
+        }
+    }
+
+    if (bestSolution)
+        return bestSolution;
+    collisionBlocked = collisionBlocked || foundAnyIkSolution;
+    return std::nullopt;
+}
+
 Result BuildLinearPath(
     const LinearPathMoveCommand& command,
     const models::RobotSpecification& specification,
     const JointVector& startJoints,
     const CartesianPose& startTcp,
-    const CollisionAwareIkSolver& solveCollisionFreeIk,
-    const EndpointReachabilitySolver& solveEndpointReachability,
+    kinematics::DampedLeastSquaresIk& inverse,
+    const std::function<bool(const JointVector&)>& collisionValidator,
     LinearPathPlan& plan,
     const SimulationMotionPolicy& policy)
 {
@@ -66,7 +185,8 @@ Result BuildLinearPath(
             totalIntervals > policy.maximumPathIntervals ||
             intervals > static_cast<double>(policy.maximumPathIntervals - totalIntervals))
         {
-            const auto endpoint = solveEndpointReachability(ToCartesian(end), candidatePlan.points.back().joints);
+            // 샘플 한도를 넘었어도 끝점 IK는 따로 확인해 도달 불가와 경로 해상도 제한을 구분한다.
+            const auto endpoint = inverse.Solve(ToCartesian(end), candidatePlan.points.back().joints);
             if (!endpoint)
                 return MapIkFailure(endpoint);
             return {ErrorCode::InvalidCommand, "SimRobotController: linear path exceeds " +
@@ -83,8 +203,9 @@ Result BuildLinearPath(
             const Pose3 targetPose = Interpolate(segmentStart, end, fraction);
             bool collisionBlocked = false;
             kinematics::IkResult ikFailure;
-            auto solution = solveCollisionFreeIk(ToCartesian(targetPose), candidatePlan.points.back().joints,
-                options, collisionBlocked, ikFailure);
+            auto solution = SolveCollisionFreeIk(inverse, specification, collisionValidator,
+                ToCartesian(targetPose), candidatePlan.points.back().joints, options, policy,
+                collisionBlocked, ikFailure);
             if (!solution)
                 return collisionBlocked ?
                     Result{ErrorCode::EnvironmentContact, "SimRobotController: no collision-free IK solution for the TCP path"} :

@@ -75,18 +75,29 @@ struct LinearPathPlan
     bool hasMotion = false;
 };
 
-using CollisionAwareIkSolver = std::function<std::optional<kinematics::IkResult>(
-    const CartesianPose&, const JointVector&, const kinematics::IkOptions&, bool&, kinematics::IkResult&)>;
-// 표본 한도 초과 시 끝점 자체가 도달 불가능한지와 경로 해상도만 부족한지를 구분한다.
-using EndpointReachabilitySolver = std::function<kinematics::IkResult(const CartesianPose&, const JointVector&)>;
+void AlignEquivalentJointAngles(
+    JointVector& target,
+    const JointVector& reference,
+    const models::RobotSpecification& specification);
 
+std::optional<kinematics::IkResult> SolveCollisionFreeIk(
+    kinematics::DampedLeastSquaresIk& inverse,
+    const models::RobotSpecification& specification,
+    const std::function<bool(const JointVector&)>& collisionValidator,
+    const CartesianPose& target,
+    const JointVector& start,
+    const kinematics::IkOptions& options,
+    const SimulationMotionPolicy& policy,
+    bool& collisionBlocked,
+    kinematics::IkResult& ikFailure);
+// 경로 샘플 수가 제한을 넘으면 끝점 연관성과 도달 가능성을 검사해 오류를 구분한다.
 Result BuildLinearPath(
     const LinearPathMoveCommand& command,
     const models::RobotSpecification& specification,
     const JointVector& startJoints,
     const CartesianPose& startTcp,
-    const CollisionAwareIkSolver& solveCollisionFreeIk,
-    const EndpointReachabilitySolver& solveEndpointReachability,
+    kinematics::DampedLeastSquaresIk& inverse,
+    const std::function<bool(const JointVector&)>& collisionValidator,
     LinearPathPlan& plan,
     const SimulationMotionPolicy& policy = kDefaultSimulationMotionPolicy);
 
