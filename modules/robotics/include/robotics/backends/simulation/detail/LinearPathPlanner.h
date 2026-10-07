@@ -1,6 +1,7 @@
 #pragma once
 
 #include "robotics/core/ControlTypes.h"
+#include "robotics/backends/simulation/detail/SimulationMotionPolicy.h"
 #include "robotics/kinematics/RobotInverseKinematics.h"
 #include "robotics/models/RobotSpecification.h"
 
@@ -51,7 +52,8 @@ public:
         const CartesianPose& startTcp,
         const CollisionAwareIkSolver& solveCollisionFreeIk,
         const EndpointReachabilitySolver& solveEndpointReachability,
-        LinearPathPlan& plan);
+        LinearPathPlan& plan,
+        const SimulationMotionPolicy& policy = kDefaultSimulationMotionPolicy);
 };
 
 } // namespace grasplink::robotics::backends::simulation::detail

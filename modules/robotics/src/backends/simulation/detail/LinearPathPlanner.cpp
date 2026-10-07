@@ -11,12 +11,6 @@ namespace grasplink::robotics::backends::simulation::detail
 {
 namespace
 {
-// 위치 1cm 또는 자세 0.05rad 이하 간격으로 목표를 나눈다. 간격을 좁히면 경로 추종 정확도와 함께 표본마다 수행하는 IK 비용도 늘어난다.
-constexpr double kPositionSampleSpacingMeters = 0.01;
-constexpr double kOrientationSampleSpacingRadians = 0.05;
-// 한 명령의 동기 계획 시간과 저장할 경로 표본 수가 무제한으로 커지지 않게 한다.
-constexpr std::size_t kMaximumPathIntervals = 4096;
-
 using namespace kinematics::detail;
 
 Result Failure(ErrorCode code, std::string message)
@@ -53,7 +47,8 @@ Result LinearPathPlanner::Build(
     const CartesianPose& startTcp,
     const CollisionAwareIkSolver& solveCollisionFreeIk,
     const EndpointReachabilitySolver& solveEndpointReachability,
-    LinearPathPlan& plan)
+    LinearPathPlan& plan,
+    const SimulationMotionPolicy& policy)
 {
     if (command.targetPoses.empty() ||
         !std::isfinite(command.maxLinearVelocityMetersPerSecond) || command.maxLinearVelocityMetersPerSecond <= 0.0 ||
@@ -100,17 +95,18 @@ Result LinearPathPlanner::Build(
         const double distance = Length(Subtract(end.positionMeters, segmentStart.positionMeters));
         const double rotation = Length(RotationError(end.rotation, segmentStart.rotation));
         const double intervals = std::max({1.0,
-            std::ceil(distance / kPositionSampleSpacingMeters),
-            std::ceil(rotation / kOrientationSampleSpacingRadians)});
+            std::ceil(distance / policy.linearPositionSampleSpacingMeters),
+            std::ceil(rotation / policy.linearOrientationSampleSpacingRadians)});
         // 표본 수 초과는 먼저 끝점만 풀어 도달 불가와 계획 해상도 한도 초과를 서로 다른 오류로 반환한다.
-        if (!std::isfinite(intervals) || intervals > static_cast<double>(kMaximumPathIntervals) ||
-            totalIntervals > kMaximumPathIntervals ||
-            intervals > static_cast<double>(kMaximumPathIntervals - totalIntervals))
+        if (!std::isfinite(intervals) || intervals > static_cast<double>(policy.maximumPathIntervals) ||
+            totalIntervals > policy.maximumPathIntervals ||
+            intervals > static_cast<double>(policy.maximumPathIntervals - totalIntervals))
         {
             const auto endpoint = solveEndpointReachability(ToCartesian(end), candidatePlan.points.back().joints);
             if (!endpoint)
                 return IkFailure(endpoint);
-            return Failure(ErrorCode::InvalidCommand, "SimRobotController: linear path exceeds 4096 intervals");
+            return Failure(ErrorCode::InvalidCommand, "SimRobotController: linear path exceeds " +
+                std::to_string(policy.maximumPathIntervals) + " intervals");
         }
 
         const std::size_t count = static_cast<std::size_t>(intervals);

@@ -1,4 +1,5 @@
 #include "robotics/backends/simulation/SimRobotController.h"
+#include "robotics/backends/simulation/detail/SimulationMotionPolicy.h"
 #include "robotics/kinematics/detail/AlternativeIkSeeds.h"
 #include "robotics/kinematics/detail/PoseMath.h"
 
@@ -133,7 +134,8 @@ bool SimRobotController::IsJointPathCollisionFree(const JointVector& start, cons
     double maximumJointChange = 0.0;
     for (std::size_t joint = 0; joint < start.size(); ++joint)
         maximumJointChange = std::max(maximumJointChange, std::abs(end[joint] - start[joint]));
-    const std::size_t intervals = std::max<std::size_t>(1, static_cast<std::size_t>(std::ceil(maximumJointChange / 0.08)));
+    const std::size_t intervals = std::max<std::size_t>(1, static_cast<std::size_t>(std::ceil(
+        maximumJointChange / detail::kDefaultSimulationMotionPolicy.jointCollisionSampleSpacingRadians)));
     JointVector sample(start.size());
     for (std::size_t step = 1; step <= intervals; ++step)
     {
@@ -525,7 +527,8 @@ void SimRobotController::UpdateLinear(double dtSeconds)
             break;
         const Pose3 currentTcp = FromCartesian(inverse_.EvaluateTcp(state_.jointPositionRadians));
         bool accepted = false;
-        for (int attempt = 0; attempt < 16; ++attempt)
+        for (std::size_t attempt = 0;
+            attempt < detail::kDefaultSimulationMotionPolicy.linearRuntimeRetryAttempts; ++attempt)
         {
             const double nextSegmentFraction = std::min(1.0, linearSegmentFraction_ + fractionStep);
             if (nextSegmentFraction == linearSegmentFraction_)
@@ -563,7 +566,7 @@ void SimRobotController::UpdateLinear(double dtSeconds)
                 break;
             }
             // 실제 관절 변화가 속도 상한을 넘으면 이번 tick의 경로 진행 비율을 줄여 다시 확인한다.
-            fractionStep *= 0.8 / ratio;
+            fractionStep *= detail::kDefaultSimulationMotionPolicy.runtimeRetryProgressScale / ratio;
         }
         if (!accepted)
         {
@@ -631,7 +634,8 @@ bool SimRobotController::ReorientForLinear(const JointVector& plannedJoints, dou
     // 후보 시작각을 다음 표본 방향으로 작은 비율만 옮기고 현재 TCP 자세의 IK를 다시 푼다.
     // IK가 위치·방향을 되돌리는 동안 남는 관절 변화는 TCP를 거의 바꾸지 않는 여유 방향이며 nullspace라고 부른다.
     // 일반 모델에서 단순 관절 보간이 TCP를 고정한다고 가정하지 않으므로 후보마다 FK/속도 검사를 거친다.
-    for (int attempt = 0; attempt < 12; ++attempt)
+    for (std::size_t attempt = 0;
+        attempt < detail::kDefaultSimulationMotionPolicy.reorientationRetryAttempts; ++attempt)
     {
         JointVector seed = current;
         for (std::size_t i = 0; i < current.size(); ++i)
