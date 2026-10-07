@@ -10,6 +10,7 @@ apps/
 └─ viewer/                         # 프로그램 조립 / main loop
 
 modules/
+├─ diagnostics/                    # 비동기 로그·수치·성능 기록
 ├─ robotics/                       # Robot/Gripper domain
 │  ├─ include/robotics/
 │  │  ├─ core/                     # Controller contract / 공통 상태 타입
@@ -101,5 +102,7 @@ cd build-ninja-debug
 기본 실행은 로봇과 바닥을 표시하며 GUI에서 그리퍼 Open/Close, 요청 개폐율·raw 속도, Activate/Reset/Stop을 조작한다. `--physics-demo`는 Debug/Release 모두에서 50개 낙하 Box와 로봇·그리퍼 데모 명령을 추가한다. GUI의 force request는 128로 고정되며 힘 효과를 계산하지 않는다. `Show configured colliders`는 ECS 설정의 X-ray 근사 외곽선이며 Jolt 실제 형상 조회가 아니다.
 
 모듈 경계는 [Architecture](docs/ARCHITECTURE.md), 물리 제약은 [Physics / Flecs Integration](docs/PHYSICS_ECS_INTEGRATION.md), 현재 점검 결과는 [Code Documentation Audit](docs/CODE_DOCUMENTATION_AUDIT.md)를 참고한다.
+
+비동기 Logger와 Profiler 사용법 및 파일 출력·대기열 정책은 [Diagnostics](docs/DIAGNOSTICS.md)를 참고한다.
 
 그리퍼 충돌, 팔 형상 수 감소와 한글 Doxygen 보강 결과는 [후속 작업 결과](docs/GRIPPER_COLLISION_AND_COMMENT_RESULTS.md)에 정리했다.

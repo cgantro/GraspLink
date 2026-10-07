@@ -67,6 +67,8 @@
 
 ## 유지한 설계 범위
 
+아래 항목은 이 감사 당시의 비교 범위를 기록한 것이며 현재 기능 상태는 아니다. 최신 Robot/Gripper IK·접촉·환경 충돌 처리는 [로봇 이동과 파지](ROBOT_MOTION_AND_GRASP.md)와 [Physics/Flecs Integration](PHYSICS_ECS_INTEGRATION.md)을 참고한다.
+
 - Controller의 관절 상태가 로봇 운동의 기준이다. FK가 공통 link/ToolFrame pose를 파생하며, Viewer와 Kinematic Physics proxy가 같은 결과를 사용한다.
 - Dynamic 물체의 기준은 Jolt 결과다. 계산 뒤 부모 World 변환을 되돌려 Entity Local에 반영한다.
 - FK ToolFrame은 모델의 고정 flange 기준이며 장착 공구 TCP feedback을 대신하지 않는다. SimRobotController의 `tcpPoseValid`는 false다.

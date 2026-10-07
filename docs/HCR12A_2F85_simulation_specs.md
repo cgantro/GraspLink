@@ -86,7 +86,7 @@ J6 axis = +Z
 이전 중간 모델에서 사용했던 ±90° bind quaternion 보정은 현재 contract가 아니다.
 Arm visual transform은 mesh vertex/normal에 bake해 bind pose 외형을 유지한다.
 
-`RobotKinematics`는 bind pivot 사이 차이를 이전 누적 회전으로 변환하고, 모델 axis와 RobotState로 pose를 계산한다. 화면과 충돌 프록시는 같은 FK 결과를 사용한다. FK의 ToolFrame pose는 controller TCP feedback과 별개다. `SimRobotController`의 `tcpPoseValid`는 현재 false다.
+`RobotKinematics`는 bind pivot 사이 차이를 이전 누적 회전으로 변환하고, 모델 axis와 RobotState로 pose를 계산한다. 화면과 충돌 프록시는 같은 FK 결과를 사용한다. Controller는 ToolFrame에 고정 공구 변환을 더해 Robot base 기준 TCP를 계산하며 ToolFrame이 있으면 `tcpPoseValid=true`다. 이는 모델 기반 시뮬레이션 상태이고 실제 장치 측정값이 아니다.
 
 ```text
 RobotState q [rad]
@@ -277,15 +277,14 @@ software Stop
 
 ```text
 Acceleration limiting (구현 안 됨; 검증된 max acceleration 값 필요)
-IK
 Hardware Robot backend
 Hardware Gripper backend
-Gripper force / current / contact detection / contact stop
+Gripper force / current
 Contact-based adaptive grasp
 Watchdog / E-Stop state / Zero Offset
 ```
 
-그리퍼 자유공간 개폐는 공통 interface로 연결됐다. 접촉 기반 정지·파지와 Hardware backend는 후속 작업이다.
+그리퍼 개폐와 물리 접촉 정지, 양쪽 손끝의 고정 constraint 파지를 연결했다. DLS IK와 TCP 자세·직선 이동도 제공하며 [로봇 이동과 파지](ROBOT_MOTION_AND_GRASP.md)에 상세 원리를 정리한다. 실제 힘·전류·개별 손가락의 접촉 적응과 Hardware backend는 후속 작업이다.
 
 ---
 
@@ -313,7 +312,7 @@ raw 위치에서 fraction으로의 선형 매핑은 자유공간 시뮬레이션
 
 4 ms마다 두 Controller 갱신 → 팔·그리퍼 자세 적용 → World 변환 갱신 → Jolt step → World 변환 재갱신 순서로 진행한다. Stop은 현재 위치·요청 echo를 유지하고 `Stopped`로 전환하며 Reset은 현재 위치를 유지한 채 비활성화한다. GUI는 인터페이스에 요청을 보내고 상태를 표시한다. 자세한 계약은 [그리퍼 런타임 설계](GRIPPER_RUNTIME_DESIGN.md)에 정리한다.
 
-접촉 이후 목표 흐름 (아직 미구현):
+물리 모터와 힘·마찰 계산으로 개별 손가락을 적응시키는 후속 흐름이다. 현재는 양쪽 접촉 후 고정 constraint로 물체를 유지한다.
 
 ```text
 rPR / rFR

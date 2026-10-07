@@ -4,6 +4,7 @@
 
 ```text
 modules/
+├── diagnostics/   Asynchronous logs, numeric metrics, and profiling records
 ├── robotics/       Robot models, controller contracts, backends, forward kinematics
 ├── physics/        Jolt wrapper and engine-independent physics types
 ├── viewer/         Flecs scene, transforms, GLB assets, OpenGL rendering
@@ -18,11 +19,13 @@ flowchart TD
     App[ViewerApp] --> GUI[GUI]
     App --> Simulation[Simulation]
     App --> Viewer[Viewer]
+    App --> Diagnostics[Diagnostics]
     GUI --> Simulation
     GUI --> ImGui
     Simulation --> Viewer
     Simulation --> Robotics
     Simulation --> Physics
+    Simulation --> Diagnostics
     Viewer --> Robotics
     Viewer --> Graphics[OpenGL graphics]
     Viewer --> Flecs
@@ -30,6 +33,8 @@ flowchart TD
 ```
 
 `modules/physics` does not depend on Flecs, Viewer, or OpenGL. Jolt-specific types stay inside that module. `modules/simulation` owns Flecs physics configuration and the private runtime binding between an Entity and `PhysicsBodyHandle`.
+
+`modules/diagnostics` has no dependency on the simulation or graphics stack. `Logger` sends copied log, metric, and profile records through a bounded queue to one file-writing thread. `Profiler::Trace` wraps work at application or module boundaries, so timing and exception reporting do not need to be embedded in controller and physics operations. `ViewerApp` owns the Logger longer than the systems that borrow it, then drains and joins the writer during shutdown. See [Diagnostics](DIAGNOSTICS.md) for the API, queue policy, and output format.
 
 ## Robot state flow
 
@@ -44,7 +49,7 @@ IRobotController
 
 `RobotKinematics` is the shared source of robot pose. It derives parent-relative offsets from consecutive base-frame bind pivots and accumulates joint rotations for the serial chain. Viewer and Physics consume the same result instead of separately interpreting joint axes and angles. Robotics model data uses plain scalar/vector/quaternion types and does not depend on GLM, Flecs, or Jolt.
 
-FK는 모델에 ToolFrame이 있으면 `toolFrameInBaseFrame`을 제공한다. 이 flange/model 기준은 `RobotState::tcpPose`와 별개이며 `SimRobotController`의 `tcpPoseValid`는 false다. IK, `MoveLinear` 실행, 가속도 제한, Hardware Gripper backend와 관절 동역학은 아직 구현하지 않았다.
+FK는 모델에 ToolFrame이 있으면 `toolFrameInBaseFrame`을 제공한다. `DampedLeastSquaresIk`는 ToolFrame에 고정 공구 변환을 더해 TCP 목표를 만드는 관절각을 계산한다. `SimRobotController::MovePose`는 이를 `MoveJoint`로 연결하고 `MoveLinear`은 TCP의 직선 위치와 최단 회전 경로를 따라간다. `tcpPoseValid=true`인 시뮬레이션 상태는 Robot base 기준 모델 FK 결과이며 실제 장치 측정값이 아니다. 가속도 제한, Hardware Gripper backend와 관절 동역학은 구현하지 않았다. 상세 계약은 [로봇 이동과 파지](ROBOT_MOTION_AND_GRASP.md)를 참고한다.
 
 `RobotTransformAdapter`는 자세를 authored GLB 계층에 적용한다. `RobotPhysicsAdapter`는 연결된 GLB 조각에서 링크별 Convex Hull을 만들며 다음 가동 관절 아래와 Gripper를 제외한다. 삼각형 중심 기준 16 cm 셀을 사용하고 4 cm 미만 부품·1 cm 미만 셀·부피 없는 hull 입력을 제외한다. `ConfigureTwoF85Colliders`는 고정 Gripper 또는 가동 관절 Entity 아래 Gripper-layer Kinematic proxy 7개를 만든다. rigid part마다 이름 있는 GLB 메시의 축약 hull을 사용하며 outer knuckle에는 attached finger 메시도 포함한다. proxy의 Local 원점은 소유 body/joint 원점이다. robot Base collider와 관절 동역학은 없다.
 
@@ -58,7 +63,7 @@ GUI 요청 → IGripperController / SimGripperController
 → authored GLB 관절 → World 변환 → 기존 7개 Kinematic proxy
 ```
 
-`GripperState`의 유효한 연속 위치가 개폐 자세의 기준이다. raw 0..255는 요청·표시용이며 반올림한 raw feedback을 기구학 입력으로 다시 사용하지 않는다. 여섯 관절은 분기형이므로 팔의 직렬 FK를 재사용하지 않고 Local 회전 변화만 계산한다. 어댑터는 원본 Local 위치·크기와 Gripper/ToolFrame 장착 변환을 보존한다. raw 위치의 선형 fraction 매핑과 master 속도 기본값 0.1..1.0 rad/s는 시뮬레이션 가정이다. 힘·전류·접촉 판정·접촉 시 정지·파지는 구현하지 않았다. 자세한 계약은 [그리퍼 런타임 설계](GRIPPER_RUNTIME_DESIGN.md)를 참고한다.
+`GripperState`의 유효한 연속 위치가 개폐 자세의 기준이다. raw 0..255는 요청·표시용이며 반올림한 raw feedback을 기구학 입력으로 다시 사용하지 않는다. 여섯 관절은 분기형이므로 팔의 직렬 FK를 재사용하지 않고 Local 회전 변화만 계산한다. 어댑터는 원본 Local 위치·크기와 Gripper/ToolFrame 장착 변환을 보존한다. raw 위치의 선형 fraction 매핑과 master 속도 기본값 0.1..1.0 rad/s는 시뮬레이션 가정이다. `GripperGraspAdapter`는 물리 손끝 접촉으로 개폐를 정지시키고 양쪽 손끝이 같은 Dynamic 물체를 반대 방향에서 만지면 고정 constraint로 파지한다. 힘·전류·개별 손가락 적응은 계산하지 않는다. 자세한 계약은 [그리퍼 런타임 설계](GRIPPER_RUNTIME_DESIGN.md)를 참고한다.
 
 `GuiModule`은 ImGui context·GLFW/OpenGL backend와 `BeginFrame/EndFrame`, 입력 capture 조회를 담당한다. `ViewerApp`이 `GripperPanel`, `PhysicsDebugPanel`, `ColliderOverlay`를 별도로 만들고 `BeginFrame → GripperPanel → PhysicsDebugPanel → ColliderOverlay → EndFrame` 순서로 조립한다. `GripperPanel`은 호출 중에만 Controller를 빌려 요청·상태를 표시하고, `PhysicsDebugPanel`은 collider 표시 체크박스 상태를 보관한다. `ColliderOverlay`는 World query와 화면 선 캐시를 소유하며 Camera는 Draw 호출 중에만 빌린다. 선은 Jolt 내부 형상 대신 ECS 설정의 깊이 없는 전경 투영이며, 첫 표시·resize와 100 ms 간격으로 갱신한다.
 
@@ -72,6 +77,7 @@ GUI 요청 → IGripperController / SimGripperController
 
 ```text
 FixedControlLoop
+→ GripperGraspAdapter BeforePhysicsStep: 파지 해제와 Body 수명 확인
 → RobotController + GripperController Update
 → RobotKinematics + GripperKinematics
 → Viewer + Simulation pose adapters
@@ -79,11 +85,12 @@ FixedControlLoop
 → PhysicsSystemModule PrePhysicsSync: 설정 재구성 / Scene-driven 목표 전달
 → PhysicsWorld Step
 → PhysicsSystemModule PostPhysicsSync: Physics-driven Dynamic 결과를 Local에 직접 저장
+→ GripperGraspAdapter AfterPhysicsStep: 접촉 피드백과 양쪽 파지 연결
 → TransformSystemModule World transforms 재갱신
 → Render frame: TransformSystemModule / RenderSystemModule
 ```
 
-Physics는 render FPS와 독립된 고정 간격으로 진행한다. `IsSceneDriven`은 Static·Kinematic, `IsPhysicsDriven`은 Dynamic을 분류한다. Static은 Scene 목표가 바뀔 때만 `SetBodyTransform`을 호출한다. Kinematic은 같은 목표라도 실제 도달 전에는 `MoveKinematic`을 계속하고, 도달 뒤 `StopKinematic`을 한 번 호출해 잔류 속도를 지운 다음 같은 목표의 동기화를 생략한다. 위치·회전이 바뀌면 다시 이동한다.
+Physics는 render FPS와 독립된 고정 간격으로 진행한다. `IsSceneDriven`은 Static·Kinematic, `IsPhysicsDriven`은 Dynamic을 분류한다. Static은 Scene 목표가 바뀔 때만 `SetBodyTransform`을 호출한다. Kinematic은 같은 목표라도 실제 도달 전에는 `MoveKinematic`을 계속하고, 도달 뒤 `StopKinematic`을 한 번 호출해 잔류 속도를 지운 다음 같은 목표의 동기화를 생략한다. 위치·회전이 바뀌면 다시 이동한다. Kinematic 로봇은 환경과 접촉해도 Jolt가 목표를 자동으로 막지 않으므로 Viewer가 새로 생기거나 3 mm 넘게 깊어진 Robot-Environment 접촉 뒤 직전 관절 자세를 복원하고 Fault로 멈춘다. 이는 사전 충돌 회피 경로 계획이 아니다.
 
 물리 Entity와 조상은 unit scale을 사용하며 Static Environment 자신의 시각 scale만 예외다. Collider 치수·offset은 m 단위로 직접 지정한다. 모든 Body는 Dynamic 조상을 금지하고, Dynamic 자체는 조상 각각의 변환이 항등이어야 한다. 실행 중 이 scale·부모 계약이 깨지면 binding과 Body를 제거하고, 복구되면 현재 Scene World 자세로 다시 만든다. 공개 pose는 model/Entity 원점 기준이며 compound의 무게중심 보정은 Jolt 내부 책임이다.
 

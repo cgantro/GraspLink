@@ -131,7 +131,7 @@ Jolt 전용 타입은 `modules/physics` 내부에 격리한다. Simulation integ
    - ToolFrame 포함
    - parent-relative transform 기준으로 구성
    - bind pivot 사이의 차이를 누적 회전에 적용해 base-frame pose를 계산한다.
-   - FK ToolFrame output은 controller TCP feedback과 별도다. 현재 controller `tcpPoseValid`는 false다.
+   - FK ToolFrame에 고정 공구 변환을 더해 Robot base 기준 TCP를 계산한다. ToolFrame이 있는 Simulation Controller는 모델 기반 `tcpPoseValid=true` 상태를 제공하며 실제 장치 측정값이 아니다.
 
 ```text
 q1 ... q6
@@ -155,10 +155,10 @@ Tool Frame
 
 FK 결과와 GLB ToolFrame 결과를 비교한다.
 
-7. **IK / Cartesian Motion**
+7. **IK / Cartesian Motion — implemented**
    - 목표 TCP Pose에서 Joint State 계산
    - 초기 방식은 Damped Least Squares 기반 iterative IK
-   - 이후 `MoveLinear()`와 연결
+   - `MovePose()`로 IK 결과를 `MoveJoint()`에 연결하고 `MoveLinear()`에서 직선 위치·최단 회전 경로의 IK를 계산한다. 상세 계약은 [로봇 이동과 파지](ROBOT_MOTION_AND_GRASP.md)를 참고한다.
 
 ```text
 Target TCP Pose
@@ -186,7 +186,7 @@ Joint Controller
    - `SimGripperController`가 raw 요청을 연속 `closureFraction` 상태로 갱신
    - `GripperKinematics`의 master/mimic Local 회전을 `GripperTransformAdapter`가 GLB bind에 적용
    - raw 위치의 선형 fraction 매핑과 기본 master 속도 0.1..1.0 rad/s는 제조사 사양이 아닌 시뮬레이션 가정
-   - force·contact 판정·접촉 시 정지·접촉 이후 under-actuated 동작·파지는 아직 구현하지 않음
+   - 현재 물리 접촉에 따른 개폐 정지와 양쪽 손끝의 고정 constraint 파지를 제공한다. force·전류·접촉 이후 개별 손가락 적응은 계산하지 않는다.
 
 ```text
 positionRequest

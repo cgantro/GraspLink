@@ -4,8 +4,8 @@
 
 | 영역 | 책임 |
 | --- | --- |
-| `modules/physics` | Jolt 초기화, Body 생성·삭제, 고정 스텝, pose 조회·변경 |
-| `modules/robotics` | Robot/Gripper Controller 상태, 팔 FK와 그리퍼 master/mimic Local 회전 계산 |
+| `modules/physics` | Jolt 초기화, Body·접촉 snapshot·constraint 수명, 고정 스텝, pose 조회·변경 |
+| `modules/robotics` | Robot/Gripper Controller 상태, 팔 FK·DLS IK·직선 이동, 그리퍼 master/mimic Local 회전 계산 |
 | `modules/viewer` | Flecs Scene, 화면 Transform, GLB·OpenGL 표현 |
 | `modules/simulation` | 물리 설정 컴포넌트, Entity와 Body 연결, 로봇 충돌 프록시, 시뮬레이션 Scene 구성 |
 | `ViewerApp` | 모듈을 만들고 실행 순서를 연결하는 Composition Root |
@@ -32,6 +32,7 @@ Physics가 있는 Entity와 모든 조상 Entity는 unit scale이어야 한다. 
 4 ms 고정 스텝 흐름은 다음과 같다.
 
 ```text
+GripperGraspAdapter: 이전 파지 해제 / Body handle 수명 확인
 RobotController / GripperController Update
 → RobotKinematics: RobotState → joint rotation / link pose
 → RobotTransformAdapter: joint rotation → GLB Joint Entity
@@ -42,6 +43,8 @@ RobotController / GripperController Update
 → PrePhysicsSync: Body 설정 재구성 / Static·Kinematic Scene 목표 → Jolt
 → PhysicsWorld Step
 → PostPhysicsSync: Dynamic Jolt pose → Entity Local 위치·회전 직접 저장
+→ GripperGraspAdapter: 접촉 상태 / 개폐 정지 / 같은 물체 양쪽 파지 검사
+→ Viewer: 다음 Robot 또는 Gripper 목표가 Environment와 겹치면 물리 반영 전에 직전 안전 관절각을 복원하고 Fault 정지
 → TransformSystemModule: World matrix 재갱신
 ```
 
@@ -51,15 +54,15 @@ RobotController / GripperController Update
 
 ## Robot pose와 충돌 프록시
 
-`RobotKinematics`는 모델의 bind pivot 사이 차이를 이전 누적 회전으로 변환하고, joint axis와 controller 관절각으로 joint 회전 및 base-frame link pose를 계산한다. bind pivot은 계산 입력에 쓰인다. FK의 ToolFrame 결과는 controller의 `tcpPose` feedback과 별개이며, 현재 `SimRobotController`의 `tcpPoseValid`는 false다. Viewer 어댑터는 joint 회전을 GLB hierarchy에 적용하고, Simulation 어댑터는 link pose를 별도 Kinematic collision Entity에 적용한다. 화면 Mesh Entity와 Jolt Body의 ID를 같은 것으로 취급하지 않는다.
+`RobotKinematics`는 모델의 bind pivot 사이 차이를 이전 누적 회전으로 변환하고, joint axis와 controller 관절각으로 joint 회전 및 base-frame link pose를 계산한다. bind pivot은 계산 입력에 쓰인다. IK solver는 ToolFrame에 고정 공구 변환을 더해 TCP 자세를 Robot base 좌표로 계산한다. `MovePose`는 현재 관절각에서 Damped Least Squares 풀이를 시작해 성공한 관절 목표를 `MoveJoint`로 보낸다. `MoveLinear`는 직선 위치와 최단 quaternion 회전 경로를 표본 검사한 뒤 실행 중인 경로 각 갱신에서도 IK를 푼다. ToolFrame이 있으면 `tcpPoseValid=true` 모델 기반 상태를 제공하며 실제 장치 측정값은 아니다. Viewer 어댑터는 joint 회전을 GLB hierarchy에 적용하고, Simulation 어댑터는 link pose를 별도 Kinematic collision Entity에 적용한다. 화면 Mesh Entity와 Jolt Body의 ID를 같은 것으로 취급하지 않는다.
 
 HCR-12A collider는 GLB 재질 메시의 삼각형 연결로 나눈 부품별로 생성한다. 같은 위치의 seam 정점도 연결해 부품을 판별한다. 4 cm 미만 부품은 제외하고, 나머지는 삼각형 중심을 관절 좌표계 기준 16 cm 셀로 묶는다. 삼각형은 셀 경계에서 자르지 않는다. 1 cm 미만 크기 셀과 부피가 없는 hull 입력도 제외한다. 각 셀의 Convex Hull은 오목한 부분이나 셀 경계 사이를 메울 수 있다. 다음 가동 관절 아래와 `Gripper` geometry는 이 adapter의 hull 생성 대상이 아니다.
 
-`ConfigureTwoF85Colliders`는 고정 `GripperMesh`, outer knuckle+finger compound, inner knuckle, fingertip을 각각 한 mesh 기반 Convex Hull로 만들어 총 일곱 Kinematic proxy로 둔다. 정점은 owning authored Gripper/joint 원점 기준이며, 해당 proxy는 원본 joint Entity의 child라 fixed-step World transform에서 자동으로 따라간다. 개폐 자세의 기준은 `SimGripperController`의 유효한 연속 `GripperState.closureFraction`이다. `GripperKinematics`가 master/mimic Local 회전을 계산하고 `GripperTransformAdapter`가 bind 회전과 결합해 원본 관절에 적용한다. 시작 형상은 약 85 mm open gap을 보존한다. 별도 proxy 구동기는 필요하지 않으며 힘·접촉 시 정지·grasp 동역학은 공급하지 않는다. 매핑과 속도의 시뮬레이션 가정은 [그리퍼 런타임 설계](GRIPPER_RUNTIME_DESIGN.md)를 참고한다.
+`ConfigureTwoF85Colliders`는 고정 `GripperMesh`, outer knuckle+finger compound, inner knuckle, fingertip을 각각 한 mesh 기반 Convex Hull로 만들어 총 일곱 Kinematic proxy로 둔다. 정점은 owning authored Gripper/joint 원점 기준이며, 해당 proxy는 원본 joint Entity의 child라 fixed-step World transform에서 자동으로 따라간다. 개폐 자세의 기준은 `SimGripperController`의 유효한 연속 `GripperState.closureFraction`이다. `GripperKinematics`가 master/mimic Local 회전을 계산하고 `GripperTransformAdapter`가 bind 회전과 결합해 원본 관절에 적용한다. 시작 형상은 약 85 mm open gap을 보존한다. `GripperGraspAdapter`가 손끝 접촉으로 개폐를 멈추고 양쪽 접촉이 같은 Dynamic 물체를 반대 방향에서 향하면 본체에 고정 constraint를 연결한다. 실제 접촉력, 개별 손가락 적응과 torque 동역학은 계산하지 않는다. 매핑과 속도의 시뮬레이션 가정은 [그리퍼 런타임 설계](GRIPPER_RUNTIME_DESIGN.md)를 참고한다.
 
 `Robot`과 `Gripper`는 Environment 및 DynamicObject와 충돌한다. Robot 링크끼리, Gripper part끼리, Robot–Gripper 사이 충돌은 제외해 현재 프록시의 자기 충돌을 줄인다. 부착 상태별 필터는 없다.
 
-현재 로봇 물리는 controller가 계산한 자세를 따르는 Kinematic 충돌 프록시다. Jolt joint constraint, 관절 torque, 관성, 동역학 기반 grasp는 구현하지 않았다.
+현재 로봇 물리는 controller가 계산한 자세를 따르는 Kinematic 충돌 프록시다. Jolt Kinematic Body는 목표를 장애물 앞에서 막지 않는다. Viewer는 매 고정 갱신에서 Robot과 Gripper의 목표 충돌 형상을 Jolt 형상 검사로 Environment와 비교하고 겹치면 물리 목표를 보내기 전에 직전 안전 관절각으로 복원한다. 이는 각 고정 갱신의 목표 자세를 검사하며 전체 이동 경로를 미리 계획해 장애물을 돌아가지는 않는다. 로봇 관절 torque, 관성, 동역학 기반 grasp는 구현하지 않았다.
 
 ## Floor와 디버그 객체
 
@@ -79,7 +82,7 @@ Collider는 하나의 Body 안에 Box/Cylinder/Sphere/Convex Hull을 여러 개 
 
 ## 다음 구현 단계
 
-1. 충돌 wireframe과 접촉 결과를 보며 asset 기반 hull을 검증한다.
-2. 접촉 결과를 읽고 그리퍼 정지·grasp 상태를 판정한다. 현재 자유공간 개폐는 접촉과 무관하게 목표까지 진행한다.
+1. 접촉력과 마찰을 이용하는 그리퍼 적응 및 파지 안정성 계산을 검토한다.
+2. 충돌을 미리 예측해 지면과 물체를 피해 가는 로봇 경로 계획을 검토한다.
 3. 필요성이 확인되면 joint constraint와 관절 동역학을 추가한다.
 4. 물리 proxy를 SceneRoot 아래 평평한 계층으로 두는 구조는 장기 검토 사항이며 아직 구현하지 않았다. 현재 팔·그리퍼 proxy의 부모 계층과 API는 유지한다.

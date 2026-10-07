@@ -178,7 +178,7 @@ authored GLB 관절 -> World 변환 -> 기존 Kinematic proxies
 
 raw 위치를 fraction으로 선형 대응하는 식과 `SimGripperMotionSettings` 기본 master 속도 0.1..1.0 rad/s는 프로젝트의 시뮬레이션 가정이다. 제조사 위치 보정식이나 위 제조사 finger speed를 환산한 값이 아니다. raw speed 0..255를 이 각속도 범위에 선형 대응하며 raw 0도 양의 최소 속도다. `actualPosition`은 연속 위치의 표시용 반올림이며 관절 계산에 재입력하지 않는다.
 
-4 ms Controller 갱신 → 자세 적용 → World 변환 → Jolt step → World 재갱신 순서와 상태 계약은 [그리퍼 런타임 설계](GRIPPER_RUNTIME_DESIGN.md)를 참고한다. force는 범위만 검사하며 전류·접촉 판정·접촉 시 정지·파지는 아직 구현하지 않았다. 접촉 이후 적응은 후속 Physics/contact/constraint 작업이다.
+4 ms 고정 갱신과 상태 계약은 [그리퍼 런타임 설계](GRIPPER_RUNTIME_DESIGN.md)를 참고한다. 현재는 물리 접촉 뒤 개폐 정지와 양쪽 손끝 접촉에 따른 고정 constraint 파지를 제공한다. force는 범위만 검사하며 전류·실제 힘·개별 손가락 적응은 계산하지 않는다. Viewer TCP는 열린 손끝 메시의 중심 사이에서 계산한 시뮬레이션 기준이며 제조사 보정값이 아니다. [로봇 이동과 파지](ROBOT_MOTION_AND_GRASP.md)에 상세 계산 원리가 있다.
 
 ## 작성 규칙
 
