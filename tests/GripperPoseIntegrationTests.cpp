@@ -8,7 +8,7 @@
 #include "robotics/kinematics/RobotKinematics.h"
 #include "robotics/models/hanwha/Hcr12a.h"
 #include "robotics/models/robotiq/TwoF85.h"
-#include "scene/SceneManager.h"
+#include "scene/Scene.h"
 #include "simulation/components/PhysicsComponents.h"
 #include "simulation/robotics/GripperColliders.h"
 #include "simulation/systems/PhysicsSystemModule.h"
@@ -71,8 +71,6 @@ struct Fixture
 {
     flecs::world world;
     grasplink::physics::PhysicsWorld physics;
-    SceneManager scenes{world};
-    Scene* scene = nullptr;
     ModelResource model;
     std::vector<Entity> nodes;
     Entity robotRoot;
@@ -84,12 +82,13 @@ struct Fixture
     std::unique_ptr<grasplink::viewer::robotics::RobotTransformAdapter> armAdapter;
     std::unique_ptr<grasplink::viewer::robotics::GripperTransformAdapter> gripperAdapter;
     std::unique_ptr<grasplink::simulation::PhysicsSystemModule> integration;
+    std::unique_ptr<Scene> scene;
 
     Fixture()
     {
         world.import<TransformSystemModule>();
-        scene = LoadTestScene(scenes);
-        Require(scene != nullptr, "active scene exists");
+        scene = std::make_unique<Scene>(world);
+        Require(scene->GetSceneRoot().is_alive(), "Scene owns a live hierarchy root");
         model = LoadTestGlb("HCR12A_2F-85.glb");
         Require(model.rootNodeIndex >= 0, "model root exists");
         nodes.resize(model.nodes.size());
@@ -219,11 +218,9 @@ void CheckBranchedPose(Fixture& fixture, const std::array<glm::vec3, 2>& outerBi
 void CheckNonidentityBindRotation()
 {
     flecs::world world;
-    SceneManager scenes(world);
-    scenes.LoadScene<Scene>();
-    scenes.OnUpdate(0.0F);
-    Entity root = scenes.GetActiveScene()->CreateEntity("SyntheticGripper");
-    Entity joint = scenes.GetActiveScene()->CreateEntity("LeftOuterKnuckleJoint");
+    Scene scene(world);
+    Entity root = scene.CreateEntity("SyntheticGripper");
+    Entity joint = scene.CreateEntity("LeftOuterKnuckleJoint");
     joint.SetParent(root);
     joint.SetLocalPosition({0.03F, 0.05F, 0.09F});
     const glm::vec3 bindEuler{0.25F, -0.4F, 0.6F};
@@ -318,8 +315,7 @@ void CheckMotionAndHierarchy()
     ExpectThrows<std::runtime_error>([&] { fixture.gripperAdapter->Apply(pose); }, "changed intermediate ancestry rejected");
     finger.SetParent(parent);
     fixture.gripperAdapter->Apply(pose);
-    fixture.scenes.LoadScene<Scene>();
-    fixture.scenes.OnUpdate(0.0F);
+    fixture.scene.reset();
     ExpectThrows<std::runtime_error>([&] { fixture.gripperAdapter->Apply(pose); }, "removed scene invalidates borrowed joint handles");
 }
 
@@ -379,11 +375,10 @@ void CheckPhysicalFollowing()
     float openSurfaceY;
     const glm::vec3 openSurface = SupportPoint(tip, openSurfaceY);
     const auto pose = fixture.gripperMath.Update(fixture.controller.GetState());
-    fixture.scenes.LoadScene<Scene>();
-    fixture.scenes.OnUpdate(0.0F);
-    ExpectThrows<std::runtime_error>([&] { fixture.gripperAdapter->Apply(pose); }, "scene replacement rejects stale adapter");
-    Scene* replacement = fixture.scenes.GetActiveScene();
-    Entity ghostCheck = replacement->CreateEntity("NoStaleGripperBody");
+    fixture.scene.reset();
+    ExpectThrows<std::runtime_error>([&] { fixture.gripperAdapter->Apply(pose); }, "removed Scene rejects stale adapter");
+    fixture.scene = std::make_unique<Scene>(fixture.world);
+    Entity ghostCheck = fixture.scene->CreateEntity("NoStaleGripperBody");
     ghostCheck.SetLocalPosition({openSurface.x, openSurfaceY + 0.07F, openSurface.z});
     ghostCheck.set<RigidBody>({BodyMotionType::Dynamic, CollisionLayer::DynamicObject})
         .set<Colliders>({{physics_colliders::Box({0.003F, 0.003F, 0.003F})}});

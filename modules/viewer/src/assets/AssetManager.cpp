@@ -10,13 +10,6 @@
 #include <limits>
 #include <stdexcept>
 
-std::shared_ptr<Texture> AssetManager::GetTexture(ResourceID id) const
-{
-    auto it = textures_.find(id);
-    if (it == textures_.end()) return nullptr;
-    return it->second;
-}
-
 AssetManager::AssetManager()
 {
     defaultMaterial_ = std::make_shared<Material>(
@@ -100,13 +93,6 @@ void AssetManager::UploadModel(ModelResource& model)
     }
 }
 
-std::shared_ptr<Mesh> AssetManager::GetMesh(ResourceID id) const
-{
-    const auto iterator = meshes_.find(id);
-    if (iterator == meshes_.end()) return nullptr;
-    return iterator->second;
-}
-
 std::shared_ptr<Material> AssetManager::GetMaterial(ResourceID id) const
 {
     const auto iterator = materials_.find(id);
@@ -117,12 +103,4 @@ std::shared_ptr<Material> AssetManager::GetMaterial(ResourceID id) const
 std::shared_ptr<Material> AssetManager::GetDefaultMaterial() const
 {
     return defaultMaterial_;
-}
-
-void AssetManager::Clear()
-{
-    // 이 캐시가 가진 참조만 놓는다. 모델이나 장면이 계속 사용 중인 GPU 객체는 그 참조가 사라질 때까지 유지된다.
-    meshes_.clear();
-    materials_.clear();
-    textures_.clear();
 }

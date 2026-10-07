@@ -126,12 +126,10 @@ enum class CollisionLayer : std::uint8_t
     DynamicObject
 };
 
-/** @brief Body 주변의 충돌 모양을 Box, Cylinder, Sphere 또는 ConvexHull 중에서 고른다. */
+/** @brief Body 주변의 Box 또는 ConvexHull 충돌 모양을 고른다. */
 enum class CollisionShapeType : std::uint8_t
 {
     Box,
-    Cylinder,
-    Sphere,
     ConvexHull
 };
 
@@ -147,10 +145,7 @@ struct CollisionShapeDescription
     CollisionShapeType type = CollisionShapeType::Box;
     // 각 축에서 Box 중심부터 면까지의 길이 [m]다. 실제 전체 Box 크기는 이 값의 두 배다. {0.5, 0.5, 0.5}이면 전체 크기는 1 m.
     glm::vec3 halfExtentsMeters{0.5F};
-    // Sphere와 Cylinder의 반지름, Cylinder의 반쪽 높이 [m]다. Cylinder는 형상 Local 좌표의 Y축을 중심으로 선다.
-    float radiusMeters = 0.1F;
-    float halfHeightMeters = 0.1F;
-    // 형상의 위치와 회전은 Body 원점 기준이다. GLM quaternion 성분은 (w,x,y,z) 순서이며, 형상 크기는 scale이 아니라 위 반지름·반쪽 길이로 지정한다.
+    // 형상의 위치와 회전은 Body 원점 기준이다. GLM quaternion 성분은 (w,x,y,z) 순서다.
     Transform localTransform;
     // ConvexHull은 입력한 모든 점을 감싸는 볼록한 껍질이며 점은 형상 기준 좌표 [m]다.
     // 점 네 개는 최소 개수일 뿐이며 한 평면에 놓여 부피를 만들지 못하면 Jolt가 거부한다.

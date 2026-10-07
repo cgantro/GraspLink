@@ -1,7 +1,7 @@
 #include "Entity.h"
 #include "PhysicsWorld.h"
 #include "assets/GltfLoader.h"
-#include "scene/SceneManager.h"
+#include "scene/Scene.h"
 #include "simulation/components/PhysicsComponents.h"
 #include "simulation/robotics/GripperColliders.h"
 #include "simulation/systems/PhysicsSystemModule.h"
@@ -27,18 +27,18 @@ using grasplink::physics::CollisionLayer;
 struct Fixture
 {
     flecs::world world;
-    SceneManager scenes{world};
     grasplink::physics::PhysicsWorld physics;
-    Scene* scene = nullptr;
     ModelResource model;
     Entity robotRoot;
     Entity gripper;
+    std::unique_ptr<grasplink::simulation::PhysicsSystemModule> integration;
+    std::unique_ptr<Scene> scene;
 
     Fixture()
     {
         // 실제 GLB에 저장된 것과 같은 그리퍼 자식 계층을 구성한다. 충돌용 단순 형상의 자세는 이 ECS 관절들의 변환을 따라야 한다.
-        scene = LoadTestScene(scenes);
-        Require(scene != nullptr, "active Scene created");
+        scene = std::make_unique<Scene>(world);
+        Require(scene->GetSceneRoot().is_alive(), "Scene owns a live hierarchy root");
         model = LoadTestGlb("HCR12A_2F-85.glb");
         robotRoot = scene->CreateEntity("RobotRoot");
         const int gripperIndex = FindNode("Gripper");
@@ -85,8 +85,6 @@ struct Fixture
             TransformSystemModule::UpdateWorldTransforms(world);
         }
     }
-
-    std::unique_ptr<grasplink::simulation::PhysicsSystemModule> integration;
 };
 
 glm::vec3 WorldPoint(const Entity& entity, const glm::vec3& local)
@@ -312,8 +310,7 @@ int main()
         // Scene을 교체할 때 Scene이 소유한 충돌 형상 자손 계층과 PhysicsSystemModule의 Entity 연결 기록도 함께 정리되어야 한다.
         const Entity oldSceneRoot(fixture.scene->GetSceneRoot());
         const Entity oldProxy = fixture.gripper.FindChildByNameRecursive("Gripper_CollisionProxy");
-        fixture.scenes.LoadScene<Scene>();
-        fixture.scenes.OnUpdate(0.0F);
+        fixture.scene.reset();
         Require(!oldSceneRoot.GetHandle().is_alive() && !oldProxy.IsValid(), "Scene cleanup removes proxy hierarchy");
 
         std::cout << "TwoF-85 collider hierarchy and contact checks passed\n";

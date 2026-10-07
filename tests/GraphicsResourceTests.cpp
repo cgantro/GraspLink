@@ -1,6 +1,5 @@
 #include "MultisampleFramebuffer.h"
 #include "Shader.h"
-#include "ShadowMap.h"
 #include "Window.h"
 #include "TestSupport.h"
 
@@ -173,45 +172,6 @@ void RequireFailure(Function&& function, const std::string& expectedMessage)
     throw std::runtime_error("missing failure: " + expectedMessage);
 }
 
-void TestShadowMap(GlHooks& hooks)
-{
-    // 잘못된 크기와 완성되지 않은 framebuffer의 자원 정리를 확인한다. Begin/End 이후에는 이전 framebuffer와 viewport가 복원되어야 한다.
-    for (int size : {0, -1})
-        ExpectThrows<std::invalid_argument>([&] { ShadowMap invalid(size); }, "invalid shadow size rejected");
-    Require(hooks.framebuffers.empty() && hooks.textures.empty(), "invalid shadow size allocates nothing");
-
-    const std::array<GLint, 4> previousViewport{2, 3, 70, 80};
-    glViewport(previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]);
-    {
-        ShadowMap shadow(32);
-        Require(hooks.framebuffers.size() == 1 && hooks.textures.size() == 1, "shadow resource count");
-        shadow.Begin();
-        GLint bound = 0;
-        glGetIntegerv(GL_FRAMEBUFFER_BINDING, &bound);
-        Require(bound == static_cast<GLint>(hooks.framebuffers.front()), "shadow framebuffer bound");
-        Require(glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE, "shadow framebuffer complete");
-        std::array<GLint, 4> viewport{};
-        glGetIntegerv(GL_VIEWPORT, viewport.data());
-        Require(viewport == std::array<GLint, 4>{0, 0, 32, 32}, "shadow viewport matches storage");
-        shadow.End();
-        glGetIntegerv(GL_FRAMEBUFFER_BINDING, &bound);
-        Require(bound == 0, "shadow End restores default framebuffer");
-        glGetIntegerv(GL_VIEWPORT, viewport.data());
-        Require(viewport == previousViewport, "shadow End restores viewport");
-        shadow.Bind(0);
-        GLint width = 0;
-        glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &width);
-        Require(width == 32, "shadow depth texture storage");
-    }
-    hooks.RequireReleased("shadow destructor");
-    hooks.Reset();
-    hooks.incompleteFramebuffer = true;
-    RequireFailure([&] { ShadowMap failed(32); }, "Shadow framebuffer is incomplete");
-    Require(hooks.framebuffers.size() == 1 && hooks.textures.size() == 1, "failed shadow allocated both objects");
-    hooks.RequireReleased("failed shadow constructor");
-    hooks.Reset();
-}
-
 void TestMultisampleFramebuffer(GlHooks& hooks)
 {
     // MSAA는 경계 픽셀을 여러 번 계산해 거친 선을 부드럽게 한다. GPU가 지원하는 표본 수보다 크게 요청하지 않는지 확인한다.
@@ -323,11 +283,7 @@ void TestShader(GlHooks& hooks)
 }
 }
 
-/**
- * @brief ShadowMap, MSAA framebuffer, Shader의 OpenGL 자원 수명과 실패 복구를 확인한다.
- * @details 숨긴 Window가 GL context를 제공한다. 테스트가 만든 GPU 자원과 원래 OpenGL 함수 대신 끼워 넣은 GlHooks 함수를 먼저 정리하고 Window를 마지막에 파괴한다.
- * framebuffer가 불완전한 상황을 재현해 생성 실패 때 만들어 둔 OpenGL 객체도 실제로 삭제되는지 확인한다.
- */
+/** Verify OpenGL resource lifetime and failure cleanup. */
 int main()
 {
     try
@@ -335,7 +291,6 @@ int main()
         // 함수 안의 GPU 객체와 GLAD 함수 대체물을 먼저 정리한다. 마지막 Window가 파괴될 때 OpenGL context를 닫도록 수명을 배치한다.
         Window window(Window::Properties{128, 128, "GraphicsResourceTests", false, false});
         GlHooks hooks;
-        TestShadowMap(hooks);
         TestMultisampleFramebuffer(hooks);
         TestShader(hooks);
         Require(glGetError() == GL_NO_ERROR, "resource checks leave no OpenGL error");

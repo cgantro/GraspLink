@@ -12,7 +12,7 @@ namespace
 /**
  * @brief 물리 물체 기준점과 실제 바닥 상자 중심이 다른 플랫폼 시험 자료를 만든다.
  * @details Body는 Jolt에서 위치와 회전을 가진 물체다. 이 플랫폼의 상자 중심은 Body 기준점에서 Local X로 0.5 m 떨어져 있고, Z축으로 90도 돌리면 그 차이는 Scene Y 방향이 된다.
- * 상자 반높이 0.25 m까지 더하면 윗면은 Y=0.75 m에 있어야 한다. 구가 여기에 안착하는 높이를 확인하면 계산이 실제 형상 중심 대신 Body 기준점을 사용한 오류를 찾을 수 있다.
+ * 상자 반높이 0.25 m까지 더하면 윗면은 Y=0.75 m에 있어야 한다. 반높이 0.1 m인 작은 상자가 여기에 안착하는 높이를 확인하면 계산이 실제 형상 중심 대신 Body 기준점을 사용한 오류를 찾을 수 있다.
  */
 BodyDescription OffsetPlatform()
 {
@@ -28,22 +28,21 @@ BodyDescription OffsetPlatform()
 }
 
 /**
- * @brief 지정한 X 위치의 구가 offset 플랫폼에 안착하는지 검증한다.
+ * @brief 지정한 X 위치의 작은 상자가 offset 플랫폼에 안착하는지 검증한다.
  * @param world 테스트용 PhysicsWorld. 호출자가 플랫폼을 만들고 수명을 관리한다.
- * @param x 플랫폼과 구의 World X 위치 [m].
- * @param expectedY 구 Body 원점의 기대 높이 [m].
- * @details 플랫폼 윗면 0.75 m에 반지름 0.1 m인 구가 닿으면 구 중심은 0.85 m가 된다.
- * 750회의 4 ms 계산은 3 s 동안 낙하하고 접촉한 뒤 안정될 시간을 준다. 15 mm 허용 오차는 작은 계산 흔들림은 허용하면서 구 중심과 물체 기준점을 혼동한 큰 높이 오류를 잡는다.
+ * @param x 플랫폼과 상자의 World X 위치 [m].
+ * @param expectedY 상자 Body 원점의 기대 높이 [m].
+ * @details 플랫폼 윗면 0.75 m에 반높이 0.1 m인 상자가 닿으면 Body 원점은 0.85 m가 된다.
+ * 750회의 4 ms 계산은 3 s 동안 낙하하고 접촉한 뒤 안정될 시간을 준다. 15 mm 허용 오차는 작은 계산 흔들림은 허용하면서 형상 중심과 물체 기준점을 혼동한 큰 높이 오류를 잡는다.
  */
 void CheckContact(PhysicsWorld& world, float x, float expectedY)
 {
-    BodyDescription sphere;
+    BodyDescription fallingBox;
     CollisionShapeDescription shape;
-    shape.type = CollisionShapeType::Sphere;
-    shape.radiusMeters = 0.1F;
-    sphere.shapes.push_back(shape);
-    sphere.transform.position = {x, 2.0F, 0.0F};
-    const auto falling = world.CreateBody(sphere);
+    shape.halfExtentsMeters = glm::vec3{0.1F};
+    fallingBox.shapes.push_back(shape);
+    fallingBox.transform.position = {x, 2.0F, 0.0F};
+    const auto falling = world.CreateBody(fallingBox);
     for (int i = 0; i < 750; ++i) world.Step(0.004);
     RequireNear(world.GetBodyTransform(falling).position.y, expectedY, 0.015, "offset platform contact height");
     world.DestroyBody(falling);
@@ -100,8 +99,7 @@ int main()
         teleportedDynamic.motionType = BodyMotionType::Dynamic;
         teleportedDynamic.collisionLayer = CollisionLayer::DynamicObject;
         CollisionShapeDescription teleportShape;
-        teleportShape.type = CollisionShapeType::Sphere;
-        teleportShape.radiusMeters = 0.1F;
+        teleportShape.halfExtentsMeters = glm::vec3{0.1F};
         teleportedDynamic.shapes.push_back(teleportShape);
         teleportedDynamic.transform.position.y = 10.0F;
         const auto dynamicHandle = world.CreateBody(teleportedDynamic);

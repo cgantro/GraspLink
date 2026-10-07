@@ -38,7 +38,7 @@ namespace grasplink::viewer
 /**
  * @brief Viewer에서 로봇과 그리퍼의 Environment 충돌을 확인하고 안전한 관절 자세를 복원한다.
  * @details Environment는 바닥과 작업대처럼 로봇이 들어가면 안 되는 고정 물체다. 이 guard는 화면 Entity 자세를 Jolt 충돌 형상에 전달해 Controller가 제안한 자세와 고정 tick의 실제 자세를 검사한다.
- * Controller, 어댑터, Flecs World와 Physics 객체는 빌려 쓰므로 이 guard보다 오래 살아야 한다. Controller에 등록한 검사 함수도 guard를 참조하므로 파괴 전에 ClearControllerValidator를 호출해야 한다.
+ * Controller, 어댑터, Flecs World와 Physics 객체는 빌려 쓰므로 이 guard보다 오래 살아야 한다. Controller에 등록한 검사 함수는 guard가 파괴될 때 함께 해제된다.
  */
 class ViewerRobotCollisionGuard final
 {
@@ -55,6 +55,7 @@ public:
         grasplink::physics::PhysicsWorld& physicsWorld,
         grasplink::simulation::PhysicsSystemModule& physicsSystem,
         const Entity& robotRoot);
+    ~ViewerRobotCollisionGuard();
 
     ViewerRobotCollisionGuard(const ViewerRobotCollisionGuard&) = delete;
     ViewerRobotCollisionGuard& operator=(const ViewerRobotCollisionGuard&) = delete;
@@ -64,9 +65,6 @@ public:
 
     /** @brief 이동 중 현재 자세가 Environment와 겹치면 직전 안전 관절각과 Entity 변환으로 복원한다. */
     void RestoreSafePoseIfOverlapping();
-
-    /** @brief Controller에 등록한 동기 충돌 검사 함수를 지워 guard 참조가 남지 않게 한다. */
-    void ClearControllerValidator() noexcept;
 
 private:
     [[nodiscard]] bool ValidateCandidatePose(const grasplink::robotics::JointVector& candidateJoints);
@@ -87,6 +85,5 @@ private:
     std::vector<flecs::entity> m_CollisionEntities;
     flecs::entity m_BaseEnvironmentEntity;
     grasplink::simulation::PhysicsSystemModule& m_PhysicsSystem;
-    bool m_ValidatorRegistered = false;
 };
 }

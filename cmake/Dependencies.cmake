@@ -59,30 +59,11 @@ function(grasplink_add_graphics_library)
     modules/viewer/src/graphics/VertexArray.cpp
     modules/viewer/src/graphics/VertexBuffer.cpp
     modules/viewer/src/graphics/Window.cpp
-    modules/viewer/src/graphics/ShadowMap.cpp
     modules/viewer/src/graphics/MultisampleFramebuffer.cpp
-  )
-  set(GRASPLINK_GRAPHICS_HEADERS
-    modules/viewer/include/components/TransformComponents.h
-    modules/viewer/include/components/RenderComponents.h
-    modules/viewer/include/graphics/Camera.h
-    modules/viewer/include/graphics/OrbitCameraController.h
-    modules/viewer/include/graphics/IndexBuffer.h
-    modules/viewer/include/graphics/Material.h
-    modules/viewer/include/graphics/Mesh.h
-    modules/viewer/include/graphics/Renderer.h
-    modules/viewer/include/graphics/Shader.h
-    modules/viewer/include/graphics/Texture.h
-    modules/viewer/include/graphics/VertexArray.h
-    modules/viewer/include/graphics/VertexBuffer.h
-    modules/viewer/include/graphics/Window.h
-    modules/viewer/include/graphics/ShadowMap.h
-    modules/viewer/include/graphics/MultisampleFramebuffer.h
   )
 
   add_library(grasplink_graphics STATIC
     ${GRASPLINK_GRAPHICS_SOURCES}
-    ${GRASPLINK_GRAPHICS_HEADERS}
   )
   target_include_directories(grasplink_graphics PUBLIC
     modules/viewer/include

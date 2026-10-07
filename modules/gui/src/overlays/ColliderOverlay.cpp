@@ -5,14 +5,12 @@
 #include "components/TransformComponents.h"
 
 #include <imgui.h>
-#include <glm/gtc/constants.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
 #include <glm/gtx/quaternion.hpp>
 
 #include <array>
 #include <algorithm>
 #include <chrono>
-#include <cmath>
 #include <vector>
 
 namespace grasplink::gui
@@ -84,62 +82,6 @@ void DrawBox(std::vector<ScreenLine>& lines, const grasplink::physics::Collision
             if ((i & (1U << axis)) == 0)
                 DrawLine(lines, corners[i], corners[i | (1U << axis)], world,
                     viewProjection, displaySize, color);
-}
-
-/** @brief 높이 축이 Shape의 Y축인 Cylinder를 위·아래 원과 세로 선분으로 근사해 화면에 투영한다. */
-void DrawCylinder(std::vector<ScreenLine>& lines, const grasplink::physics::CollisionShapeDescription& shape,
-    const glm::mat4& entityWorld, const glm::mat4& viewProjection,
-    const ImVec2& displaySize, ImU32 color)
-{
-    constexpr int Segments = 24;
-    // 설정된 원통의 축은 Shape의 Y축이다. 위·아래 원 둘레와 일정 간격의 세로 선을 이어 원통의 외곽을 보여 준다.
-    const glm::mat4 world = entityWorld * LocalShapeMatrix(shape.localTransform);
-    for (int i = 0; i < Segments; ++i)
-    {
-        const float a = glm::two_pi<float>() * static_cast<float>(i) / Segments;
-        const float b = glm::two_pi<float>() * static_cast<float>(i + 1) / Segments;
-        const glm::vec3 aBottom{shape.radiusMeters * std::cos(a), -shape.halfHeightMeters,
-            shape.radiusMeters * std::sin(a)};
-        const glm::vec3 bBottom{shape.radiusMeters * std::cos(b), -shape.halfHeightMeters,
-            shape.radiusMeters * std::sin(b)};
-        const glm::vec3 aTop{aBottom.x, shape.halfHeightMeters, aBottom.z};
-        const glm::vec3 bTop{bBottom.x, shape.halfHeightMeters, bBottom.z};
-        DrawLine(lines, aBottom, bBottom, world, viewProjection, displaySize, color);
-        DrawLine(lines, aTop, bTop, world, viewProjection, displaySize, color);
-        if (i % 4 == 0)
-            DrawLine(lines, aBottom, aTop, world, viewProjection, displaySize, color);
-    }
-}
-
-/** @brief Sphere의 설정 반지름을 서로 직각인 세 원으로 표현해 화면에 투영한다. */
-void DrawSphere(std::vector<ScreenLine>& lines, const grasplink::physics::CollisionShapeDescription& shape,
-    const glm::mat4& entityWorld, const glm::mat4& viewProjection,
-    const ImVec2& displaySize, ImU32 color)
-{
-    constexpr int Segments = 24;
-    // 세 원은 각기 다른 평면에 놓이며 구의 설정 반지름을 알아보기 쉽게 보여 주는 2D 근사다.
-    const glm::mat4 world = entityWorld * LocalShapeMatrix(shape.localTransform);
-    for (int plane = 0; plane < 3; ++plane)
-    {
-        for (int i = 0; i < Segments; ++i)
-        {
-            const float a = glm::two_pi<float>() * static_cast<float>(i) / Segments;
-            const float b = glm::two_pi<float>() * static_cast<float>(i + 1) / Segments;
-            glm::vec3 from{shape.radiusMeters * std::cos(a), shape.radiusMeters * std::sin(a), 0.0F};
-            glm::vec3 to{shape.radiusMeters * std::cos(b), shape.radiusMeters * std::sin(b), 0.0F};
-            if (plane == 1)
-            {
-                from = {from.x, 0.0F, from.y};
-                to = {to.x, 0.0F, to.y};
-            }
-            else if (plane == 2)
-            {
-                from = {0.0F, from.x, from.y};
-                to = {0.0F, to.x, to.y};
-            }
-            DrawLine(lines, from, to, world, viewProjection, displaySize, color);
-        }
-    }
 }
 
 /** @brief Hull에 입력된 정점을 화면에 투영한 다음 2D 바깥 윤곽선을 만든다. 실제 3D 면이나 모서리 정보는 사용하지 않는다. */
@@ -268,12 +210,6 @@ struct ColliderOverlay::Impl
                 {
                 case grasplink::physics::CollisionShapeType::Box:
                     DrawBox(collisionLines, shape, entityWorld, viewProjection, displaySize, color);
-                    break;
-                case grasplink::physics::CollisionShapeType::Cylinder:
-                    DrawCylinder(collisionLines, shape, entityWorld, viewProjection, displaySize, color);
-                    break;
-                case grasplink::physics::CollisionShapeType::Sphere:
-                    DrawSphere(collisionLines, shape, entityWorld, viewProjection, displaySize, color);
                     break;
                 case grasplink::physics::CollisionShapeType::ConvexHull:
                     DrawConvexHull(collisionLines, shape, entityWorld, viewProjection, displaySize, color);

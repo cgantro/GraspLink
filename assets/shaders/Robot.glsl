@@ -11,11 +11,9 @@ layout(location = 2) in vec2 a_TexCoord;
 uniform mat4 u_Model;
 uniform mat4 u_View;
 uniform mat4 u_Projection;
-uniform mat4 u_LightSpaceMatrix;
 
 out vec3 v_Normal;
 out vec3 v_WorldPosition;
-out vec4 v_LightSpacePosition;
 out vec2 v_TexCoord;
 
 void main()
@@ -29,7 +27,6 @@ void main()
     // 역전치 행렬을 적용해 변환 뒤에도 표면에 수직인 방향을 유지한다.
     v_Normal = mat3(transpose(inverse(u_Model))) * a_Normal;
 
-    v_LightSpacePosition = u_LightSpaceMatrix * worldPosition;
     v_TexCoord = a_TexCoord;
 
     // 좌표 변환은 점의 기준을 바꾸는 계산이다. Local에서 World, Camera, Clip 순서로 바꾸며 Camera 좌표는 카메라가 원점인 기준이고 Clip 좌표는 화면 자르기와 깊이 계산에 쓰이는 중간값이다.
@@ -40,11 +37,9 @@ void main()
 #type fragment
 #version 330 core
 
-// GPU는 삼각형 안의 정점값을 픽셀 위치에 맞게 보간한다. 이 단계는 보간한 World 위치와 표면 방향으로 빛과 그림자를 계산한다.
 
 in vec3 v_Normal;
 in vec3 v_WorldPosition;
-in vec4 v_LightSpacePosition;
 in vec2 v_TexCoord;
 
 uniform vec3 u_CameraPosition;
@@ -56,7 +51,6 @@ uniform float u_RoughnessFactor;
 uniform sampler2D u_BaseColorTexture;
 uniform int u_UseBaseColorTexture;
 
-uniform sampler2D u_ShadowMap;
 
 out vec4 FragColor;
 
@@ -75,50 +69,6 @@ vec3 ToneMapACES(vec3 color)
         0.0,
         1.0
     );
-}
-
-float CalculateShadow(vec4 lightSpacePosition, vec3 normal, vec3 lightDirection)
-{
-    // 광원 기준 Clip 좌표를 w로 나누고 0~1 범위로 바꿔 그림자 이미지 위치와 투영 깊이로 사용한다. 이 깊이는 실제 광원 거리값이 아니다.
-    vec3 projCoords = lightSpacePosition.xyz / lightSpacePosition.w;
-
-    projCoords = projCoords * 0.5 + 0.5;
-
-    if (projCoords.z > 1.0)
-        return 0.0;
-
-    if (projCoords.x < 0.0 || projCoords.x > 1.0 ||
-        projCoords.y < 0.0 || projCoords.y > 1.0)
-        return 0.0;
-
-    float currentDepth = projCoords.z;
-
-    // 표면 깊이에 작은 여유값을 둔다. 광선을 비스듬히 받는 면은 깊이 오차가 커져 얼룩 그림자가 생기기 쉬우므로 여유를 늘린다.
-    float bias = max(
-        0.0008 * (1.0 - dot(normal, lightDirection)),
-        0.00015
-    );
-
-    vec2 texelSize = 1.0 / vec2(textureSize(u_ShadowMap, 0));
-
-    float shadow = 0.0;
-
-    for (int x = -2; x <= 2; ++x)
-    {
-        for (int y = -2; y <= 2; ++y)
-        {
-            float closestDepth = texture(
-                u_ShadowMap,
-                projCoords.xy + vec2(x, y) * texelSize
-            ).r;
-
-            if (currentDepth - bias > closestDepth)
-                shadow += 1.0;
-        }
-    }
-
-    // 표면 주변 5×5 위치에서 가려진 비율을 평균한다. 0은 빛을 받음, 1은 완전히 가려짐이다.
-    return shadow / 25.0;
 }
 
 void main()
@@ -168,9 +118,7 @@ void main()
     vec3 F0 = mix(vec3(0.04), baseColor, metallic);
     vec3 specular = F0 * specularStrength * 0.35;
 
-    float shadow = CalculateShadow(v_LightSpacePosition, N, L);
-
-    vec3 directLight =(diffuseColor * NdotL + specular) *1.35 *(1.0 - shadow * 0.65);
+    vec3 directLight = (diffuseColor * NdotL + specular) * 1.35;
 
     vec3 fillDirection = normalize(vec3(0.65, 0.35, -0.65));
     float fillAmount = max(dot(N, fillDirection), 0.0);

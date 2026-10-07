@@ -74,7 +74,11 @@ ViewerRobotCollisionGuard::ViewerRobotCollisionGuard(
     {
         return ValidateCandidatePose(candidateJoints);
     });
-    m_ValidatorRegistered = true;
+}
+
+ViewerRobotCollisionGuard::~ViewerRobotCollisionGuard()
+{
+    m_RobotController.SetJointPoseCollisionValidator({});
 }
 
 void ViewerRobotCollisionGuard::CaptureSafeJointPose()
@@ -95,15 +99,6 @@ void ViewerRobotCollisionGuard::RestoreSafePoseIfOverlapping()
 
     ApplyJointPose(m_RobotController.GetStateView());
     TransformSystemModule::UpdateWorldTransforms(m_World);
-}
-
-void ViewerRobotCollisionGuard::ClearControllerValidator() noexcept
-{
-    if (!m_ValidatorRegistered)
-        return;
-
-    m_RobotController.SetJointPoseCollisionValidator({});
-    m_ValidatorRegistered = false;
 }
 
 bool ViewerRobotCollisionGuard::ValidateCandidatePose(

@@ -65,29 +65,15 @@ bool HasName(const Entity& entity, const std::string& expected)
     return name != nullptr && expected == name;
 }
 
-glm::mat4 LocalMatrix(const NodeData& node)
-{
-    return glm::translate(glm::mat4(1.0F), node.translation) *
-        glm::mat4_cast(glm::normalize(node.rotation)) * glm::scale(glm::mat4(1.0F), node.scale);
-}
-
-std::vector<glm::vec3> MeshPoints(const ModelResource& model, std::size_t meshNodeIndex,
-    std::size_t rootIndex)
+std::vector<glm::vec3> MeshPoints(const ModelResource& model,
+    const std::vector<glm::mat4>& nodeTransforms, std::size_t meshNodeIndex, std::size_t rootIndex)
 {
     const NodeData& node = model.nodes[meshNodeIndex];
     if (node.meshIndex < 0 || static_cast<std::size_t>(node.meshIndex) >= model.meshes.size())
         throw std::invalid_argument("TwoF85 collider mesh node has no valid mesh.");
     // GLB 메시 node에서 소유 joint/body까지의 내부 변환만 합성해 정점 [m]을 해당 부품 좌표계로 옮긴다.
     // 모델 작성자가 지정한 소유 root 변환은 proxy의 부모 계층에 남겨 둔다. 실행 중 Scene이 이 변환을 한 번 적용한다.
-    glm::mat4 meshToRoot(1.0F);
-    std::size_t current = meshNodeIndex;
-    while (current != rootIndex)
-    {
-        meshToRoot = LocalMatrix(model.nodes[current]) * meshToRoot;
-        const int parent = model.nodes[current].parentIndex;
-        if (parent < 0) throw std::invalid_argument("TwoF85 mesh is outside its owning joint hierarchy.");
-        current = static_cast<std::size_t>(parent);
-    }
+    const glm::mat4 meshToRoot = glm::inverse(nodeTransforms[rootIndex]) * nodeTransforms[meshNodeIndex];
     const MeshData& mesh = model.meshes[static_cast<std::size_t>(node.meshIndex)];
     std::vector<glm::vec3> vertices;
     for (const Vertex& vertex : mesh.vertices)
@@ -127,24 +113,7 @@ void ConfigureTwoF85Colliders(Scene& scene, const Entity& robotRoot, const Model
             throw std::invalid_argument("TwoF85 model contains duplicate node names.");
 
     // 충돌 메시만 보더라도 잘못된 부모 index나 순환 참조가 모델 다른 곳에 있으면 계층 계산이 안전하지 않으므로 GLB 전체를 먼저 검사한다. 단위 scale 조건은 실제 충돌 형상 경로에만 요구한다.
-    std::vector<unsigned char> state(model.nodes.size());
-    auto build = [&](auto&& self, std::size_t i) -> void
-    {
-        if (state[i] == 1) throw std::invalid_argument("TwoF85 model contains a node cycle.");
-        if (state[i] == 2) return;
-        state[i] = 1;
-        const NodeData& node = model.nodes[i];
-        if (node.parentIndex < -1)
-            throw std::invalid_argument("TwoF85 model has an invalid parent index.");
-        if (node.parentIndex >= 0)
-        {
-            if (static_cast<std::size_t>(node.parentIndex) >= model.nodes.size())
-                throw std::invalid_argument("TwoF85 model has an invalid parent index.");
-            self(self, static_cast<std::size_t>(node.parentIndex));
-        }
-        state[i] = 2;
-    };
-    for (std::size_t i = 0; i < model.nodes.size(); ++i) build(build, i);
+    const auto nodeTransforms = detail::BuildNodeWorldTransforms(model);
 
     auto validateAncestry = [&](std::size_t index)
     {
@@ -234,7 +203,7 @@ void ConfigureTwoF85Colliders(Scene& scene, const Entity& robotRoot, const Model
             }
             physics::CollisionShapeDescription shape;
             shape.type = physics::CollisionShapeType::ConvexHull;
-            shape.pointsMeters = MeshPoints(model, meshIndex, rootIndex);
+            shape.pointsMeters = MeshPoints(model, nodeTransforms, meshIndex, rootIndex);
             prepared[p].shapes.push_back(std::move(shape));
         }
     }

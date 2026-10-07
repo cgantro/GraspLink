@@ -2,6 +2,8 @@
 
 이 보고서는 최초 승인된 감사 작업의 완료 시점을 기록한다. 이후 그리퍼 충돌과 한글 Doxygen 주석 보강은 [후속 작업 보고서](GRIPPER_COLLISION_AND_COMMENT_RESULTS.md)에 기록한다.
 
+2026-10-08 M&S 범위 축소에서는 독립 physics demo와 Scene 전환 경로, shadow map 렌더링, Sphere/Cylinder collider, GLTF tangent와 렌더러에서 쓰지 않는 재질 필드를 제거했다. 현재 유지하는 그래픽·물리 범위는 MSAA, 단일 색 pass, Box/Convex Hull이다. 아래 표는 과거 작업 당시의 판단을 보존하며, 현재 API 목록으로 사용하지 않는다.
+
 이후 Local 회전 저장을 quaternion으로 전환해 GLB·FK·Physics의 Euler 왕복을 제거했다. 현재 회전 계약은 [Architecture](ARCHITECTURE.md)를 참고한다. 아래 double Euler 보강과 검증 숫자는 당시 결과로 보존한다.
 
 기준: 2026-10-05 작업 시작 시의 실제 소스와 기존 미커밋 변경을 보존한 snapshot.
@@ -21,11 +23,10 @@
 | 높음 | Dynamic 조상 아래 물리 Body의 갱신 규칙 불명확 | SOL | [PhysicsSystemModule](../modules/simulation/src/systems/PhysicsSystemModule.cpp): 지원하지 않는 계층의 Body 생성/유지를 차단 |
 | 높음 | Scene 활성화 전 생성/Scene 밖 재부모화로 소유 범위 이탈 | SOL + LUNA | [Scene](../modules/viewer/src/scene/Scene.cpp), [Entity](../modules/viewer/src/Entity.cpp): 활성 root·World·Scene·cycle 검사. 이름 없는 grouping 검색도 안전하게 처리 |
 | 높음 | ModelResource GPU 공유 참조가 GL Context보다 오래 생존 | SOL + LUNA | [ViewerApp](../apps/viewer/ViewerApp.cpp): ModelResource까지 GPU 참조를 Context 종료 전에 해제. 실제 강한 공유 소유권으로 주석 정정 |
-| 중간 | Shader/FBO 일부 생성 실패 시 자원 누수 | SOL + LUNA | [Shader](../modules/viewer/src/graphics/Shader.cpp), [MultisampleFramebuffer](../modules/viewer/src/graphics/MultisampleFramebuffer.cpp), [ShadowMap](../modules/viewer/src/graphics/ShadowMap.cpp): 실패 시 정리, resize 실패 후 같은 크기 재시도 지원 |
-| 중간 | Grid의 25회 shadow 표본을 9로 나눔 | LUNA | [Grid shader](../assets/shaders/Grid.glsl): 25로 정규화 |
+| 중간 | Shader/MSAA framebuffer 일부 생성 실패 시 자원 누수 | SOL + LUNA | [Shader](../modules/viewer/src/graphics/Shader.cpp), [MultisampleFramebuffer](../modules/viewer/src/graphics/MultisampleFramebuffer.cpp): 실패 시 정리, resize 실패 후 같은 크기 재시도 지원. 과거 shadow map 경로는 2026-10-08에 제거 |
 | 중간 | GLB sparse/range/matrix/hierarchy를 조용히 잘못 해석 | SOL + LUNA | [GltfLoader](../modules/viewer/src/assets/GltfLoader.cpp): 지원하지 않는 sparse, 범위/stride/overflow, 비유한 값, skew/perspective/퇴화 TRS, 순환·다중 부모·분리된 root 거부 |
 | 중간 | Graphics OFF 의존성과 Ninja configuration/파일 대소문자 불일치 | LUNA | [Dependencies](../cmake/Dependencies.cmake), [Presets](../CMakePresets.json): 공통 GLM, Debug/Release 별도 경로, MultisampleFramebuffer 이름 통일 |
-| 중간 | 임시 데모 동작이 NDEBUG에 따라 runtime에 섞임 | LUNA | [DebugSceneSetup](../apps/viewer/DebugSceneSetup.cpp): 앱에 분리하고 `--physics-demo`에서만 실행 |
+| 중간 | 임시 물리 데모가 기본 simulator에 섞임 | LUNA | 데모를 별도 옵션으로 분리했던 뒤 2026-10-08 M&S 범위 축소에서 50개 낙하 물체와 자동 J1 명령을 함께 제거 |
 | 중간 | GUI 표시를 실제 Jolt 형상으로 오해할 수 있음 | SOL + LUNA | [GuiModule](../modules/gui/src/GuiModule.cpp): ECS 설정의 X-ray 외곽선, 100 ms cache, 투영/clipping 한계 명시 |
 | 낮음 | 중복 legacy component/spec와 사용되지 않는 marker 데이터 | LUNA + SOL | control의 구형 2F85 spec, viewer의 구형 Robot/Gripper component 제거. RobotCollisionProxy는 tag로 정리 |
 | 낮음 | Doxygen/사전식 용어/오래된 데이터 흐름 주석 | LUNA | 책임·좌표·단위·수명·설계 이유 중심으로 수정. [COMMENT_GUIDELINES](COMMENT_GUIDELINES.md)에 Doxygen 금지 반영 |
@@ -47,12 +48,12 @@
 | PhysicsWorld | 비대칭 COM의 실제 접촉, 원점 pose, Kinematic 이동, 삭제/재사용, 다른 World handle, 잘못된 pose |
 | ControlRuntime | 4 ms 누적 tick, 시간 clamp, 명령 검증, 속도 상한, 재목표/Stop/Disconnect |
 | RobotKinematics | 독립 기준점: zero/J1~J6/혼합 자세, ToolFrame, 잘못된 모델/상태 |
-| GraphicsResources | 실제 GL 자원 ID의 해제, Shader compile/link/create 실패, FBO 실패와 resize 재시도 |
-| GltfLoader | 현재 GLB 3개, 정상 packed/interleaved/matrix 입력, 잘못된 GLB 23개 |
+| GraphicsResources | 실제 GL 자원 ID의 해제, Shader compile/link/create 실패, MSAA framebuffer 실패와 resize 재시도 |
+| GltfLoader | 현재 사용 GLB와 정상 packed/interleaved/matrix 입력, 잘못된 GLB 23개 |
 | RobotPoseIntegration | 실제 GLB → GPU/Prefab → Transform → ToolFrame과 FK 위치·방향 비교, root 이동/회전, bind 불일치 |
-| PhysicsEcsIntegration | grouping 부모, Dynamic feedback, collider 변경/삭제, Scene 전환, 소유 범위/계층 검사 |
+| PhysicsEcsIntegration | grouping 부모, Dynamic feedback, collider 변경/삭제, SceneRoot 소유와 정리, 계층 검사 |
 | RobotCollisionGeometry | link geometry 소유 범위, FK proxy 위치, 잘못된 모델과 제거된 Scene |
-| ViewerSmoke / ViewerDemoSmoke | 숨긴 GL Window에서 일반/데모 실행, Shader·GUI·렌더링·종료 경로 |
+| ViewerSmoke | 숨긴 GL Window에서 기본 Viewer의 Shader·GUI·렌더링·종료 경로 |
 
 빌드·테스트 명령은 [README](../README.md)에 정리했다. Graphics OFF 구성에는 PhysicsWorld, ControlRuntime, RobotKinematics만 포함한다.
 

@@ -39,7 +39,6 @@
 #include "robotics/kinematics/GripperKinematics.h"
 
 #include "scene/Scene.h"
-#include "scene/SceneManager.h"
 
 #include "viewer/robotics/RobotTransformAdapter.h"
 #include "viewer/robotics/GripperTransformAdapter.h"
@@ -248,11 +247,7 @@ bool ViewerApp::InitViewer()
     m_World.import<TransformSystemModule>();
     m_World.import<RenderSystemModule>();
 
-    m_SceneManager = std::make_unique<SceneManager>(m_World);
-    m_SceneManager->LoadScene<Scene>();
-
-    // 예약한 Scene을 활성화해 계층의 최상위 부모를 만든 뒤, Scene 소유 Entity로 모델 계층을 구성한다.
-    m_SceneManager->OnUpdate(0.0F);
+    m_Scene = std::make_unique<Scene>(m_World);
 
     m_AssetManager = std::make_unique<AssetManager>();
 
@@ -262,7 +257,7 @@ bool ViewerApp::InitViewer()
 
 void ViewerApp::InitScene(Entity& robotRoot, Entity& floorEntity)
 {
-    Scene* scene = m_SceneManager->GetActiveScene();
+    Scene* scene = m_Scene.get();
 
     m_RobotShader = Shader::Create("shaders/Robot.glsl");
     auto gridShader = Shader::Create("shaders/Grid.glsl");
@@ -314,17 +309,6 @@ bool ViewerApp::InitRobot(const Entity& robotRoot)
     m_RobotKinematics = std::make_unique<grasplink::robotics::kinematics::RobotKinematics>(robotSpec);
     m_RobotTransformAdapter = std::make_unique<RobotTransformAdapter>(robotRoot, robotSpec);
 
-    // 자동 관절 이동은 빌드 종류로 결정하지 않고 사용자가 --physics-demo를 지정했을 때만 시작한다.
-    if (m_Options.physicsDemo)
-    {
-        const auto moveResult = viewer_debug::StartRobotMotion(*m_RobotController, robotSpec);
-        if (!moveResult)
-        {
-            m_Logger.Write(grasplink::diagnostics::LogLevel::Error, "robot.demo_motion", moveResult.message);
-            return false;
-        }
-    }
-
     return true;
 }
 
@@ -346,12 +330,12 @@ bool ViewerApp::InitGripper(const Entity& robotRoot)
         robotRoot.FindChildByNameRecursive("Gripper"), specification);
 
     // 데모와 smoke test에서는 테스트할 수 있도록 그리퍼를 실제로 닫는다. 일반 Viewer는 열린 기준 자세에서 시작한다.
-    if (m_Options.physicsDemo || m_Options.smokeTest)
+    if (m_Options.smokeTest)
     {
         const auto result = m_GripperController->Command({255, 255, 128});
         if (!result)
         {
-            m_Logger.Write(grasplink::diagnostics::LogLevel::Error, "gripper.demo_command", result.message);
+            m_Logger.Write(grasplink::diagnostics::LogLevel::Error, "gripper.smoke_test_command", result.message);
             return false;
         }
     }
@@ -374,9 +358,9 @@ void ViewerApp::ApplyControllerPoses()
 void ViewerApp::InitPhysics(const Entity& robotRoot, Entity& floorEntity)
 {
     m_PhysicsWorld = std::make_unique<PhysicsWorld>();
-    grasplink::simulation::SimulationSceneBuilder::ConfigureFloor(floorEntity);
+    grasplink::simulation::ConfigureFloor(floorEntity);
     m_RobotPhysicsAdapter = std::make_unique<grasplink::simulation::RobotPhysicsAdapter>(
-        *m_SceneManager->GetActiveScene(), robotRoot, grasplink::robotics::models::hanwha::kHcr12a,
+        *m_Scene, robotRoot, grasplink::robotics::models::hanwha::kHcr12a,
         m_RobotModel);
     // 화면에는 원본 GLB Mesh를 사용하고, 물리에는 각 정점에서 방향별 극점을 골라 단순화한 볼록 껍질(Convex Hull) 충돌 형상을 사용한다.
     // 바깥 관절(outer knuckle)과 손가락처럼 같은 강체 부품에 속한 Mesh만 합쳐 복합 충돌 형상 하나로 만든다.
@@ -386,12 +370,9 @@ void ViewerApp::InitPhysics(const Entity& robotRoot, Entity& floorEntity)
     // 각 충돌 형상은 원본 관절의 자식이므로 관절 자세를 전달하는 별도 adapter는 필요하지 않다. 접촉 정지와 물체 파지는 아래 GripperGraspAdapter가 물리 계산 결과를 받아 처리한다.
     // GUI의 보라색 선은 ECS에 지정한 shape를 깊이 가림 없이 그린 근사다. 화면 Mesh나 Jolt가 최종 생성한 hull을 직접 보여 주지는 않는다.
     grasplink::simulation::ConfigureTwoF85Colliders(
-        *m_SceneManager->GetActiveScene(), robotRoot, m_RobotModel);
-    m_GraspBox = std::make_unique<Entity>(viewer_debug::CreateGraspBox(*m_SceneManager->GetActiveScene(), m_RobotShader));
-    m_PlacementArea = std::make_unique<Entity>(viewer_debug::CreatePlacementArea(*m_SceneManager->GetActiveScene(), m_RobotShader));
-    if (m_Options.physicsDemo)
-        viewer_debug::CreatePhysicsBoxes(
-            *m_SceneManager->GetActiveScene(), m_RobotShader);
+        *m_Scene, robotRoot, m_RobotModel);
+    m_GraspBox = std::make_unique<Entity>(viewer_debug::CreateGraspBox(*m_Scene, m_RobotShader));
+    m_PlacementArea = std::make_unique<Entity>(viewer_debug::CreatePlacementArea(*m_Scene, m_RobotShader));
     // Physics Body를 만들기 전에 첫 FK 자세와 계층 World 행렬을 계산해 화면 Entity와 Kinematic 목표를 같은 위치에 맞춘다.
     ApplyControllerPoses();
     TransformSystemModule::UpdateWorldTransforms(m_World);
@@ -494,7 +475,6 @@ void ViewerApp::MainLoop()
             ZoneScopedN("Render");
             m_Renderer->BeginFrame();
 
-            m_SceneManager->OnUpdate(renderDeltaSeconds);
             TransformSystemModule::UpdateWorldTransforms(m_World);
             m_World.progress(renderDeltaSeconds);
             const auto graspState = m_GripperGraspAdapter->GetState();
@@ -578,8 +558,6 @@ void ViewerApp::Shutdown()
     // 파지 제약은 연결된 Body와 PhysicsWorld를 빌려 쓰므로 Scene, Controller, 물리 시스템이 살아 있을 때 먼저 해제한다.
     m_GripperGraspAdapter.reset();
     // Controller가 guard를 참조하는 함수를 보관하므로 함수를 지운 뒤 빌린 객체보다 먼저 guard를 파괴한다.
-    if (m_RobotCollisionGuard)
-        m_RobotCollisionGuard->ClearControllerValidator();
     m_RobotCollisionGuard.reset();
     // Scene Entity handle을 빌린 Adapter를 Scene보다 먼저 파괴해 소멸 처리 중 이미 삭제된 handle을 참조하지 않게 한다.
     m_RobotTransformAdapter.reset();
@@ -597,11 +575,11 @@ void ViewerApp::Shutdown()
     m_GripperController.reset();
 
     // Scene을 파괴하면 ECS 삭제 observer가 Jolt Body를 제거한다.
-    // 따라서 SceneManager를 정리하는 동안 물리 시스템과 Jolt World를 유지한다.
+    // Destroy the Scene while physics observers and the Jolt world are alive.
     m_RobotRoot.reset();
     m_GraspBox.reset();
     m_PlacementArea.reset();
-    m_SceneManager.reset();
+    m_Scene.reset();
     m_PhysicsSystemModule.reset();
     m_GuiModule.reset();
 

@@ -118,7 +118,7 @@ private:
 void CheckRepositoryAssets()
 {
     // 저장소에 있는 로봇과 바닥 GLB 파일이 Mesh를 읽고 하나의 최상위 node에서 시작하는 계층으로 구성되는지 확인한다.
-    for (const char* filename : {"HCR12A_R00.glb", "HCR12A_2F-85.glb", "plane.glb"})
+    for (const char* filename : {"HCR12A_2F-85.glb", "plane.glb"})
     {
         const auto resource = GltfLoader::LoadGLB(std::filesystem::path(GRASPLINK_TEST_ASSET_DIR) / filename);
         Require(!resource.meshes.empty() && !resource.nodes.empty(), std::string(filename) + " has model data");

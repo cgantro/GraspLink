@@ -18,10 +18,8 @@
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayer.h>
 #include <Jolt/Physics/Collision/ObjectLayer.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
-#include <Jolt/Physics/Collision/Shape/CylinderShape.h>
 #include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
 #include <Jolt/Physics/Collision/Shape/MutableCompoundShape.h>
-#include <Jolt/Physics/Collision/Shape/SphereShape.h>
 
 #include <algorithm>
 #include <atomic>
@@ -396,6 +394,19 @@ struct PhysicsWorld::Impl
     std::unordered_map<std::uint64_t, FixedBinding> constraints;
     std::uint64_t nextConstraint = 1;
 
+    bool IsBodyValid(PhysicsBodyHandle handle) const
+    {
+        return handle.IsValid() && handle.worldToken == worldToken &&
+            physicsSystem.GetBodyInterface().IsAdded(ToBodyID(handle));
+    }
+
+    JPH::BodyID RequireBodyID(PhysicsBodyHandle handle) const
+    {
+        if (!IsBodyValid(handle))
+            throw std::invalid_argument("Invalid PhysicsBodyHandle.");
+        return ToBodyID(handle);
+    }
+
     Impl()
     {
         constexpr JPH::uint TempMemorySize = 10U * 1024U * 1024U;
@@ -580,18 +591,6 @@ PhysicsBodyHandle PhysicsWorld::CreateBody(const BodyDescription& description)
                 part.halfExtentsMeters.y, part.halfExtentsMeters.z), convexRadius);
             break;
         }
-        case CollisionShapeType::Cylinder:
-            if (!std::isfinite(part.radiusMeters) || !std::isfinite(part.halfHeightMeters) ||
-                part.radiusMeters <= 0.0F || part.halfHeightMeters <= 0.0F)
-                throw std::invalid_argument("Cylinder radius and half height must be finite and > 0.");
-            shape = new JPH::CylinderShape(part.halfHeightMeters, part.radiusMeters,
-                std::min(0.002F, std::min(part.halfHeightMeters, part.radiusMeters) * 0.1F));
-            break;
-        case CollisionShapeType::Sphere:
-            if (!std::isfinite(part.radiusMeters) || part.radiusMeters <= 0.0F)
-                throw std::invalid_argument("Sphere radius must be finite and > 0.");
-            shape = new JPH::SphereShape(part.radiusMeters);
-            break;
         case CollisionShapeType::ConvexHull:
         {
             if (part.pointsMeters.size() < 4)
@@ -645,22 +644,12 @@ PhysicsBodyHandle PhysicsWorld::CreateBody(const BodyDescription& description)
 
 bool PhysicsWorld::IsBodyValid(PhysicsBodyHandle handle) const
 {
-    if (!handle.IsValid() || handle.worldToken != impl_->worldToken)
-        return false;
-
-    const JPH::BodyID bodyID = ToBodyID(handle);
-
-    // Jolt는 삭제된 Body의 슬롯을 재사용할 수 있다. BodyID의 sequence number까지 비교해 같은 슬롯에 새로 만들어진 Body를 오래된 핸들과 구분한다.
-    return impl_->physicsSystem
-        .GetBodyInterface()
-        .IsAdded(bodyID);
+    return impl_->IsBodyValid(handle);
 }
 
 BodyMotionType PhysicsWorld::GetBodyMotionType(PhysicsBodyHandle handle) const
 {
-    if (!IsBodyValid(handle))
-        throw std::invalid_argument("Invalid PhysicsBodyHandle.");
-    switch (impl_->physicsSystem.GetBodyInterface().GetMotionType(ToBodyID(handle)))
+    switch (impl_->physicsSystem.GetBodyInterface().GetMotionType(impl_->RequireBodyID(handle)))
     {
     case JPH::EMotionType::Static: return BodyMotionType::Static;
     case JPH::EMotionType::Kinematic: return BodyMotionType::Kinematic;
@@ -671,9 +660,7 @@ BodyMotionType PhysicsWorld::GetBodyMotionType(PhysicsBodyHandle handle) const
 
 CollisionLayer PhysicsWorld::GetCollisionLayer(PhysicsBodyHandle handle) const
 {
-    if (!IsBodyValid(handle))
-        throw std::invalid_argument("Invalid PhysicsBodyHandle.");
-    const JPH::ObjectLayer layer = impl_->physicsSystem.GetBodyInterface().GetObjectLayer(ToBodyID(handle));
+    const JPH::ObjectLayer layer = impl_->physicsSystem.GetBodyInterface().GetObjectLayer(impl_->RequireBodyID(handle));
     return ObjectLayers::Category(layer);
 }
 
@@ -738,10 +725,7 @@ void PhysicsWorld::DestroyConstraint(PhysicsConstraintHandle handle)
 Transform PhysicsWorld::GetBodyTransform(
     PhysicsBodyHandle handle) const
 {
-    if (!IsBodyValid(handle))
-        throw std::invalid_argument("Invalid PhysicsBodyHandle.");
-
-    const JPH::BodyID bodyID = ToBodyID(handle);
+    const JPH::BodyID bodyID = impl_->RequireBodyID(handle);
 
     JPH::RVec3 position;
     JPH::Quat rotation;
@@ -780,13 +764,12 @@ bool PhysicsWorld::OverlapsEnvironmentAtImpl(
     const Transform& targetTransform,
     const PhysicsBodyHandle* ignoredEnvironmentBody) const
 {
-    if (!IsBodyValid(handle))
-        throw std::invalid_argument("Invalid PhysicsBodyHandle.");
+    const JPH::BodyID bodyID = impl_->RequireBodyID(handle);
     ValidateTransform(targetTransform);
 
     const JPH::Shape* shape = nullptr;
     {
-        JPH::BodyLockRead lock(impl_->physicsSystem.GetBodyLockInterface(), ToBodyID(handle));
+        JPH::BodyLockRead lock(impl_->physicsSystem.GetBodyLockInterface(), bodyID);
         if (!lock.Succeeded())
             return false;
         shape = lock.GetBody().GetShape();
@@ -821,8 +804,7 @@ void PhysicsWorld::SetBodyTransform(
     PhysicsBodyHandle handle,
     const Transform& transform)
 {
-    if (!IsBodyValid(handle))
-        throw std::invalid_argument("Invalid PhysicsBodyHandle.");
+    const JPH::BodyID bodyID = impl_->RequireBodyID(handle);
     ValidateTransform(transform);
 
     // 순간이동은 경로 접촉을 계산하지 않는다. 잠든 이전 표면의 접촉도 즉시 버려 새 자세의 충돌 검사 결과만 남긴다.
@@ -830,12 +812,12 @@ void PhysicsWorld::SetBodyTransform(
 
     // 모델 Body 원점의 World 자세를 그대로 전달한다. 무게중심(COM) 차이를 여기서 다시 더하면 Jolt의 내부 보정과 겹쳐 위치가 어긋난다.
     impl_->physicsSystem.GetBodyInterface().SetPositionAndRotation(
-        ToBodyID(handle), ToJoltPosition(transform.position),
+        bodyID, ToJoltPosition(transform.position),
         ToJoltRotation(glm::normalize(transform.rotation)), JPH::EActivation::Activate);
-    if (GetBodyMotionType(handle) == BodyMotionType::Dynamic)
+    if (impl_->physicsSystem.GetBodyInterface().GetMotionType(bodyID) == JPH::EMotionType::Dynamic)
     {
         impl_->physicsSystem.GetBodyInterface().SetLinearAndAngularVelocity(
-            ToBodyID(handle), JPH::Vec3::sZero(), JPH::Vec3::sZero());
+            bodyID, JPH::Vec3::sZero(), JPH::Vec3::sZero());
     }
 }
 
@@ -845,8 +827,7 @@ void PhysicsWorld::MoveKinematic(
     const Transform& targetTransform,
     double fixedDeltaSeconds)
 {
-    if (!IsBodyValid(handle))
-        throw std::invalid_argument("Invalid PhysicsBodyHandle.");
+    const JPH::BodyID bodyID = impl_->RequireBodyID(handle);
     ValidateTransform(targetTransform);
 
     if (!std::isfinite(fixedDeltaSeconds) ||
@@ -855,8 +836,6 @@ void PhysicsWorld::MoveKinematic(
         throw std::invalid_argument(
             "fixedDeltaSeconds must be finite and > 0.");
     }
-
-    const JPH::BodyID bodyID = ToBodyID(handle);
 
     auto& bodyInterface = impl_->physicsSystem.GetBodyInterface();
     const JPH::EMotionType motionType = bodyInterface.GetMotionType(bodyID);
@@ -877,10 +856,8 @@ void PhysicsWorld::MoveKinematic(
 
 void PhysicsWorld::StopKinematic(PhysicsBodyHandle handle)
 {
-    if (!IsBodyValid(handle))
-        throw std::invalid_argument("Invalid PhysicsBodyHandle.");
+    const JPH::BodyID bodyID = impl_->RequireBodyID(handle);
     auto& bodyInterface = impl_->physicsSystem.GetBodyInterface();
-    const JPH::BodyID bodyID = ToBodyID(handle);
     if (bodyInterface.GetMotionType(bodyID) != JPH::EMotionType::Kinematic)
         throw std::logic_error("StopKinematic requires a kinematic body.");
     bodyInterface.SetLinearAndAngularVelocity(bodyID, JPH::Vec3::sZero(), JPH::Vec3::sZero());

@@ -7,7 +7,7 @@
  * @brief Texture는 GPU가 표면 색을 찾을 때 읽는 이미지이며 이 클래스는 8 bit 채널의 2D 이미지를 만든다.
  * @details
  * Create2D는 픽셀을 GPU로 복사한 뒤 호출자가 준 CPU 주소를 보관하지 않는다. Material은 기본색 Texture를 공유한다.
- * Renderer는 기본색 이미지를 0번 Texture unit에서, 그림자 투영 깊이 이미지를 7번 Texture unit에서 읽는다.
+ * Renderer는 기본색 이미지를 0번 Texture unit에서 읽는다.
  * 마지막 공유 참조가 사라지면 이 객체가 GPU 이미지 번호를 삭제한다. 만들거나 삭제할 때는 GPU 명령 실행 환경인 OpenGL context가 현재 스레드에서 활성화되어야 한다.
  * 크기·채널·포인터 오류는 std::runtime_error로 알리지만, OpenGL 실행 환경이 없거나 GPU 오류가 난 경우는 예외로 바꾸지 않는다.
  */
@@ -39,7 +39,7 @@ public:
      * @throws std::runtime_error 크기/포인터가 유효하지 않거나 channels가 1, 3, 4가 아닐 때.
      * @details 화면에서 이미지가 작아지면 미리 축소해 둔 단계별 이미지를 골라 부드럽게 섞으며 커질 때도 이웃 픽셀을 섞는다.
      * 이미지는 가로·세로 방향으로 반복하고 입력 배열의 첫 행부터 그대로 복사하므로 위아래를 뒤집지 않는다.
-     * glTF 이미지도 TinyGLTF가 디코드한 배열을 그대로 사용한다. 금속성·거칠기 숫자 이미지에는 srgb=false가 필요하지만 현재 재질과 화면 그리기는 기본색 이미지만 연결한다.
+     * glTF 기본색 이미지는 TinyGLTF가 디코드한 배열을 그대로 사용한다. 이 Viewer는 금속성·거칠기 숫자 이미지를 재질에 연결하지 않는다.
      * 파일별 이미지 필터와 반복 규칙은 반영하지 않는다.
      */
     static std::shared_ptr<Texture> Create2D(

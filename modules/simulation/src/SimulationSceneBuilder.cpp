@@ -4,7 +4,7 @@
 
 namespace grasplink::simulation
 {
-void SimulationSceneBuilder::ConfigureFloor(Entity& floor)
+void ConfigureFloor(Entity& floor)
 {
     // plane.glb는 X와 Z 방향으로 원점에서 각각 3 m까지 그려지고 표면은 Y=0에 있다. Mesh 두께는 1 mm지만 충돌 Box 크기는 이 GLB에서 읽지 않고 별도로 정한다.
     // 충돌 Box는 Entity 원점 기준 반크기 (3, 0.02, 3) m이고 중심을 Y=-0.015 m에 둔다. 따라서 Box 윗면은 Y=0.005 m로 렌더 바닥보다 5 mm 위에 놓인다.

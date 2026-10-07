@@ -35,7 +35,6 @@ Mesh::Mesh(const Vertex* vertices, std::uint32_t vertexCount,
 
     // Shader 입력 위치 0, 1, 2에 정점 위치(vec3), 표면 법선(vec3), Texture 좌표(vec2)를 연결한다.
     // stride는 다음 정점까지의 byte 간격이고 offsetof는 한 Vertex 안에서 각 값이 시작하는 byte 위치다.
-    // 구조체 크기와 멤버 위치를 사용해 padding도 반영한다. tangent 값도 Vertex에 있지만 현재 Shader 입력에는 연결하지 않는다.
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), reinterpret_cast<void*>(offsetof(Vertex, position)));
     glEnableVertexAttribArray(1);

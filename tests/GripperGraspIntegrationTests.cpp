@@ -2,7 +2,7 @@
 #include "PhysicsWorld.h"
 #include "robotics/backends/simulation/SimGripperController.h"
 #include "robotics/models/robotiq/TwoF85.h"
-#include "scene/SceneManager.h"
+#include "scene/Scene.h"
 #include "simulation/components/PhysicsComponents.h"
 #include "simulation/components/RobotCollisionProxy.h"
 #include "simulation/robotics/GripperGraspAdapter.h"
@@ -35,6 +35,22 @@ using namespace grasplink::physics;
 using grasplink::robotics::backends::simulation::SimGripperController;
 using grasplink::robotics::models::robotiq::kTwoF85;
 
+CollisionShapeDescription SphereLikeHull(float radius)
+{
+    constexpr float goldenRatio = 1.61803398875F;
+    const float scale = radius / std::sqrt(1.0F + goldenRatio * goldenRatio);
+    CollisionShapeDescription shape;
+    shape.type = CollisionShapeType::ConvexHull;
+    for (const float signA : {-1.0F, 1.0F})
+        for (const float signB : {-1.0F, 1.0F})
+        {
+            shape.pointsMeters.emplace_back(0.0F, signA * scale, signB * goldenRatio * scale);
+            shape.pointsMeters.emplace_back(signA * scale, signB * goldenRatio * scale, 0.0F);
+            shape.pointsMeters.emplace_back(signA * goldenRatio * scale, 0.0F, signB * scale);
+        }
+    return shape;
+}
+
 /**
  * @brief 양쪽 Box 손끝과 Dynamic 상자로 실제 Jolt 접촉이 발생하는 작은 장면을 구성한다.
  * @details 화면 모델의 복잡한 기구와 별개로 접촉 판정, Controller 정지, 물리 연결, Body 수명을 검증한다.
@@ -44,20 +60,20 @@ struct Fixture
 {
     flecs::world world;
     PhysicsWorld physics;
-    SceneManager scenes{world};
     SimGripperController controller{kTwoF85};
     Entity root, anchor, left, right, object;
     std::unique_ptr<grasplink::simulation::PhysicsSystemModule> system;
+    std::unique_ptr<Scene> scene;
     std::unique_ptr<grasplink::simulation::GripperGraspAdapter> grasp;
 
     explicit Fixture(bool unilateral = false, bool sameSide = false)
     {
-        Scene& scene = *LoadTestScene(scenes);
-        root = scene.CreateEntity("RobotRoot");
-        anchor = Box(scene, "AnchorProxy", {0.0F, 1.0F, 0.8F}, {0.04F, 0.04F, 0.04F}, BodyMotionType::Kinematic);
-        left = Box(scene, "LeftTipProxy", {-0.145F, sameSide ? 0.93F : 1.0F, 0.0F},
+        scene = std::make_unique<Scene>(world);
+        root = scene->CreateEntity("RobotRoot");
+        anchor = Box(*scene, "AnchorProxy", {0.0F, 1.0F, 0.8F}, {0.04F, 0.04F, 0.04F}, BodyMotionType::Kinematic);
+        left = Box(*scene, "LeftTipProxy", {-0.145F, sameSide ? 0.93F : 1.0F, 0.0F},
             {0.05F, sameSide ? 0.06F : 0.2F, 0.15F}, BodyMotionType::Kinematic);
-        right = Box(scene, "RightTipProxy", {unilateral ? 0.6F : sameSide ? -0.145F : 0.145F, sameSide ? 1.07F : 1.0F, 0.0F},
+        right = Box(*scene, "RightTipProxy", {unilateral ? 0.6F : sameSide ? -0.145F : 0.145F, sameSide ? 1.07F : 1.0F, 0.0F},
             {0.05F, sameSide ? 0.06F : 0.2F, 0.15F}, BodyMotionType::Kinematic);
         anchor.set<GripperCollisionProxy>({GripperCollisionPart::Body});
         left.set<GripperCollisionProxy>({GripperCollisionPart::LeftFingerTip});
@@ -65,7 +81,7 @@ struct Fixture
         anchor.SetParent(root);
         left.SetParent(root);
         right.SetParent(root);
-        object = Box(scene, "Object", {0.0F, 1.0F, 0.0F}, {0.1F, 0.1F, 0.1F}, BodyMotionType::Dynamic);
+        object = Box(*scene, "Object", {0.0F, 1.0F, 0.0F}, {0.1F, 0.1F, 0.1F}, BodyMotionType::Dynamic);
         TransformSystemModule::UpdateWorldTransforms(world);
         system = CreateTestPhysicsSystem(world, physics);
         Require(controller.Connect().Ok() && controller.Activate().Ok(), "controller activated");
@@ -139,9 +155,8 @@ void CheckRejectedContacts()
 
     Fixture differentObjects;
     differentObjects.object.Remove<Colliders>();
-    Scene& scene = *differentObjects.scenes.GetActiveScene();
-    differentObjects.Box(scene, "LeftObject", {-0.07F, 1.0F, 0.0F}, {0.03F, 0.1F, 0.1F}, BodyMotionType::Dynamic);
-    differentObjects.Box(scene, "RightObject", {0.07F, 1.0F, 0.0F}, {0.03F, 0.1F, 0.1F}, BodyMotionType::Dynamic);
+    differentObjects.Box(*differentObjects.scene, "LeftObject", {-0.07F, 1.0F, 0.0F}, {0.03F, 0.1F, 0.1F}, BodyMotionType::Dynamic);
+    differentObjects.Box(*differentObjects.scene, "RightObject", {0.07F, 1.0F, 0.0F}, {0.03F, 0.1F, 0.1F}, BodyMotionType::Dynamic);
     differentObjects.Step();
     Require(differentObjects.grasp->GetState().leftContact && differentObjects.grasp->GetState().rightContact,
         "both fingers contact different objects");
@@ -190,8 +205,7 @@ void CheckLifetimeAndRelease()
 
     Fixture replacedScene;
     replacedScene.Step();
-    replacedScene.scenes.LoadScene<Scene>();
-    replacedScene.scenes.OnUpdate(0.0F);
+    replacedScene.scene.reset();
     replacedScene.grasp->BeforePhysicsStep();
     Require(!replacedScene.grasp->GetState().grasped, "scene replacement removes body connections safely");
 }
@@ -298,8 +312,7 @@ void CheckAuthoredGripperContacts()
 {
     flecs::world world;
     PhysicsWorld physics;
-    SceneManager scenes{world};
-    Scene& scene = *LoadTestScene(scenes);
+    Scene scene{world};
     const ModelResource model = LoadTestGlb("HCR12A_2F-85.glb");
     Entity root = scene.CreateEntity("AuthoredRobotRoot");
     int gripperIndex = -1;
@@ -328,7 +341,7 @@ void CheckAuthoredGripperContacts()
     grasplink::simulation::ConfigureTwoF85Colliders(scene, root, model);
     TransformSystemModule::UpdateWorldTransforms(world);
 
-    // 실제 손끝 외피 정점을 Scene 좌표로 모아 두 손끝 사이에 들어갈 시험 구를 배치한다.
+    // 실제 손끝 외피 정점을 Scene 좌표로 모아 두 손끝 사이에 들어갈 구형 ConvexHull 시험 물체를 배치한다.
     // 두 외피의 평균점 방향으로 투영한 안쪽 면 사이 간격에 6 mm 여유 겹침을 더해 첫 물리 계산에서 확실한 양쪽 접촉을 만들며, 이후 이동은 실제 constraint로 검증한다.
     auto hullPoints = [&](const char* name)
     {
@@ -359,11 +372,11 @@ void CheckAuthoredGripperContacts()
     glm::vec3 center = (leftCenter + rightCenter) * 0.5F;
     center += axis * ((leftFace + rightFace) * 0.5F - glm::dot(center, axis));
     const float radius = (rightFace - leftFace) * 0.5F + 0.006F;
-    Require(radius > 0.0F, "authored open tips have positive test sphere radius");
+    Require(radius > 0.0F, "authored open tips have positive test object half-size");
     Entity object = scene.CreateEntity("AuthoredGripObject");
     object.SetLocalPosition(center);
     object.set<RigidBody>({BodyMotionType::Dynamic, CollisionLayer::DynamicObject})
-        .set<Colliders>({{physics_colliders::Sphere(radius)}});
+        .set<Colliders>({{SphereLikeHull(radius)}});
     TransformSystemModule::UpdateWorldTransforms(world);
     grasplink::simulation::PhysicsSystemModule system{world, physics};
     grasplink::simulation::GripperGraspAdapter grasp{physics, system, controller};
@@ -406,8 +419,7 @@ void CheckRobotControllerCarriesAuthoredGrasp()
     using models::hanwha::kHcr12a;
     flecs::world world;
     PhysicsWorld physics;
-    SceneManager scenes{world};
-    Scene& scene = *LoadTestScene(scenes);
+    Scene scene{world};
     const ModelResource model = LoadTestGlb("HCR12A_2F-85.glb");
     Require(model.rootNodeIndex >= 0, "full robot GLB has authored root");
     std::function<Entity(int, const Entity&)> createTree = [&](int index, const Entity& parent)
@@ -541,11 +553,11 @@ void CheckRobotControllerCarriesAuthoredGrasp()
     glm::vec3 center = (leftCenter + rightCenter) * 0.5F;
     center += axis * ((leftFace + rightFace) * 0.5F - glm::dot(center, axis));
     const float radius = (rightFace - leftFace) * 0.5F + 0.006F;
-    Require(radius > 0.0F, "full pipeline test object radius positive");
+    Require(radius > 0.0F, "full pipeline test object half-size is positive");
     Entity object = scene.CreateEntity("RobotControllerHeldObject");
     object.SetLocalPosition(center);
     object.set<RigidBody>({BodyMotionType::Dynamic, CollisionLayer::DynamicObject})
-        .set<Colliders>({{physics_colliders::Sphere(radius)}});
+        .set<Colliders>({{SphereLikeHull(radius)}});
     TransformSystemModule::UpdateWorldTransforms(world);
     grasplink::simulation::PhysicsSystemModule system{world, physics};
     grasplink::simulation::GripperGraspAdapter grasp{physics, system, controller};

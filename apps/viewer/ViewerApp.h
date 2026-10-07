@@ -13,7 +13,7 @@ class Window;
 class Renderer;
 class Camera;
 class OrbitCameraController;
-class SceneManager;
+class Scene;
 class AssetManager;
 class Shader;
 class Entity;
@@ -57,13 +57,9 @@ namespace grasplink::viewer
 class ViewerRobotCollisionGuard;
 }
 
-/**
- * @brief Viewer를 일반 조작, 물리 시연, 자동 화면 확인 중 어떤 방식으로 실행할지 정한다.
- * @details physicsDemo는 로봇 관절을 움직이고 물리 상자를 보여 준다. smokeTest는 창을 표시하지 않고 정해진 프레임 수만 그려 초기화와 렌더 경로를 확인한다.
- */
+/** Options for automated Viewer checks. */
 struct ViewerOptions
 {
-    bool physicsDemo = false;
     bool smokeTest = false;
 };
 
@@ -122,9 +118,8 @@ private:
 
     // 마우스 입력으로 바라보는 지점 주위를 도는 카메라를 움직인다.
     std::unique_ptr<OrbitCameraController> m_CameraController;
-
-    // 활성 Scene을 선택하고 전환 및 수명을 관리한다.
-    std::unique_ptr<SceneManager> m_SceneManager;
+    // Owns the SceneRoot until physics cleanup is complete.
+    std::unique_ptr<Scene> m_Scene;
 
     // 모델의 Mesh, Material, Texture를 GPU 자원으로 올리고 공유한다.
     std::unique_ptr<AssetManager> m_AssetManager;

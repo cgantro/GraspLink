@@ -96,10 +96,9 @@ ctest --test-dir build-headless-debug --output-on-failure
 ```powershell
 cd build-ninja-debug
 .\grasplink_simulator.exe
-.\grasplink_simulator.exe --physics-demo
 ```
 
-기본 실행은 로봇과 바닥을 표시하며 GUI에서 그리퍼 Open/Close, 요청 개폐율·raw 속도, Activate/Reset/Stop을 조작한다. `--physics-demo`는 Debug/Release 모두에서 50개 낙하 Box와 로봇·그리퍼 데모 명령을 추가한다. GUI의 force request는 128로 고정되며 힘 효과를 계산하지 않는다. `Show configured colliders`는 ECS 설정의 X-ray 근사 외곽선이며 Jolt 실제 형상 조회가 아니다.
+기본 실행은 HCR-12A와 2F-85, 바닥, 무작위 Pick&Place 상자와 목표 영역을 표시한다. GUI에서 그리퍼 Open/Close, 요청 개폐율·raw 속도, Activate/Reset/Stop을 조작한다. GUI의 force request는 128로 고정되며 실제 힘 효과를 계산하지 않는다. `Show configured colliders`는 ECS 설정의 X-ray 외곽선이며 Jolt가 만든 실제 형상을 조회하지 않는다. 렌더러는 MSAA와 기본 조명만 사용하며 shadow map은 만들지 않는다.
 
 모듈 경계는 [Architecture](docs/ARCHITECTURE.md), 물리 제약은 [Physics / Flecs Integration](docs/PHYSICS_ECS_INTEGRATION.md), 현재 점검 결과는 [Code Documentation Audit](docs/CODE_DOCUMENTATION_AUDIT.md)를 참고한다.
 

@@ -19,40 +19,6 @@ namespace grasplink::simulation
 {
 namespace
 {
-glm::mat4 NodeLocalTransform(const NodeData& node)
-{
-    return glm::translate(glm::mat4(1.0F), node.translation) *
-        glm::mat4_cast(glm::normalize(node.rotation)) * glm::scale(glm::mat4(1.0F), node.scale);
-}
-
-std::vector<glm::mat4> BuildNodeWorldTransforms(const ModelResource& model)
-{
-    // 메시가 저장된 GLB 내부에서 부모부터 자식까지 node 변환만 누적한다. Scene에서 로봇을 배치한 변환은 실행 중 부모 robotRoot가 적용한다.
-    std::vector<glm::mat4> transforms(model.nodes.size(), glm::mat4(1.0F));
-    std::vector<bool> ready(model.nodes.size(), false);
-    std::vector<bool> visiting(model.nodes.size(), false);
-    auto build = [&](auto&& self, std::size_t index) -> const glm::mat4&
-    {
-        if (ready[index]) return transforms[index];
-        if (visiting[index])
-            throw std::invalid_argument("Robot collision model contains a node cycle.");
-        visiting[index] = true;
-        const NodeData& node = model.nodes[index];
-        transforms[index] = NodeLocalTransform(node);
-        if (node.parentIndex >= 0)
-        {
-            if (node.parentIndex >= static_cast<int>(model.nodes.size()))
-                throw std::runtime_error("Robot collision model has an invalid parent node.");
-            transforms[index] = self(self, static_cast<std::size_t>(node.parentIndex)) * transforms[index];
-        }
-        ready[index] = true;
-        visiting[index] = false;
-        return transforms[index];
-    };
-    for (std::size_t i = 0; i < model.nodes.size(); ++i) build(build, i);
-    return transforms;
-}
-
 struct PositionKey
 {
     std::int64_t x;
@@ -286,7 +252,7 @@ RobotCollisionGeometryBuilder::Result RobotCollisionGeometryBuilder::Build(
         !(options.componentMinimumExtentMeters >= 0.0F) || !(options.cellMinimumExtentMeters >= 0.0F))
         throw std::invalid_argument("RobotCollisionGeometryBuilder: geometry options are invalid");
 
-    const std::vector<glm::mat4> nodeTransforms = BuildNodeWorldTransforms(model);
+    const std::vector<glm::mat4> nodeTransforms = detail::BuildNodeWorldTransforms(model);
     std::unordered_map<std::string, const NodeData*> nodesByName;
     for (const NodeData& node : model.nodes)
         if (!nodesByName.emplace(node.name, &node).second)

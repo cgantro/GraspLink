@@ -1,11 +1,50 @@
 #include "CollisionGeometry.h"
+#include "assets/GraphicsTypes.h"
 
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtx/quaternion.hpp>
 #include <glm/gtx/norm.hpp>
 #include <algorithm>
 #include <cmath>
+#include <functional>
+#include <stdexcept>
 
 namespace grasplink::simulation::detail
 {
+namespace
+{
+glm::mat4 NodeLocalTransform(const NodeData& node)
+{
+    return glm::translate(glm::mat4(1.0F), node.translation) *
+        glm::mat4_cast(glm::normalize(node.rotation)) * glm::scale(glm::mat4(1.0F), node.scale);
+}
+}
+
+std::vector<glm::mat4> BuildNodeWorldTransforms(const ModelResource& model)
+{
+    std::vector<glm::mat4> transforms(model.nodes.size(), glm::mat4(1.0F));
+    std::vector<bool> ready(model.nodes.size(), false);
+    std::vector<bool> visiting(model.nodes.size(), false);
+    auto build = [&](auto&& self, std::size_t index) -> const glm::mat4&
+    {
+        if (ready[index]) return transforms[index];
+        if (visiting[index])
+            throw std::invalid_argument("Model contains a node cycle.");
+        visiting[index] = true;
+        const NodeData& node = model.nodes[index];
+        if (node.parentIndex < -1 || node.parentIndex >= static_cast<int>(model.nodes.size()))
+            throw std::invalid_argument("Model has an invalid parent node.");
+        transforms[index] = NodeLocalTransform(node);
+        if (node.parentIndex >= 0)
+            transforms[index] = self(self, static_cast<std::size_t>(node.parentIndex)) * transforms[index];
+        ready[index] = true;
+        visiting[index] = false;
+        return transforms[index];
+    };
+    for (std::size_t i = 0; i < model.nodes.size(); ++i) build(build, i);
+    return transforms;
+}
+
 std::vector<glm::vec3> BuildConvexSupportPoints(const std::vector<glm::vec3>& vertices)
 {
     std::vector<glm::vec3> result;

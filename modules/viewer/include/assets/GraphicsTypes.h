@@ -17,8 +17,6 @@ class Mesh;
  * @details
  * Mesh는 여러 삼각형의 꼭짓점과 연결 번호를 모은 모델 형상이다. position은 Mesh 자체 기준(Local) 위치고 normal(법선)은 그 꼭짓점 표면에 수직인 방향이다.
  * texCoord(UV)는 표면에서 색상 Texture의 어느 픽셀을 읽을지 나타내는 이미지 좌표다. GltfLoader는 실수형 위치·법선·UV만 읽는다.
- * tangent는 표면을 따라가는 방향이고 normal(법선)은 표면에 수직인 방향이다. 원본 VEC4의 w 부호는 tangent와 법선에서 두 방향과 수직인 나머지 표면 방향을 정한다.
- * 현재 w는 버리고 tangent도 GPU에 전달하지 않는다. Normal mapping은 이미지의 방향 정보를 이용해 표면을 울퉁불퉁하게 보이게 하는 방법이며 현재 사용할 수 없다.
  */
 struct Vertex
 {
@@ -28,24 +26,6 @@ struct Vertex
     glm::vec3 normal{0.0f, 1.0f, 0.0f};
     /// 색상 이미지 안에서 읽을 위치. 각 성분은 이미지 크기에 대한 비율이다.
     glm::vec2 texCoord{0.0f};
-
-    /// tangent는 표면을 따라가는 방향이다. 원본 네 성분 중 xyz만 보존하며 w의 부호는 tangent와 법선에서 나머지 표면 방향을 정하는 데 쓰이지만 현재 버린다.
-    glm::vec3 tangent{0.0F};
-};
-
-/**
- * @brief 모델 표면을 그리는 한 덩어리의 꼭짓점과 삼각형 연결 정보를 담는다.
- * @details
- * glTF Primitive는 하나의 재질로 그릴 삼각형 꼭짓점 묶음이다. GltfLoader가 묶음별 꼭짓점과 삼각형 연결 번호를 읽고 Mesh를 만들 때 배열 뒤에 이어 붙인다.
- * index는 삼각형 세 꼭짓점을 고르는 vertices 배열 번호다. byte 위치와 달리 0은 첫 꼭짓점, 1은 두 번째 꼭짓점을 뜻한다.
- */
-struct PrimitiveData
-{
-    std::vector<Vertex> vertices;
-    std::vector<std::uint32_t> indices;
-
-    /// 사용할 재질의 ModelResource::materials 번호. -1이면 기본 재질을 사용한다.
-    int materialIndex = -1;
 };
 
 /**
@@ -71,10 +51,6 @@ struct TextureData
 
 /**
  * @brief 표면 색·반사 계수와 기본색 이미지 연결 정보를 담는다.
- * @details
- * glTF 재질은 표면 색과 빛 반응을 정하는 값의 묶음이다. GltfLoader는 기본색, 금속성·거칠기 계수와 발광색 숫자를 읽고 기본색 이미지 참조만 기록한다.
- * 다른 이미지 참조 필드는 빈 식별자로 남아 화면용 재질에 연결되지 않는다. 모델 이미지 배열을 읽어 GPU에 올리는 작업과 재질이 그 이미지를 사용하도록 연결하는 작업은 별개다.
- * 금속성·거칠기 숫자는 화면용 재질에 전달되지만 발광색 숫자는 저장만 하고 현재 화면 계산에는 전달하지 않는다.
  */
 struct MaterialData
 {
@@ -90,23 +66,9 @@ struct MaterialData
     /// 거칠기 계수, glTF 범위 0~1.
     float roughnessFactor = 1.0f;
 
-    /// 파일에서 읽은 발광 색. 현재 화면용 재질과 shader에는 전달하지 않는다.
-    glm::vec3 emissiveFactor{0.0f};
-
     /// 기본색 이미지 연결 정보. 해당 픽셀과 GPU 객체는 AssetManager가 관리한다.
     ResourceID baseColorTexture;
 
-    /// 금속성·거칠기 이미지 참조. 현재는 빈 식별자로 남고 화면용 재질에 연결되지 않는다.
-    ResourceID metallicRoughnessTexture;
-
-    /// 표면 기울기 이미지 참조. 현재는 빈 식별자로 남고 화면용 재질에 연결되지 않는다.
-    ResourceID normalTexture;
-
-    /// 빛을 가리는 정도를 담는 이미지 참조. 현재는 빈 식별자로 남고 화면용 재질에 연결되지 않는다.
-    ResourceID occlusionTexture;
-
-    /// 표면이 내는 빛을 담는 이미지 참조. 현재는 빈 식별자로 남고 화면용 재질에 연결되지 않는다.
-    ResourceID emissiveTexture;
 };
 
 /**
@@ -189,7 +151,6 @@ struct NodeData
     /// 이 부품 바로 아래에 연결할 자식 번호 목록.
     std::vector<int> childrenIndices;
 };
-
 
 /**
  * @brief GLB 파일에서 읽은 이미지·재질·형상·부품 관계를 한데 모은 결과다.

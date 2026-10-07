@@ -13,7 +13,7 @@ namespace grasplink::viewer::robotics
  * @brief 관절 각도에서 계산한 로봇 링크 방향을 GLB 장면 물체에 적용한다.
  * @details Forward Kinematics(FK)는 관절 각도에서 각 팔 링크와 도구 끝의 위치·방향을 계산한다. 이 Adapter는 그 결과 중 링크별 회전을 GLB 모델의 해당 관절에 전달한다.
  * 생성 시 모델 사양의 이름으로 GLB node를 찾고 관절 중심 위치와 부모 관계가 맞는지 확인한다. 모델 기준 위치와 방향에 Scene의 부모 변환을 더하면 Viewer 안에 로봇을 배치할 수 있다.
- * GLB 장면 물체는 Scene이 삭제하므로 Scene 전환 뒤 Apply()를 호출하면 실패한다.
+ * GLB 장면 물체는 Scene이 삭제하므로 Scene 수명이 끝난 뒤 Apply()를 호출하면 실패한다.
  */
 class RobotTransformAdapter
 {

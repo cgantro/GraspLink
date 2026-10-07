@@ -1,7 +1,7 @@
 #include "Entity.h"
 #include "components/TransformComponents.h"
 #include "scene/Scene.h"
-#include "scene/SceneManager.h"
+#include "scene/Scene.h"
 #include "systems/TransformSystemModule.h"
 #include "TestSupport.h"
 
@@ -193,7 +193,7 @@ void CheckCorruptedComponent()
 /**
  * @brief quaternion Local 회전의 저장 계약과 계층 World 행렬 전파를 확인한다.
  * @details 정규화, 잘못된 입력 거부, q와 -q의 방향 동등성 및 pitch 90도 부근의 자세 보존을 검사한다.
- * SceneManager는 World보다 먼저 파괴돼 계층을 정리하며, 이 테스트는 OpenGL context를 만들지 않는다.
+ * Scene은 World보다 먼저 파괴돼 root 아래의 물체를 정리하며, 이 테스트는 OpenGL context를 만들지 않는다.
  */
 int main()
 {
@@ -201,14 +201,11 @@ int main()
     {
         flecs::world world;
         world.import<TransformSystemModule>();
-        SceneManager scenes(world);
-        scenes.LoadScene<Scene>();
-        scenes.OnUpdate(0.0F);
-        Scene* scene = scenes.GetActiveScene();
-        Require(scene != nullptr, "active Scene created");
-        CheckDefaultsAndNormalization(*scene);
+        Scene scene(world);
+        Require(scene.GetSceneRoot().is_alive(), "Scene owns a live hierarchy root");
+        CheckDefaultsAndNormalization(scene);
         CheckComposition();
-        CheckHierarchy(*scene);
+        CheckHierarchy(scene);
         CheckCorruptedComponent();
         std::cout << "Quaternion transform normalization, rejection and hierarchy checks passed\n";
         return 0;

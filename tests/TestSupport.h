@@ -3,7 +3,6 @@
 #ifdef GRASPLINK_TEST_SCENE_SUPPORT
 #include "assets/GltfLoader.h"
 #include "PhysicsWorld.h"
-#include "scene/SceneManager.h"
 #include "simulation/systems/PhysicsSystemModule.h"
 #include <filesystem>
 #include <memory>
@@ -37,13 +36,6 @@ inline void RequireNear(double actual, double expected, double tolerance, const 
 }
 
 #ifdef GRASPLINK_TEST_SCENE_SUPPORT
-inline Scene* LoadTestScene(SceneManager& scenes)
-{
-    scenes.LoadScene<Scene>();
-    scenes.OnUpdate(0.0F);
-    return scenes.GetActiveScene();
-}
-
 inline ModelResource LoadTestGlb(const std::filesystem::path& filename)
 {
     return GltfLoader::LoadGLB(std::filesystem::path("assets") / filename);

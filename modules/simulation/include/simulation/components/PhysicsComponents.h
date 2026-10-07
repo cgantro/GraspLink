@@ -61,41 +61,4 @@ inline grasplink::physics::CollisionShapeDescription Box(
     return shape;
 }
 
-/**
- * @brief Body 원점에서의 중심 위치와 회전, 반지름과 높이로 원통 충돌 형상을 지정한다. 기본 축은 형상 Local Y다.
- * @param radiusMeters 반지름 [m].
- * @param halfHeightMeters Y축 반쪽 높이 [m].
- * @param localPositionMeters Body 원점에서 Cylinder 중심까지의 위치 [m].
- * @param localRotation Body 원점 기준 형상 회전. GLM quaternion 순서는 (w,x,y,z).
- */
-inline grasplink::physics::CollisionShapeDescription Cylinder(
-    float radiusMeters,
-    float halfHeightMeters,
-    const glm::vec3& localPositionMeters = glm::vec3{0.0F},
-    const glm::quat& localRotation = glm::quat{1.0F, 0.0F, 0.0F, 0.0F})
-{
-    grasplink::physics::CollisionShapeDescription shape;
-    shape.type = grasplink::physics::CollisionShapeType::Cylinder;
-    shape.radiusMeters = radiusMeters;
-    shape.halfHeightMeters = halfHeightMeters;
-    shape.localTransform.position = localPositionMeters;
-    shape.localTransform.rotation = localRotation;
-    return shape;
-}
-
-/**
- * @brief Body 원점에서 중심 위치와 반지름으로 구 충돌 형상을 지정한다.
- * @param radiusMeters 반지름 [m].
- * @param localPositionMeters Body 원점에서 Sphere 중심까지의 위치 [m].
- */
-inline grasplink::physics::CollisionShapeDescription Sphere(
-    float radiusMeters,
-    const glm::vec3& localPositionMeters = glm::vec3{0.0F})
-{
-    grasplink::physics::CollisionShapeDescription shape;
-    shape.type = grasplink::physics::CollisionShapeType::Sphere;
-    shape.radiusMeters = radiusMeters;
-    shape.localTransform.position = localPositionMeters;
-    return shape;
-}
 }

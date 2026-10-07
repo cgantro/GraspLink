@@ -31,8 +31,8 @@ struct MeshFilter
  * @brief 장면 물체의 표면 색을 계산할 프로그램과 화면에 그릴지 여부를 지정한다.
  * @details
  * Shader는 GPU가 꼭짓점과 표면 색을 계산하는 프로그램이고 Material은 색과 Texture 같은 표면 설정이다.
- * Main pass는 카메라에서 보이는 색을 만들고 Shadow pass는 광원에서 보이는 물체가 다른 물체를 가리는지 기록한다.
- * visible이 false이면 두 단계 모두에서 빠진다. 이 설정만 저장하며 실제 선택과 그리기는 RenderSystem과 Renderer가 수행한다.
+ * RenderSystem은 카메라에서 보이는 색을 만들 때 이 설정을 읽는다. visible이 false이면 Mesh를 그리지 않는다.
+ * 이 타입은 설정만 저장하며 실제 선택과 그리기는 RenderSystem과 Renderer가 수행한다.
  * AssetManager에서 가져온 Shader와 Material의 수명도 공유 참조로 이어져 사용 중인 물체가 사라질 때까지 유지된다.
  */
 struct MeshRenderer
@@ -43,6 +43,6 @@ struct MeshRenderer
     /// Renderer가 표면 색과 지원된 Texture를 선택할 때 사용하는 Material 공유 참조다.
     std::shared_ptr<Material> material;
 
-    /// false이면 이 Mesh를 그림자 생성 단계와 화면에 보이는 주 렌더 단계 모두에서 제외한다.
+    /// false이면 화면에 이 Mesh를 그리지 않는다.
     bool visible = true;
 };

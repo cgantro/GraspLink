@@ -98,7 +98,9 @@ void ValidateModelBeforeSceneChanges(
             (void)ResolveMaterial(model, assets, subMesh.defaultMaterialIndex);
             for (std::size_t index = begin; index < begin + count; ++index)
                 if (mesh.indices[index] >= mesh.vertices.size())
-                    throw std::runtime_error("Invalid primitive vertex index");
+                    throw std::runtime_error("Invalid vertex index in mesh " + mesh.name + " at " +
+                        std::to_string(index) + ": " + std::to_string(mesh.indices[index]) + " >= " +
+                        std::to_string(mesh.vertices.size()));
         }
     }
 }

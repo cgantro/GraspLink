@@ -10,7 +10,6 @@
 
 namespace
 {
-// Component 값과 GPU 자원에 대한 공유 참조를 복사해 그림자 생성과 화면 출력이 같은 프레임 목록 및 행렬을 사용하게 한다.
 // Flecs의 임시 Component 메모리 주소를 저장하지 않으므로, 순회 iterator가 다음 항목으로 이동해도 자료가 유효하다.
 struct RenderItem
 {
@@ -66,17 +65,6 @@ void RenderSystemModule::RegisterSystem(flecs::world& world)
                     }
                 }
 
-                // 먼저 광원 위치에서 본 깊이값을 저장한다. 화면을 그리는 단계에서 이 값으로 물체가 그림자를 받는지 판단한다.
-                context->renderer->BeginShadowPass();
-                for (const RenderItem& item : items)
-                {
-                    context->renderer->DrawShadow(
-                        item.model,
-                        item.meshFilter);
-                }
-                context->renderer->EndShadowPass();
-
-                // 같은 모델 행렬을 카메라 시점으로 그린다. 이 단계에서 Material 색, Texture와 조명을 적용해 화면 색을 만든다.
                 const glm::mat4 view = context->camera->GetViewMatrix();
                 const glm::mat4 projection = context->camera->GetProjectionMatrix();
                 const glm::vec3 cameraPosition = context->camera->GetPosition();

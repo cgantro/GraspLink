@@ -1,7 +1,7 @@
 #include "robotics/kinematics/RobotKinematics.h"
 #include "robotics/models/hanwha/Hcr12a.h"
 #include "assets/GltfLoader.h"
-#include "scene/SceneManager.h"
+#include "scene/Scene.h"
 #include "PhysicsWorld.h"
 #include "simulation/components/PhysicsComponents.h"
 #include "simulation/robotics/RobotPhysicsAdapter.h"
@@ -12,6 +12,7 @@
 
 #include <iostream>
 #include <filesystem>
+#include <memory>
 
 namespace
 {
@@ -72,8 +73,8 @@ int main()
             "geometry builder returns collision shapes without creating Scene entities");
         Require(builtGeometry.baseShapes.empty(), "model without a Base node has no base geometry");
         flecs::world world;
-        SceneManager scenes(world);
-        auto& scene = *LoadTestScene(scenes);
+        auto sceneOwner = std::make_unique<Scene>(world);
+        Scene& scene = *sceneOwner;
         Entity root = scene.CreateEntity("RobotRoot");
         grasplink::simulation::RobotPhysicsAdapter adapter(scene, root, spec, model);
         std::size_t syntheticLinkIndex = 0;
@@ -104,14 +105,14 @@ int main()
         cycle.nodes[0].parentIndex = 5;
         ExpectThrows<std::invalid_argument>([&] { grasplink::simulation::RobotPhysicsAdapter bad(scene, root, spec, cycle); }, "GLB cycle rejected before recursion");
         ExpectThrows<std::invalid_argument>([&] { adapter.Apply({}); }, "missing FK poses rejected");
-        scenes.LoadScene<Scene>();
-        scenes.OnUpdate(0.0F);
+        sceneOwner.reset();
         ExpectThrows<std::runtime_error>([&] { adapter.Apply(fk.Update(state)); }, "removed Scene invalidates physics proxy bindings");
         // 여섯 팔 Link에는 현재 121개 볼록 껍질이 만들어지고 Base의 hull은 별도로 집계한다. 전체 수의 150개 상한으로 형상 복잡도의 예상 밖 증가를 검출한다.
         const auto actualModel = LoadTestGlb("HCR12A_2F-85.glb");
-        Entity actualRoot = scenes.GetActiveScene()->CreateEntity("ActualRobot");
+        auto actualScene = std::make_unique<Scene>(world);
+        Entity actualRoot = actualScene->CreateEntity("ActualRobot");
         grasplink::simulation::RobotPhysicsAdapter actualAdapter(
-            *scenes.GetActiveScene(), actualRoot, models::hanwha::kHcr12a, actualModel);
+            *actualScene, actualRoot, models::hanwha::kHcr12a, actualModel);
         std::size_t actualHullCount = 0;
         Entity baseProxy = actualRoot.GetChild("Base_CollisionProxy");
         Require(baseProxy.IsValid(), "actual Base mesh creates a fixed collision proxy");

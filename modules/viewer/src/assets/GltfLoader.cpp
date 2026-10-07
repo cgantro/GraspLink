@@ -126,23 +126,17 @@ void RequireFinite(const glm::quat& value)
     }
 }
 
-// 정점 위치와 법선은 세 실수로, 접선은 네 실수로 읽고 접선의 w 부호는 사용하지 않는다.
+// 정점 위치와 법선은 세 실수로 읽는다. 현재 렌더러는 접선 속성을 사용하지 않는다.
 std::vector<glm::vec3> ReadVec3FloatAccessor(
     const tinygltf::Model& model,
-    int accessorIndex,
-    bool tangent = false)
+    int accessorIndex)
 {
     const tinygltf::Accessor& accessor = model.accessors.at(accessorIndex);
-    if (accessor.type != (tangent ? TINYGLTF_TYPE_VEC4 : TINYGLTF_TYPE_VEC3) ||
+    if (accessor.type != TINYGLTF_TYPE_VEC3 ||
         accessor.componentType != TINYGLTF_COMPONENT_TYPE_FLOAT)
-    {
-        throw std::runtime_error(tangent
-            ? "Expected FLOAT VEC4 tangent accessor"
-            : "Expected FLOAT VEC3 ACCESSOR");
-    }
+        throw std::runtime_error("Expected FLOAT VEC3 ACCESSOR");
 
-    const AccessorView view = GetAccessorView(
-        model, accessorIndex, sizeof(float) * (tangent ? 4U : 3U));
+    const AccessorView view = GetAccessorView(model, accessorIndex, sizeof(float) * 3U);
 
     std::vector<glm::vec3> result(view.count);
 
@@ -152,7 +146,7 @@ std::vector<glm::vec3> ReadVec3FloatAccessor(
         float values[4]{};
 
         // 파일의 값 시작 주소가 C++ float 정렬에 맞는다고 가정하지 않고 byte를 복사한다.
-        std::memcpy(values, source, sizeof(float) * (tangent ? 4U : 3U));
+        std::memcpy(values, source, sizeof(float) * 3U);
         result[i] = glm::vec3{values[0], values[1], values[2]};
         RequireFinite(result[i]);
     }
@@ -314,14 +308,6 @@ MaterialData ConvertMaterial(
     result.metallicFactor = static_cast<float>(pbr.metallicFactor);
     result.roughnessFactor = static_cast<float>(pbr.roughnessFactor);
 
-    if (source.emissiveFactor.size() == 3)
-    {
-        result.emissiveFactor = glm::vec3{
-            static_cast<float>(source.emissiveFactor[0]),
-            static_cast<float>(source.emissiveFactor[1]),
-            static_cast<float>(source.emissiveFactor[2])};
-    }
-
     // glTF 재질은 texture 항목 번호를 가리키지만 내부 캐시는 모델 경로와 자원 종류, 해당 texture 항목 번호를 합친 ID로 찾는다.
     if (pbr.baseColorTexture.index >= 0)
     {
@@ -365,7 +351,7 @@ MeshData ConvertMesh(
         if (vertexCount > kMaxMeshValue || result.vertices.size() > kMaxMeshValue - vertexCount)
             throw std::runtime_error("glTF mesh vertex range exceeds uint32_t");
 
-        // NORMAL은 표면에 수직인 방향, TEXCOORD_0은 이미지에서 색을 읽을 UV 위치, TANGENT는 표면을 따라가는 방향이다. 선택 속성이 빠지면 Vertex의 기본값을 유지한다.
+        // NORMAL은 표면 방향, TEXCOORD_0은 기본 색 이미지 좌표다. 선택 속성이 없으면 Vertex 기본값을 유지한다.
         std::vector<glm::vec3> normals;
         const auto normalIterator = primitive.attributes.find("NORMAL");
         if (normalIterator != primitive.attributes.end())
@@ -384,15 +370,6 @@ MeshData ConvertMesh(
                 throw std::runtime_error("TEXCOORD_0 count does not match POSITION count");
         }
 
-        std::vector<glm::vec3> tangents;
-        const auto tangentIterator = primitive.attributes.find("TANGENT");
-        if (tangentIterator != primitive.attributes.end())
-        {
-            tangents = ReadVec3FloatAccessor(model, tangentIterator->second, true);
-            if (tangents.size() != vertexCount)
-                throw std::runtime_error("TANGENT count does not match POSITION count");
-        }
-
         const std::uint32_t baseVertex =
             static_cast<std::uint32_t>(result.vertices.size());
 
@@ -404,7 +381,6 @@ MeshData ConvertMesh(
             vertex.position = positions[i];
             if (!normals.empty()) vertex.normal = normals[i];
             if (!texCoords.empty()) vertex.texCoord = texCoords[i];
-            if (!tangents.empty()) vertex.tangent = tangents[i];
             result.vertices.push_back(vertex);
         }
 
@@ -636,7 +612,7 @@ ModelResource GltfLoader::LoadGLB(const std::filesystem::path& path)
 
     /*
         ResourceID는 캐시에서 자원을 다시 찾는 식별자다. 파일 경로와 자원 종류, 항목 번호를 조합하므로 서로 다른 GLB의 같은 번호도 구분된다.
-        예: HCR12A_R00.glb#mesh/0은 첫 형상, HCR12A_R00.glb#material/0은 첫 재질, HCR12A_R00.glb#texture/0은 첫 glTF texture 항목이다.
+        예: robot.glb#mesh/0은 첫 형상, robot.glb#material/0은 첫 재질, robot.glb#texture/0은 첫 glTF texture 항목이다.
     */
     const std::string resourcePrefix = path.generic_string();
 

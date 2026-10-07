@@ -5,10 +5,8 @@
 #include "Mesh.h"
 #include "Shader.h"
 #include "components/RenderComponents.h"
-#include "ShadowMap.h"
 #include "MultisampleFramebuffer.h"
 
-#include <glm/gtc/matrix_transform.hpp>
 #include <glad/glad.h>
 
 #include <cstdint>
@@ -29,30 +27,7 @@ void Renderer::Init(int framebufferWidth, int framebufferHeight)
         framebufferHeight,
         4);
 
-    // 그림자 단계는 광원에서 본 표면의 투영 깊이를 별도 Texture에 저장한다. 투영 깊이는 실제 광원까지의 직선거리가 아니다.
-    m_ShadowMap = std::make_unique<ShadowMap>(2048);
-    m_ShadowShader = Shader::Create("shaders/ShadowDepth.glsl");
-
     m_LightDirection = glm::normalize(m_LightDirection);
-
-    const glm::vec3 target{0.0F, 0.7F, 0.0F};
-    // 그림자 카메라는 작업 공간 중심에서 광원 방향으로 4 m 떨어진 위치에서 중심을 바라본다.
-    const glm::vec3 lightPosition = target + m_LightDirection * 4.0F;
-
-    const glm::mat4 lightView = glm::lookAt(
-        lightPosition,
-        target,
-        glm::vec3{0.0F, 1.0F, 0.0F});
-
-    // 광원 시야는 가로와 세로 각각 5 m이고 앞뒤 거리는 0.1~10 m다. 원근에 따라 크기가 달라지지 않는 직교 투영을 쓴다.
-    const glm::mat4 lightProjection = glm::ortho(
-        -2.5F, 2.5F,
-        -2.5F, 2.5F,
-        0.1F, 10.0F);
-
-    m_LightSpaceMatrix = lightProjection * lightView;
-
-    // 광원이 비추는 범위와 깊이 Texture 해상도는 현재 작업 공간에 맞춰 코드에 고정되어 있다.
 }
 
 void Renderer::BeginFrame()
@@ -141,12 +116,6 @@ void Renderer::Draw(
 
     meshRenderer.shader->SetFloat3("u_CameraPosition", cameraPosition);
     meshRenderer.shader->SetFloat3("u_LightDirection", m_LightDirection);
-    meshRenderer.shader->SetMat4("u_LightSpaceMatrix", m_LightSpaceMatrix);
-
-    // 그림자 Texture와 표면 기본색 Texture가 같은 위치를 덮어쓰지 않도록 서로 다른 Texture unit에 연결한다.
-    constexpr int shadowTextureSlot = 7;
-    m_ShadowMap->Bind(shadowTextureSlot);
-    meshRenderer.shader->SetInt("u_ShadowMap", shadowTextureSlot);
 
     meshFilter.mesh->Bind();
 
@@ -166,39 +135,4 @@ void Renderer::Draw(
     meshFilter.mesh->UnBind();
     meshRenderer.shader->UnBind();
 
-}
-
-void Renderer::BeginShadowPass()
-{
-    m_ShadowMap->Begin();
-    m_ShadowShader->Bind();
-    m_ShadowShader->SetMat4("u_LightSpaceMatrix", m_LightSpaceMatrix);
-}
-
-void Renderer::DrawShadow(const glm::mat4& model, const MeshFilter& meshFilter)
-{
-    if (!meshFilter.mesh) return;
-
-    // 그림자 계산 단계에서는 표면 색이 필요 없고 광원에서 본 깊이만 저장하면 된다.
-    m_ShadowShader->SetMat4("u_Model", model);
-    meshFilter.mesh->Bind();
-
-    const std::size_t indexCount = meshFilter.indexCount == 0U
-        ? meshFilter.mesh->GetIndexCount()
-        : meshFilter.indexCount;
-    const std::size_t indexOffset = meshFilter.indexOffset * sizeof(std::uint32_t);
-
-    glDrawElements(
-        GL_TRIANGLES,
-        static_cast<GLsizei>(indexCount),
-        GL_UNSIGNED_INT,
-        reinterpret_cast<const void*>(indexOffset));
-
-    meshFilter.mesh->UnBind();
-}
-
-void Renderer::EndShadowPass()
-{
-    m_ShadowShader->UnBind();
-    m_ShadowMap->End();
 }

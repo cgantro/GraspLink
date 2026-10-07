@@ -12,7 +12,7 @@ namespace grasplink::gui
 
 /**
  * @brief 물리 계산에 쓰는 단순 물체의 모양을 화면 위 선으로 보여준다.
- * @details 장면 물체에 붙인 Collider 설정은 접촉 판정에 쓸 모양과 크기를 지정한다. Flecs World가 장면 물체와 이 설정을 저장하고 ColliderOverlay는 그 값과 Scene 위치를 읽어 상자·구·원기둥 같은 화면 선으로 바꾼다.
+ * @details 장면 물체에 붙인 Collider 설정은 접촉 판정에 쓸 모양과 크기를 지정한다. Flecs World가 장면 물체와 이 설정을 저장하고 ColliderOverlay는 Box와 Convex Hull을 Scene 위치에 놓인 화면 선으로 바꾼다.
  * 화면 선은 설정된 충돌 모양을 확인하기 위한 근사 표시이며, Jolt가 실제 접촉 계산에 사용하는 세부 형상과 다를 수 있다.
  * Flecs World에서 물체를 조회하므로 이 객체보다 World가 오래 살아야 한다. GUI 상태나 OpenGL 자원은 소유하지 않고 호출자가 시작한 ImGui 프레임에 선을 추가한다.
  */

@@ -1,13 +1,14 @@
 #include "Entity.h"
 #include "PhysicsWorld.h"
 #include "components/TransformComponents.h"
-#include "scene/SceneManager.h"
+#include "scene/Scene.h"
 #include "simulation/components/PhysicsComponents.h"
 #include "simulation/systems/PhysicsSystemModule.h"
 #include "systems/TransformSystemModule.h"
 #include "TestSupport.h"
 
 #include <iostream>
+#include <memory>
 
 using grasplink::physics::BodyMotionType;
 
@@ -40,13 +41,10 @@ int main()
         CheckPoseAuthority();
         // 이 fixture는 Flecs의 collider 설정, Scene 삭제, 변환 시스템과 Jolt 사이에서 자세가 왕복하는 전체 흐름을 함께 준비한다.
         flecs::world world;
-        Scene pending(world);
-        ExpectThrows<std::logic_error>([&] { pending.CreateEntity(); }, "inactive Scene cannot create Entities");
         grasplink::physics::PhysicsWorld physics;
-        SceneManager scenes(world);
-        scenes.LoadScene<Scene>();
-        scenes.OnUpdate(0.0F);
-        Scene& scene = *scenes.GetActiveScene();
+        auto sceneOwner = std::make_unique<Scene>(world);
+        Scene& scene = *sceneOwner;
+        Require(scene.GetSceneRoot().is_alive(), "Scene owns a live hierarchy root");
         // 이 중간 물체는 이름·위치·회전·크기가 없지만 자식의 부모다. 계산은 이를 건너뛰되 조상에 설정한 위치와 회전은 자식 World 행렬에 반영되어야 한다.
         Entity ancestor = scene.CreateEntity("Ancestor");
         ancestor.SetLocalPosition({2.0F, 0.0F, 0.0F});
@@ -176,9 +174,8 @@ int main()
 
         // PhysicsSystemModule이 살아 있더라도 이전 Scene 계층과 Entity 연결 기록이 제거된 뒤 다음 물리 step이 안전하게 실행되어야 한다.
         const auto oldRoot = scene.GetSceneRoot();
-        scenes.LoadScene<Scene>();
-        scenes.OnUpdate(0.0F);
-        Require(!oldRoot.is_alive() && !falling.IsValid() && !drop.IsValid(), "Scene transition destroys old hierarchy");
+        sceneOwner.reset();
+        Require(!oldRoot.is_alive() && !falling.IsValid() && !drop.IsValid(), "Scene destruction removes its hierarchy and physics bodies");
         step();
         std::cout << "Transform, Scene, Physics authority, parent, contact and lifetime checks passed\n";
         return 0;

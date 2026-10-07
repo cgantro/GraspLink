@@ -7,13 +7,14 @@
 #include "gui/panels/PhysicsDebugPanel.h"
 #include "robotics/backends/simulation/SimGripperController.h"
 #include "robotics/models/robotiq/TwoF85.h"
-#include "scene/SceneManager.h"
+#include "scene/Scene.h"
 #include "simulation/components/PhysicsComponents.h"
 #include "systems/TransformSystemModule.h"
 
 #include <imgui.h>
 
 #include <iostream>
+#include <memory>
 
 namespace
 {
@@ -23,8 +24,8 @@ Colliders ConfiguredShapes()
 {
     Colliders colliders;
     colliders.shapes.push_back(physics_colliders::Box({0.25F, 0.25F, 0.25F}, {-1.0F, 0.0F, 0.0F}));
-    colliders.shapes.push_back(physics_colliders::Sphere(0.25F, {-0.3F, 0.0F, 0.0F}));
-    colliders.shapes.push_back(physics_colliders::Cylinder(0.25F, 0.3F, {0.4F, 0.0F, 0.0F}));
+    colliders.shapes.push_back(physics_colliders::Box({0.2F, 0.2F, 0.2F}, {-0.3F, 0.0F, 0.0F}));
+    colliders.shapes.push_back(physics_colliders::Box({0.25F, 0.3F, 0.25F}, {0.4F, 0.0F, 0.0F}));
     grasplink::physics::CollisionShapeDescription hull;
     hull.type = grasplink::physics::CollisionShapeType::ConvexHull;
     hull.localTransform.position = {1.1F, 0.0F, 0.0F};
@@ -53,7 +54,7 @@ void RequireControllerUnchanged(const GripperState& actual, const GripperState& 
  * @brief 화면 뒤에서 실행한 GUI 프레임에서도 패널 입력과 충돌 모양 선이 기대대로 처리되는지 확인한다.
  * @details draw list는 ImGui가 현재 프레임에 화면에 그릴 점과 선을 담는 목록이다. 이 시험은 ColliderOverlay가 그리는 선을 검사해 표시·숨김과 Scene 교체 뒤 새 물체를 다시 읽는 동작을 확인한다.
  * 그리퍼 상태를 읽기만 한 프레임은 Controller 명령이나 시뮬레이션 시간 진행을 만들지 않아야 한다.
- * Window는 GUI 연결보다 오래 살아야 하고 Flecs World는 SceneManager와 Overlay보다 오래 살아야 한다.
+ * Window는 GUI 연결보다 오래 살아야 하고 Flecs World는 Scene과 Overlay보다 오래 살아야 한다.
  */
 int main()
 {
@@ -68,11 +69,9 @@ int main()
         Window window(properties);
         flecs::world world;
         world.import<TransformSystemModule>();
-        SceneManager scenes(world);
-        scenes.LoadScene<Scene>();
-        scenes.OnUpdate(0.0F);
-        Require(scenes.GetActiveScene() != nullptr, "identity scene is active");
-        Entity collider = scenes.GetActiveScene()->CreateEntity("ConfiguredShapes");
+        auto scene = std::make_unique<Scene>(world);
+        Require(scene->GetSceneRoot().is_alive(), "Scene owns a live hierarchy root");
+        Entity collider = scene->CreateEntity("ConfiguredShapes");
         collider.set(RigidBody{grasplink::physics::BodyMotionType::Static,
             grasplink::physics::CollisionLayer::Environment}).set(ConfiguredShapes());
         TransformSystemModule::UpdateWorldTransforms(world);
@@ -113,7 +112,7 @@ int main()
         };
 
         Require(drawFrame(true) > 0, "configured shapes generate foreground wire lines");
-        // 충돌 선은 성능을 위해 잠시 저장해 둔다. 표시를 껐다가 다시 켜면 옛 선이 남지 않고 상자·원기둥·구·볼록 껍질이 각각 새 선을 만드는지 확인한다.
+        // 표시를 껐다가 다시 켜면 이전 선이 남지 않고 상자와 볼록 껍질이 각각 새 선을 만드는지 확인한다.
         for (const auto& shape : ConfiguredShapes().shapes)
         {
             collider.set(Colliders{{shape}});
@@ -121,14 +120,14 @@ int main()
             Require(drawFrame(true) > 0, "each configured shape generates foreground wire lines");
         }
         Require(drawFrame(false) == 0, "hidden overlay emits no foreground lines");
-        scenes.LoadScene<Scene>();
-        scenes.OnUpdate(0.0F);
+        scene.reset();
+        scene = std::make_unique<Scene>(world);
         TransformSystemModule::UpdateWorldTransforms(world);
         Require(!collider.IsValid(), "scene replacement removes the configured collider");
         // 숨김 상태에서 Scene을 바꾸면 이전 물체의 선 자료를 버려야 한다. 다시 켤 때는 100 ms 주기를 기다리지 않고 새 Scene의 충돌 설정을 읽어 선을 만든다.
         Require(drawFrame(false) == 0, "replacement scene hidden frame remains empty");
         Require(drawFrame(true) == 0, "replacement scene does not draw stale collider lines");
-        std::cout << "GUI composition, collider visibility and scene replacement checks passed\n";
+        std::cout << "GUI composition and collider visibility checks passed\n";
         return 0;
     }
     catch (const std::exception& error)

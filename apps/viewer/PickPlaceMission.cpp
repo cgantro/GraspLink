@@ -52,6 +52,20 @@ double YawDegrees(const std::array<double, 4>& xyzw)
         1.0 - 2.0 * (rotation.y * rotation.y + rotation.z * rotation.z)));
 }
 
+glm::dquat CaptureAttachedBoxOffset(const robotics::CartesianPose& boxPose,
+    const robotics::RobotState& state, std::array<double, 3>& positionOffset,
+    std::array<double, 4>& rotationOffset)
+{
+    const glm::dquat tcpOrientation = TcpOrientation(state);
+    const glm::dquat inverseTcp = glm::inverse(tcpOrientation);
+    const glm::dvec3 boxPosition{boxPose.positionMeters[0], boxPose.positionMeters[1], boxPose.positionMeters[2]};
+    const glm::dvec3 tcpPosition{state.tcpPose.positionMeters[0], state.tcpPose.positionMeters[1], state.tcpPose.positionMeters[2]};
+    const glm::dvec3 localPosition = inverseTcp * (boxPosition - tcpPosition);
+    positionOffset = {localPosition.x, localPosition.y, localPosition.z};
+    rotationOffset = QuaternionXyzw(inverseTcp * Orientation(boxPose.orientationXyzw));
+    return tcpOrientation;
+}
+
 bool SetResult(robotics::Result result, robotics::Result& lastResult, bool& hasResult)
 {
     lastResult = std::move(result);
@@ -156,24 +170,6 @@ robotics::CartesianPose MakeBoxTarget(const robotics::CartesianPose& boxPose, do
     return target;
 }
 
-robotics::CartesianPose MakePlacementTarget(const robotics::CartesianPose& placementPose,
-    const std::array<double, 4>& placementBoxOrientation, const std::array<double, 4>& boxRotationOffsetInTool,
-    const std::array<double, 3>& boxOffsetInTool, double heightOffset)
-{
-    const glm::dquat boxRotationOffset{boxRotationOffsetInTool[3], boxRotationOffsetInTool[0],
-        boxRotationOffsetInTool[1], boxRotationOffsetInTool[2]};
-    const glm::dquat tcpOrientation = glm::normalize(
-        Orientation(placementBoxOrientation) * glm::inverse(boxRotationOffset));
-    const glm::dvec3 boxOffset = tcpOrientation *
-        glm::dvec3{boxOffsetInTool[0], boxOffsetInTool[1], boxOffsetInTool[2]};
-    robotics::CartesianPose target{};
-    target.orientationXyzw = QuaternionXyzw(tcpOrientation);
-    target.positionMeters = {placementPose.positionMeters[0] - boxOffset.x,
-        placementPose.positionMeters[1] + heightOffset - boxOffset.y,
-        placementPose.positionMeters[2] - boxOffset.z};
-    return target;
-}
-
 robotics::CartesianPose MakeAttachedBoxTarget(const robotics::CartesianPose& boxPose, double heightOffset,
     const glm::dquat& tcpOrientation, const std::array<double, 3>& boxOffsetInTool)
 {
@@ -185,6 +181,17 @@ robotics::CartesianPose MakeAttachedBoxTarget(const robotics::CartesianPose& box
         boxPose.positionMeters[1] + heightOffset - boxOffset.y,
         boxPose.positionMeters[2] - boxOffset.z};
     return target;
+}
+
+robotics::CartesianPose MakePlacementTarget(const robotics::CartesianPose& placementPose,
+    const std::array<double, 4>& placementBoxOrientation, const std::array<double, 4>& boxRotationOffsetInTool,
+    const std::array<double, 3>& boxOffsetInTool, double heightOffset)
+{
+    const glm::dquat boxRotationOffset{boxRotationOffsetInTool[3], boxRotationOffsetInTool[0],
+        boxRotationOffsetInTool[1], boxRotationOffsetInTool[2]};
+    const glm::dquat tcpOrientation = glm::normalize(
+        Orientation(placementBoxOrientation) * glm::inverse(boxRotationOffset));
+    return MakeAttachedBoxTarget(placementPose, heightOffset, tcpOrientation, boxOffsetInTool);
 }
 
 robotics::CartesianPose MakeAttachedBoxPose(const robotics::CartesianPose& boxPose, double heightOffset,
@@ -327,13 +334,8 @@ void PickPlaceMission::Update(const robotics::RobotState& state, robotics::IRobo
     }
     else if (!taskPaused_ && stage_ == Stage::Closing && boxGrasped && state.tcpPoseValid)
     {
-        const glm::dvec3 boxPosition{graspBoxPoseInBase.positionMeters[0], graspBoxPoseInBase.positionMeters[1], graspBoxPoseInBase.positionMeters[2]};
-        const glm::dvec3 tcpPosition{state.tcpPose.positionMeters[0], state.tcpPose.positionMeters[1], state.tcpPose.positionMeters[2]};
         // Constraint는 파지 순간의 물체와 그리퍼 상대 자세를 유지한다. 이 차이를 TCP의 Local 좌표로 저장하면 방향이 바뀌어도 목표 위치에 상자 중심을 맞출 수 있다.
-        const glm::dvec3 localOffset = glm::inverse(TcpOrientation(state)) * (boxPosition - tcpPosition);
-        boxOffsetInTool_ = {localOffset.x, localOffset.y, localOffset.z};
-        const glm::dquat localRotation = glm::inverse(TcpOrientation(state)) * Orientation(graspBoxPoseInBase.orientationXyzw);
-        boxRotationOffsetInTool_ = QuaternionXyzw(localRotation);
+        CaptureAttachedBoxOffset(graspBoxPoseInBase, state, boxOffsetInTool_, boxRotationOffsetInTool_);
         graspedBoxPoseInBase_ = graspBoxPoseInBase;
         recoveryPose_ = MakeAttachedBoxPose(graspBoxPoseInBase, kApproachHeightMeters,
             boxRotationOffsetInTool_, boxOffsetInTool_);
@@ -520,16 +522,8 @@ void PickPlaceMission::ApplyActions(const RobotPanelActions& actions,
                 }
                 else
                 {
-                    const glm::dvec3 boxPosition{graspBoxPoseInBase.positionMeters[0],
-                        graspBoxPoseInBase.positionMeters[1], graspBoxPoseInBase.positionMeters[2]};
-                    const glm::dvec3 tcpPosition{state.tcpPose.positionMeters[0],
-                        state.tcpPose.positionMeters[1], state.tcpPose.positionMeters[2]};
-                    const glm::dquat tcpOrientation = TcpOrientation(state);
-                    const glm::dvec3 localOffset = glm::inverse(tcpOrientation) * (boxPosition - tcpPosition);
-                    boxOffsetInTool_ = {localOffset.x, localOffset.y, localOffset.z};
-                    const glm::dquat localRotation = glm::inverse(tcpOrientation) *
-                        Orientation(graspBoxPoseInBase.orientationXyzw);
-                    boxRotationOffsetInTool_ = QuaternionXyzw(localRotation);
+                    const glm::dquat tcpOrientation = CaptureAttachedBoxOffset(
+                        graspBoxPoseInBase, state, boxOffsetInTool_, boxRotationOffsetInTool_);
                     graspedBoxPoseInBase_ = graspBoxPoseInBase;
                     const double currentBoxHeight = graspedBoxPoseInBase_.positionMeters[1];
                     const double resumeTransitHeight = std::max(currentBoxHeight, kTransitBoxHeightMeters);

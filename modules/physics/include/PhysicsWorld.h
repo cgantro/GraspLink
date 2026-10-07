@@ -43,7 +43,7 @@ public:
         const BoxBodyDescription& description);
 
         /**
-     * @brief Box, Cylinder, Sphere 또는 ConvexHull 충돌 모양을 하나의 물리 Body로 묶는다.
+     * @brief Box 또는 ConvexHull 충돌 모양을 하나의 물리 Body로 묶는다.
      * ConvexHull은 점들을 모두 포함하는 볼록한 껍질이다. 입력 점 네 개는 최소 개수일 뿐이며 Jolt가 부피를 만들 수 있는 점을 추가로 요구한다.
      * @param description 형상별 Body 기준 배치와 크기, Body 원점의 World 자세, 움직임 방식과 충돌 그룹이다.
      * @return 이 PhysicsWorld에서만 유효한 핸들이다.

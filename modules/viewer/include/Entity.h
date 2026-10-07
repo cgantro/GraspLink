@@ -13,7 +13,7 @@
  * Entity는 Viewer 장면 안의 물체 하나를 뜻한다. Component는 그 물체에 붙는 위치, 회전, 크기 같은 값이다.
  * 이 클래스는 물체와 Component를 직접 담지 않고 Flecs가 발급한 handle만 보관하므로 복사해도 대상 물체의 수명이 늘어나지 않는다.
  * Flecs World가 물체와 Component를 소유하고, Scene은 자기 root 아래에 연결된 물체들을 정리한다.
- * 따라서 Scene과 SceneManager는 World보다 먼저 끝나야 하며, World가 끝난 뒤에는 이 handle을 사용하면 안 된다.
+ * 따라서 Scene은 World보다 먼저 끝나야 하며, World가 끝난 뒤에는 이 handle을 사용하면 안 된다.
  */
 class Entity
 {

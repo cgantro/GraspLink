@@ -35,28 +35,15 @@ public:
      * 재질 번호가 없는 표면만 기본 재질을 쓴다. 지정한 이미지가 없을 때는 기본 재질로 대체하지 않는다.
      * 이미지 채널은 단일 밝기 1개, RGB 색 3개, RGBA 색과 alpha 4개만 지원한다. GLB의 모든 이미지 Texture를 현재 sRGB 형식으로 업로드한다.
      * sRGB는 모니터용 RGB 색을 GPU 조명 계산용 선형 색으로 읽게 하는 저장 형식이다. Material에는 기본색 이미지 참조만 연결하며 금속성·거칠기, 표면 방향, 빛 가림, 발광 이미지 참조는 유효한 ID로 설정하지 않는다.
-     * 금속성·거칠기 숫자 계수는 전달한다. 발광색 숫자는 읽혀도 화면 Shader에 전달되지 않는다.
      * GPU 업로드에는 OpenGL 명령 실행 환경(context)이 현재 스레드에서 활성화되어 있어야 한다.
      */
     void UploadModel(ModelResource& model);
 
-    /** @brief 자원 식별자에 해당하는 GPU Mesh(삼각형 형상)를 찾는다. @return 없으면 빈 공유 참조. */
-    std::shared_ptr<Mesh> GetMesh(ResourceID id) const;
-
     /** @brief 자원 식별자에 해당하는 Material(표면 색·빛 반응 정보)을 찾는다. @return 없으면 빈 공유 참조. */
     std::shared_ptr<Material> GetMaterial(ResourceID id) const;
 
-    /** @brief 자원 식별자에 해당하는 GPU Texture(표면 이미지)를 찾는다. @return 없으면 빈 공유 참조. */
-    std::shared_ptr<Texture> GetTexture(ResourceID id) const;
-
     /** @brief 파일에서 재질 번호를 주지 않은 표면에 쓸 기본 재질을 반환한다. */
     std::shared_ptr<Material> GetDefaultMaterial() const;
-
-    /**
-     * @brief 이 관리자가 캐시에 보관한 형상·재질·이미지 참조를 모두 놓는다.
-     * @details 모델이나 장면이 같은 GPU 객체를 계속 참조하면 그 객체는 살아 있다. 마지막 참조를 놓는 호출일 수 있으므로 GPU 명령 실행 환경(context)이 현재 스레드에서 활성화된 동안 실행한다. 기본 재질은 별도로 보유하므로 그대로 남는다.
-     */
-    void Clear();
 
 private:
     std::unordered_map<ResourceID, std::shared_ptr<Mesh>> meshes_;

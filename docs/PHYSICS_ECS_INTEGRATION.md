@@ -19,7 +19,7 @@ entity.set<RigidBody>(RigidBody{BodyMotionType::Dynamic})
     .set<Colliders>(Colliders{{physics_colliders::Box({0.06F, 0.06F, 0.06F})}});
 ```
 
-`Colliders`는 Box, Cylinder, Sphere, Convex Hull 여러 개를 하나의 Entity/rigid body에 묶는다. `PhysicsSystemModule`은 두 설정이 모두 있는 Entity의 Body를 만든다. 설정이 바뀌거나 제거되면 기존 Body를 정리한다. Entity가 사라질 때 Flecs가 private binding component를 제거하고, observer가 연결된 Body를 삭제한다.
+`Colliders`는 Box 또는 Convex Hull 모양을 하나의 Entity/rigid body에 하나 이상 묶는다. Box는 바닥처럼 크기와 위치가 정해진 단순 형상에 쓰고, Convex Hull은 로봇 link와 그리퍼처럼 GLB 정점에서 만든 볼록 형상에 쓴다. `PhysicsSystemModule`은 두 설정이 모두 있는 Entity의 Body를 만든다. 설정이 바뀌거나 제거되면 기존 Body를 정리한다. Entity가 사라질 때 Flecs가 private binding component를 제거하고, observer가 연결된 Body를 삭제한다.
 
 ## Transform과 물리 좌표
 
@@ -68,17 +68,17 @@ HCR-12A collider는 GLB 재질 메시의 삼각형 연결로 나눈 부품별로
 
 Floor의 `plane.glb` Mesh와 Static Box Collider는 하나의 model root Entity가 소유한다. GLB 평면은 root scale 3으로 X/Z ±3 m 범위이며, Collider도 half-extents `{3, 0.02, 3}` m로 맞춘다. Collider 윗면은 수치 오차 방지를 위해 시각 평면보다 5 mm 위에 둔다. GLB를 Jolt triangle mesh로 변환하지 않는다.
 
-`apps/viewer`의 `DebugSceneSetup`은 0.12 m Cube Mesh와 Material을 50개 Entity가 공유하는 물리 데모 객체를 만든다. Box Collider half-extents는 0.06 m다. `--physics-demo`로 활성화할 수 있으며 모든 build type에서 선택 사항이다. 객체 생성은 앱의 데모 설정에 있고, 기본 Simulation Scene의 Floor 설정과는 분리돼 있다.
+`apps/viewer`의 `DebugSceneSetup`은 미션에서 사용할 상자와 더 넓은 배치 목표를 만든다. 작업 성공 뒤 두 물체의 위치와 yaw 회전을 다시 무작위로 정한다. 별도의 50개 낙하 상자 데모나 자동 관절 동작 옵션은 없다.
 
-`GuiModule`은 ImGui context·GLFW/OpenGL backend와 프레임·입력 capture 수명을 관리한다. `ViewerApp`이 `BeginFrame`과 `EndFrame` 사이에 `GripperPanel`, `PhysicsDebugPanel`, `ColliderOverlay`를 명시적으로 호출한다. `PhysicsDebugPanel`은 `Show configured colliders` 체크박스 상태를 보관하고 `ColliderOverlay`가 ECS shape의 Box/Cylinder/Sphere 외곽선과 Convex Hull 투영을 layer별 색으로 표시한다. Overlay는 World query와 화면 선 캐시를 소유하며 Camera는 Draw 동안만 빌린다. 첫 표시·resize 때 즉시 갱신하고 이후 100 ms 간격으로 캐시를 갱신한다. Jolt 내부 shape를 조회하거나 깊이를 검사하지 않으며 Camera 이동도 다음 갱신 전까지 이전 투영으로 보일 수 있다.
+`GuiModule`은 ImGui context·GLFW/OpenGL backend와 프레임·입력 capture 수명을 관리한다. `ViewerApp`이 `BeginFrame`과 `EndFrame` 사이에 `GripperPanel`, `PhysicsDebugPanel`, `ColliderOverlay`를 명시적으로 호출한다. `PhysicsDebugPanel`은 `Show configured colliders` 체크박스 상태를 보관하고 `ColliderOverlay`가 ECS shape의 Box 외곽선과 Convex Hull 투영을 layer별 색으로 표시한다. Overlay는 World query와 화면 선 캐시를 소유하며 Camera는 Draw 동안만 빌린다. 첫 표시·resize 때 즉시 갱신하고 이후 100 ms 간격으로 캐시를 갱신한다. Jolt 내부 shape를 조회하거나 깊이를 검사하지 않으며 Camera 이동도 다음 갱신 전까지 이전 투영으로 보일 수 있다.
 
 `PrefabFactory`는 primitive가 하나인 Node의 Mesh component를 Node Entity에 직접 붙인다. 여러 primitive인 경우에만 primitive별 Render child Entity를 만든다.
 
 ## Lifetime과 확장 범위
 
-`ViewerApp`이 `PhysicsWorld`를 소유하고 `PhysicsSystemModule` 및 어댑터보다 먼저 생성한다. Scene 전환은 이전 Scene의 `OnExit`와 root 정리 후 새 root를 만들고 `OnEnter`를 호출한다. 종료할 때 Overlay의 World query와 패널, 어댑터와 Scene Entity를 먼저 정리하고, `PhysicsSystemModule`을 해제한 다음 Flecs World와 `PhysicsWorld`를 파괴한다. Flecs Entity의 제거 observer가 Physics Body도 삭제한다. `GuiModule` backend와 `ModelResource`·Entity가 공유하는 GPU Mesh 참조도 OpenGL Context를 정리하기 전에 해제한다.
+`ViewerApp`이 `PhysicsWorld`를 소유하고 `PhysicsSystemModule` 및 어댑터보다 먼저 생성한다. `Scene`은 실행 중 하나만 있고 생성될 때 SceneRoot를 만들며 파괴될 때 자식 계층을 제거한다. 종료할 때 Overlay의 World query와 패널, 어댑터와 Scene Entity를 먼저 정리하고, `PhysicsSystemModule`을 해제한 다음 Flecs World와 `PhysicsWorld`를 파괴한다. Flecs Entity의 제거 observer가 Physics Body도 삭제한다. `GuiModule` backend와 `ModelResource`·Entity가 공유하는 GPU Mesh 참조도 OpenGL Context를 정리하기 전에 해제한다.
 
-Collider는 하나의 Body 안에 Box/Cylinder/Sphere/Convex Hull을 여러 개 둘 수 있다. Collider mass properties와 center-of-mass 처리는 Jolt 내부 책임이며, 공개 API는 ECS Entity와 같은 Body 원점의 pose를 주고받는다. Collider 설정 변경은 pending Entity 목록으로 모아 다음 PrePhysicsSync에서 한 번 반영한다. 모든 Body의 Dynamic 조상은 금지하며 Dynamic 자체의 비항등 조상도 지원하지 않는다. 실행 중 scale·부모 계약이 깨지면 연결 Body를 제거하고, 계약이 복구되면 현재 Scene World 자세로 재생성한다.
+Collider는 하나의 Body 안에 Box와 Convex Hull을 여러 개 둘 수 있다. Collider mass properties와 center-of-mass 처리는 Jolt 내부 책임이며, 공개 API는 ECS Entity와 같은 Body 원점의 pose를 주고받는다. Collider 설정 변경은 pending Entity 목록으로 모아 다음 PrePhysicsSync에서 한 번 반영한다. 모든 Body의 Dynamic 조상은 금지하며 Dynamic 자체의 비항등 조상도 지원하지 않는다. 실행 중 scale·부모 계약이 깨지면 연결 Body를 제거하고, 계약이 복구되면 현재 Scene World 자세로 재생성한다.
 
 ## 다음 구현 단계
 
