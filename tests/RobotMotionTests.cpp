@@ -227,7 +227,7 @@ void CheckEnvironmentCollisionCanBeRetried()
     Require(controller.RestoreCollisionSafeState(safePosition), "collision rollback restores the last safe joints");
     const RobotState stopped = controller.GetState();
     Require(stopped.mode == RobotMode::Idle, "collision rollback leaves a stopped controller that accepts recovery motion");
-    Require(stopped.faultCode == static_cast<std::uint32_t>(ErrorCode::EnvironmentContact),
+    Require(stopped.errorCode == ErrorCode::EnvironmentContact,
         "collision rollback preserves the reason for stopping");
     JointVector recovery = safePosition;
     recovery[0] += 0.05;
@@ -524,7 +524,7 @@ void CheckLinearPathFromHomeNearWristSingularity()
         progress = std::clamp(progress / lengthSquared, 0.0, 1.0);
         const std::string faultDetails =
             " at tick=" + std::to_string(i) +
-            " faultCode=" + std::to_string(state.faultCode) +
+            " errorCode=" + std::to_string(static_cast<int>(state.errorCode)) +
             " q4=" + std::to_string(state.jointPositionRadians[3]) +
             " q5=" + std::to_string(state.jointPositionRadians[4]) +
             " q6=" + std::to_string(state.jointPositionRadians[5]) +
@@ -558,7 +558,7 @@ void CheckLinearPathFromHomeNearWristSingularity()
     finalProgress = std::clamp(finalProgress / lengthSquared, 0.0, 1.0);
     std::string finalDiagnostics =
         " final mode=" + std::to_string(static_cast<unsigned>(finalState.mode)) +
-        " faultCode=" + std::to_string(finalState.faultCode) + " q=[";
+        " errorCode=" + std::to_string(static_cast<int>(finalState.errorCode)) + " q=[";
     for (std::size_t joint = 0; joint < finalState.jointPositionRadians.size(); ++joint)
     {
         if (joint != 0)

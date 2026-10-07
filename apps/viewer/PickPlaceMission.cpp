@@ -279,9 +279,16 @@ void PickPlaceMission::Update(const robotics::RobotState& state, robotics::IRobo
     const robotics::CartesianPose& placementPoseInBase)
 {
     const bool idle = state.mode == robotics::RobotMode::Idle;
+    bool gripperCloseFinished = false;
+    if (!taskPaused_ && stage_ == Stage::Closing && !boxGrasped)
+    {
+        const auto gripperState = gripper.GetState();
+        gripperCloseFinished = gripperState.mode == robotics::GripperMode::Idle &&
+            gripperState.objectStatus == robotics::GripperObjectStatus::AtRequestedPosition;
+    }
     // Viewer가 겹친 틱을 취소하면 Controller는 직전 관절각에서 Idle로 멈추고 충돌 원인을 남긴다. 여기서는 하강을 이어가지 않고 저장한 높이로 후퇴한다.
     const bool collisionStopped = idle &&
-        state.faultCode == static_cast<std::uint32_t>(robotics::ErrorCode::EnvironmentContact) &&
+        state.errorCode == robotics::ErrorCode::EnvironmentContact &&
         stage_ != Stage::Ready && stage_ != Stage::Complete && stage_ != Stage::Failed && stage_ != Stage::Recovering;
 
     if (!orientationReady_ && state.valid && state.tcpPoseValid)
@@ -342,9 +349,7 @@ void PickPlaceMission::Update(const robotics::RobotState& state, robotics::IRobo
             boxRotationOffsetInTool_, boxOffsetInTool_);
         SetStageFromResult(MoveTo(recoveryPose_, controller), Stage::Lifting);
     }
-    else if (!taskPaused_ && stage_ == Stage::Closing && !boxGrasped &&
-        gripper.GetState().mode == robotics::GripperMode::Idle &&
-        gripper.GetState().objectStatus == robotics::GripperObjectStatus::AtRequestedPosition)
+    else if (gripperCloseFinished)
     {
         taskSucceeded_ = false;
         if (SetResult(CommandGripper(0, gripper)) && SetResult(MoveTo(recoveryPose_, controller)))

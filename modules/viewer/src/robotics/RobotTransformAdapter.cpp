@@ -5,11 +5,8 @@
 #include <glm/gtx/quaternion.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
-#include <functional>
 #include <stdexcept>
 #include <string>
-#include <unordered_map>
-#include <unordered_set>
 
 namespace grasplink::viewer::robotics
 {
@@ -28,36 +25,15 @@ RobotTransformAdapter::RobotTransformAdapter(
     if (specification.joints == nullptr || specification.jointCount == 0)
         throw std::invalid_argument("RobotTransformAdapter: empty robot specification");
 
-    std::unordered_set<std::string> wantedJoints;
-    // 모델 사양에 나열된 관절 이름을 모아 GLB Entity 계층에서 같은 이름의 노드를 찾는다.
-    for (std::size_t i = 0; i < specification.jointCount; ++i)
-        wantedJoints.emplace(specification.joints[i].name);
-
-    std::unordered_map<std::string, Entity> jointEntities;
-    std::function<void(const Entity&)> collectJoints = [&](const Entity& parent)
-    {
-        for (const Entity& child : parent.GetChildren())
-        {
-            const char* entityName = child.GetHandle().name().c_str();
-            const std::string name = entityName ? entityName : "";
-            if (wantedJoints.erase(name) != 0)
-                jointEntities.emplace(name, child);
-            if (!wantedJoints.empty())
-                collectJoints(child);
-        }
-    };
-    collectJoints(robotRoot);
-
     joints_.reserve(specification.jointCount);
 
     for (std::size_t i = 0; i < specification.jointCount; ++i)
     {
         const auto& jointSpec = specification.joints[i];
-        const auto found = jointEntities.find(std::string(jointSpec.name));
-        if (found == jointEntities.end())
+        const Entity joint = robotRoot.FindChildByNameRecursive(std::string{jointSpec.name});
+        if (!joint)
             throw std::runtime_error(
                 "RobotTransformAdapter: joint not found: " + std::string(jointSpec.name));
-        const Entity& joint = found->second;
 
         // 관절의 Local 변환과 중간 부모 변환을 누적해 모델 base 기준 pivot을 구한다. Scene 안에서 로봇을 배치하는 robotRoot 변환은 이 bind 검증에 포함하지 않는다.
         glm::mat4 bindInBase = TransformSystemModule::ComposeLocalMatrix(

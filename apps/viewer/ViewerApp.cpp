@@ -267,7 +267,7 @@ void ViewerApp::InitScene(Entity& robotRoot, Entity& floorEntity)
     m_AssetManager->UploadModel(m_RobotModel);
 
     // GLB의 node 부모 관계를 Flecs Entity 계층으로 복사한다. 반환한 robotRoot 아래에서 이후 J1~J6 관절을 찾는다.
-    robotRoot = PrefabFactory::CreateModel(
+    robotRoot = prefab_factory::CreateModel(
         *scene,
         m_RobotModel,
         *m_AssetManager,
@@ -277,7 +277,7 @@ void ViewerApp::InitScene(Entity& robotRoot, Entity& floorEntity)
     ModelResource planeModel = GltfLoader::LoadGLB("plane.glb");
     m_AssetManager->UploadModel(planeModel);
 
-    floorEntity = PrefabFactory::CreateModel(
+    floorEntity = prefab_factory::CreateModel(
         *scene,
         planeModel,
         *m_AssetManager,

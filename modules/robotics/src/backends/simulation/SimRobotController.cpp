@@ -254,7 +254,7 @@ Result SimRobotController::MoveJoint(const JointMoveCommand& command)
     velocityScale_ = command.velocityScale;
     accelerationScale_ = command.accelerationScale;
     linearPath_.clear();
-    state_.faultCode = 0;
+    state_.errorCode = ErrorCode::None;
 
     bool needsMotion = false;
     for (std::size_t i = 0; i < specification_->jointCount; ++i)
@@ -357,7 +357,7 @@ Result SimRobotController::MoveLinearPath(const LinearPathMoveCommand& command)
     linearSegmentFraction_ = 0.0;
     velocityScale_ = 1.0;
     accelerationScale_ = 1.0;
-    state_.faultCode = 0;
+    state_.errorCode = ErrorCode::None;
     state_.mode = RobotMode::Moving;
     return Result::Success();
 }
@@ -568,7 +568,7 @@ void SimRobotController::UpdateLinear(double dtSeconds)
         targetPositionRadians_ = state_.jointPositionRadians;
         linearPath_.clear();
         state_.mode = RobotMode::Fault;
-        state_.faultCode = static_cast<std::uint32_t>(failureCode);
+        state_.errorCode = failureCode;
     }
     else if (linearSegment_ >= linearPath_.size())
     {
@@ -664,7 +664,7 @@ bool SimRobotController::RestoreCollisionSafeState(const JointVector& safePositi
     linearPath_.clear();
     // unsafe tick은 직전 안전 자세로 되돌린 뒤 멈춘다. Fault로 고정하면 호출자가 위쪽 안전 자세로 물러나는 명령도 보낼 수 없다.
     state_.mode = RobotMode::Idle;
-    state_.faultCode = static_cast<std::uint32_t>(ErrorCode::EnvironmentContact);
+    state_.errorCode = ErrorCode::EnvironmentContact;
     RefreshTcp();
     return true;
 }

@@ -139,7 +139,8 @@ enum class RobotMode
  * @details 관절 위치 [rad], 각속도 [rad/s], TCP 위치 [m]를 저장한다.
  * valid는 관절을 포함한 전체 상태 복사본을 쓸 수 있는지 나타낸다.
  * tcpPoseValid는 TCP 위치·방향만 유효한지 나타내므로 TCP가 없어도 관절 상태는 유효할 수 있다.
- * 오류 code의 의미는 장치나 Simulation 구현마다 다르며 보호 정지 여부를 단독으로 판정하지 않는다.
+ * errorCode는 공통 실패 분류를 사용하고, 장치별 원본 오류값은 별도로 해석한다.
+ * 공통 오류 분류만으로 실제 장비 보호 정지 여부를 판정하지 않는다.
  */
 struct RobotState
 {
@@ -154,9 +155,8 @@ struct RobotState
 
     RobotMode mode = RobotMode::Disconnected;
 
-    // 상세 해석은 제어 구현/제조사 책임이다.
-    /// 제어 구현 또는 실제 장치가 정한 오류 code다. 숫자의 구체적인 의미는 해당 구현 설명을 따라야 한다.
-    std::uint32_t faultCode = 0;
+    /// Controller가 보고한 오류 분류다. Gripper의 장치별 원본 fault code와 달리 공통 ErrorCode 값이다.
+    ErrorCode errorCode = ErrorCode::None;
 
     /// TCP 위치·방향 feedback만 유효한지 나타낸다. 관절값 유효성과 별개이며 Simulation에서는 모델로 계산한 유효성을 뜻한다.
     bool tcpPoseValid = false;

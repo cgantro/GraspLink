@@ -114,12 +114,12 @@ int main()
         invalidHierarchy.nodes.front().name = "PreflightFailureRoot";
         invalidHierarchy.nodes.front().parentIndex = 0;
         ExpectThrows<std::runtime_error>(
-            [&] { PrefabFactory::CreateModel(scene, invalidHierarchy, assets, shader); },
+            [&] { prefab_factory::CreateModel(scene, invalidHierarchy, assets, shader); },
             "cyclic model hierarchy is rejected before Scene mutation");
         Require(!world.lookup("PreflightFailureRoot").is_valid(),
             "preflight failure leaves no partial model Entity in the Scene");
 
-        Entity robotRoot = PrefabFactory::CreateModel(scene, model, assets, shader);
+        Entity robotRoot = prefab_factory::CreateModel(scene, model, assets, shader);
         robotRoot.SetLocalPosition({1.2F, -0.4F, 0.7F});
         robotRoot.SetLocalRotation(glm::quat{glm::vec3{0.3F, 0.7F, -0.4F}});
         const auto& specification = models::hanwha::kHcr12a;

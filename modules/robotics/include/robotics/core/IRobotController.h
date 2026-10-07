@@ -55,7 +55,7 @@ public:
 
     /**
      * @brief 여러 TCP 자세를 한 경로로 실행하도록 요청한다.
-     * @details 기본 구현은 각 목표를 차례로 MoveLinear에 전달한다. Simulation처럼 지원하는 구현은 전체 경로에 하나의 속도 프로파일을 적용할 수 있다.
+     * @details 구현은 이 기능을 지원하지 않으면 Unsupported를 반환한다. Simulation처럼 지원하는 구현은 전체 경로에 하나의 속도 프로파일을 적용할 수 있다.
      */
     virtual Result MoveLinearPath(const LinearPathMoveCommand& command)
     {

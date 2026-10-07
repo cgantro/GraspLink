@@ -146,7 +146,7 @@ public:
      * @return 입력 자세가 전부 유한하고 관절 한계 안이면 복원 성공이다. 잘못된 입력은 상태를 바꾸지 않는다.
      * @details 현재 q와 새 q 사이를 보간하지 않는다. 호출자는 새로 저장한 자세가 충돌 검사에 통과한 경우에만 이 함수를 사용한다.
      * 이는 Kinematic Body의 마지막 틱 침투를 화면 기준으로 되돌리는 복구이고 연속 속도 제한 궤적이 아니다.
-     * 상태는 Idle이 되며 faultCode에는 EnvironmentContact가 남는다. 상위 작업은 이 오류를 보고 안전한 후퇴 동작을 제출할 수 있다.
+     * 상태는 Idle이 되며 errorCode에는 EnvironmentContact가 남는다. 상위 작업은 이 오류를 보고 안전한 후퇴 동작을 제출할 수 있다.
      */
     bool RestoreCollisionSafeState(const JointVector& safePositionRadians);
 

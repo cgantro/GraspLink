@@ -122,12 +122,7 @@ void CreateRenderEntities(
 {
     if (node.meshIndex < 0) return;
 
-    if (node.meshIndex >= static_cast<int>(model.meshes.size()))
-        throw std::runtime_error("Invalid mesh index in model node");
-
     const MeshData& meshData = model.meshes[static_cast<std::size_t>(node.meshIndex)];
-    if (!meshData.gpuMesh)
-        throw std::runtime_error("Mesh has not been uploaded: " + meshData.name);
 
     if (meshData.subMeshes.size() == 1)
     {
@@ -173,7 +168,7 @@ void CreateRenderEntities(
 }
 } // namespace
 
-Entity PrefabFactory::CreateModel(
+Entity prefab_factory::CreateModel(
     Scene& scene,
     const ModelResource& model,
     const AssetManager& assets,
@@ -205,9 +200,6 @@ Entity PrefabFactory::CreateModel(
 
         // 부모가 없는 최상위 Entity는 CreateEntity가 장면의 최상위 기준에 이미 연결했다.
         if (node.parentIndex < 0) continue;
-
-        if (node.parentIndex >= static_cast<int>(entities.size()))
-            throw std::runtime_error("Invalid parent index");
 
         entities[i].SetParent(
             entities[static_cast<std::size_t>(node.parentIndex)]);
