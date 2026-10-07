@@ -1,6 +1,7 @@
 #include "simulation/robotics/GripperGraspAdapter.h"
 
 #include "PhysicsWorld.h"
+#include "simulation/components/RobotCollisionProxy.h"
 #include "robotics/backends/simulation/SimGripperController.h"
 #include "simulation/systems/PhysicsSystemModule.h"
 
@@ -41,13 +42,46 @@ bool GripperGraspAdapter::Bind(const Entity& robotRoot)
     right_ = {};
     if (!robotRoot)
         return false;
-    anchor_ = robotRoot.FindChildByNameRecursive("Gripper_CollisionProxy");
-    left_ = robotRoot.FindChildByNameRecursive("LeftFingerTipJoint_CollisionProxy");
-    right_ = robotRoot.FindChildByNameRecursive("RightFingerTipJoint_CollisionProxy");
+    bool uniqueBindings = true;
+    std::vector<Entity> pending{robotRoot};
+    while (!pending.empty())
+    {
+        Entity entity = pending.back();
+        pending.pop_back();
+        if (entity.Has<GripperCollisionProxy>())
+        {
+            switch (entity.Get<GripperCollisionProxy>().part)
+            {
+            case GripperCollisionPart::Body:
+                uniqueBindings = uniqueBindings && !anchor_;
+                anchor_ = entity;
+                break;
+            case GripperCollisionPart::LeftFingerTip:
+                uniqueBindings = uniqueBindings && !left_;
+                left_ = entity;
+                break;
+            case GripperCollisionPart::RightFingerTip:
+                uniqueBindings = uniqueBindings && !right_;
+                right_ = entity;
+                break;
+            case GripperCollisionPart::Other:
+                break;
+            }
+        }
+        const auto children = entity.GetChildren();
+        pending.insert(pending.end(), children.begin(), children.end());
+    }
     releaseRevision_ = controller_.GetReleaseRevision();
     disarmed_ = false;
     previousTipsValid_ = false;
-    return anchor_ && left_ && right_;
+    if (!uniqueBindings || !anchor_ || !left_ || !right_)
+    {
+        anchor_ = {};
+        left_ = {};
+        right_ = {};
+        return false;
+    }
+    return true;
 }
 
 void GripperGraspAdapter::BeforePhysicsStep()

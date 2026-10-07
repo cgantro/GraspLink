@@ -4,6 +4,7 @@
 #include "robotics/models/robotiq/TwoF85.h"
 #include "scene/SceneManager.h"
 #include "simulation/components/PhysicsComponents.h"
+#include "simulation/components/RobotCollisionProxy.h"
 #include "simulation/robotics/GripperGraspAdapter.h"
 #include "simulation/systems/PhysicsSystemModule.h"
 #include "systems/TransformSystemModule.h"
@@ -55,11 +56,14 @@ struct Fixture
         scenes.OnUpdate(0.0F);
         Scene& scene = *scenes.GetActiveScene();
         root = scene.CreateEntity("RobotRoot");
-        anchor = Box(scene, "Gripper_CollisionProxy", {0.0F, 1.0F, 0.8F}, {0.04F, 0.04F, 0.04F}, BodyMotionType::Kinematic);
-        left = Box(scene, "LeftFingerTipJoint_CollisionProxy", {-0.145F, sameSide ? 0.93F : 1.0F, 0.0F},
+        anchor = Box(scene, "AnchorProxy", {0.0F, 1.0F, 0.8F}, {0.04F, 0.04F, 0.04F}, BodyMotionType::Kinematic);
+        left = Box(scene, "LeftTipProxy", {-0.145F, sameSide ? 0.93F : 1.0F, 0.0F},
             {0.05F, sameSide ? 0.06F : 0.2F, 0.15F}, BodyMotionType::Kinematic);
-        right = Box(scene, "RightFingerTipJoint_CollisionProxy", {unilateral ? 0.6F : sameSide ? -0.145F : 0.145F, sameSide ? 1.07F : 1.0F, 0.0F},
+        right = Box(scene, "RightTipProxy", {unilateral ? 0.6F : sameSide ? -0.145F : 0.145F, sameSide ? 1.07F : 1.0F, 0.0F},
             {0.05F, sameSide ? 0.06F : 0.2F, 0.15F}, BodyMotionType::Kinematic);
+        anchor.set<GripperCollisionProxy>({GripperCollisionPart::Body});
+        left.set<GripperCollisionProxy>({GripperCollisionPart::LeftFingerTip});
+        right.set<GripperCollisionProxy>({GripperCollisionPart::RightFingerTip});
         anchor.SetParent(root);
         left.SetParent(root);
         right.SetParent(root);

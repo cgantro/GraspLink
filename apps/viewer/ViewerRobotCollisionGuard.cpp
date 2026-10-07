@@ -5,6 +5,7 @@
 
 #include "PhysicsWorld.h"
 #include "simulation/components/PhysicsComponents.h"
+#include "simulation/components/RobotCollisionProxy.h"
 #include "simulation/systems/PhysicsSystemModule.h"
 
 #include "robotics/backends/simulation/SimRobotController.h"
@@ -17,7 +18,6 @@
 #include "simulation/robotics/RobotPhysicsAdapter.h"
 
 #include <algorithm>
-#include <cstring>
 #include <glm/gtc/quaternion.hpp>
 
 namespace grasplink::viewer
@@ -55,12 +55,8 @@ ViewerRobotCollisionGuard::ViewerRobotCollisionGuard(
         if (entity.Has<RigidBody>())
         {
             const auto layer = entity.Get<RigidBody>().collisionLayer;
-            const char* entityName = entity.GetHandle().name();
-            if (layer == grasplink::physics::CollisionLayer::Environment &&
-                entityName != nullptr && std::strcmp(entityName, "Base_CollisionProxy") == 0)
-            {
+            if (entity.Has<RobotBaseEnvironmentProxy>())
                 m_BaseEnvironmentEntity = entity.GetHandle();
-            }
             if (layer == grasplink::physics::CollisionLayer::Robot ||
                 layer == grasplink::physics::CollisionLayer::Gripper)
                 m_CollisionEntities.push_back(entity.GetHandle());

@@ -8,3 +8,24 @@
  * 이 표식은 GLB 메시나 Jolt Body를 소유하지 않고 자체적으로 충돌 동작을 바꾸지 않는다.
  */
 struct RobotCollisionProxy {};
+
+/** @brief 로봇 Base의 고정 Environment proxy를 이름 없이 식별하는 표식이다. */
+struct RobotBaseEnvironmentProxy {};
+
+/** @brief 그리퍼 proxy가 파지 adapter에서 맡는 역할이다. */
+enum class GripperCollisionPart
+{
+    Other,
+    Body,
+    LeftFingerTip,
+    RightFingerTip
+};
+
+/**
+ * @brief 그리퍼 충돌 proxy의 역할을 이름과 분리해 ECS에 보관한다.
+ * @details Gripper collision setup이 역할을 기록하고 GripperGraspAdapter가 Body와 좌우 손끝을 찾아 쓴다.
+ */
+struct GripperCollisionProxy
+{
+    GripperCollisionPart part = GripperCollisionPart::Other;
+};

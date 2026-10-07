@@ -4,6 +4,7 @@
 #include "assets/GraphicsTypes.h"
 #include "scene/Scene.h"
 #include "simulation/components/PhysicsComponents.h"
+#include "simulation/components/RobotCollisionProxy.h"
 #include "CollisionGeometry.h"
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -27,17 +28,18 @@ struct ProxySpec
     const char* root;
     std::array<const char*, 2> meshes;
     std::size_t meshCount;
+    GripperCollisionPart part;
 };
 
 // 모델에서 지정한 Body/joint 좌표계마다 7개 강체 부품을 구성한다. 현재 자산의 메시 9개는 메시별로 볼록 충돌 외피 하나씩 만든다.
 constexpr std::array<ProxySpec, 7> ProxySpecs{{
-    {"Gripper", {"GripperMesh", nullptr}, 1},
-    {"LeftOuterKnuckleJoint", {"LeftOuterKnuckleMesh", "LeftFingerMesh"}, 2},
-    {"RightOuterKnuckleJoint", {"RightOuterKnuckleMesh", "RightFingerMesh"}, 2},
-    {"LeftInnerKnuckleJoint", {"LeftInnerKnuckleMesh", nullptr}, 1},
-    {"RightInnerKnuckleJoint", {"RightInnerKnuckleMesh", nullptr}, 1},
-    {"LeftFingerTipJoint", {"LeftFingerTipMesh", nullptr}, 1},
-    {"RightFingerTipJoint", {"RightFingerTipMesh", nullptr}, 1}}};
+    {"Gripper", {"GripperMesh", nullptr}, 1, GripperCollisionPart::Body},
+    {"LeftOuterKnuckleJoint", {"LeftOuterKnuckleMesh", "LeftFingerMesh"}, 2, GripperCollisionPart::Other},
+    {"RightOuterKnuckleJoint", {"RightOuterKnuckleMesh", "RightFingerMesh"}, 2, GripperCollisionPart::Other},
+    {"LeftInnerKnuckleJoint", {"LeftInnerKnuckleMesh", nullptr}, 1, GripperCollisionPart::Other},
+    {"RightInnerKnuckleJoint", {"RightInnerKnuckleMesh", nullptr}, 1, GripperCollisionPart::Other},
+    {"LeftFingerTipJoint", {"LeftFingerTipMesh", nullptr}, 1, GripperCollisionPart::LeftFingerTip},
+    {"RightFingerTipJoint", {"RightFingerTipMesh", nullptr}, 1, GripperCollisionPart::RightFingerTip}}};
 
 bool Finite(const glm::vec3& value)
 {
@@ -158,7 +160,13 @@ void ConfigureTwoF85Colliders(Scene& scene, const Entity& robotRoot, const Model
         }
     };
 
-    struct Prepared { Entity parent; std::vector<physics::CollisionShapeDescription> shapes; std::string name; };
+    struct Prepared
+    {
+        Entity parent;
+        std::vector<physics::CollisionShapeDescription> shapes;
+        std::string name;
+        GripperCollisionPart part = GripperCollisionPart::Other;
+    };
     std::array<Prepared, ProxySpecs.size()> prepared;
     for (std::size_t p = 0; p < ProxySpecs.size(); ++p)
     {
@@ -195,6 +203,7 @@ void ConfigureTwoF85Colliders(Scene& scene, const Entity& robotRoot, const Model
         }
         prepared[p].parent = rootEntity;
         prepared[p].name = std::string(spec.root) + "_CollisionProxy";
+        prepared[p].part = spec.part;
         if (robotRoot.FindChildByNameRecursive(prepared[p].name))
             throw std::invalid_argument("TwoF85 collision proxy already exists.");
 
@@ -243,6 +252,7 @@ void ConfigureTwoF85Colliders(Scene& scene, const Entity& robotRoot, const Model
         proxy.SetLocalRotation(glm::quat{1.0F, 0.0F, 0.0F, 0.0F});
         proxy.SetLocalScale(glm::vec3(1.0F));
         proxy.set<RigidBody>(RigidBody{physics::BodyMotionType::Kinematic, physics::CollisionLayer::Gripper})
+            .set<GripperCollisionProxy>(GripperCollisionProxy{item.part})
             .set<Colliders>(Colliders{std::move(item.shapes)});
     }
 }

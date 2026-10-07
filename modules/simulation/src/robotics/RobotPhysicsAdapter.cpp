@@ -26,8 +26,9 @@ RobotPhysicsAdapter::RobotPhysicsAdapter(
     {
         base_ = scene.CreateEntity("Base_CollisionProxy");
         base_.SetParent(robotRoot);
-        base_.Add<RobotCollisionProxy>()
-            .set<RigidBody>(RigidBody{
+        base_.Add<RobotCollisionProxy>();
+        base_.Add<RobotBaseEnvironmentProxy>();
+        base_.set<RigidBody>(RigidBody{
                 grasplink::physics::BodyMotionType::Static,
                 grasplink::physics::CollisionLayer::Environment})
             .set<Colliders>(Colliders{std::move(geometry.baseShapes)});
