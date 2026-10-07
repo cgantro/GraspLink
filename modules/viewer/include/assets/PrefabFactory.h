@@ -22,7 +22,7 @@ struct ModelResource;
  *
  * Entity와 부모·자식 관계의 수명은 Scene이 관리한다. 반환 wrapper는 수명을 늘리지 않으므로 Scene이나 Flecs World가 파괴되면 무효다.
  * 그리기 정보는 형상·재질·Shader의 공유 참조를 보유한다. GPU 객체의 마지막 참조를 놓을 때 OpenGL 실행 환경(context)이 현재 스레드에서 활성화되어 있어야 한다.
- * 생성 도중 오류가 나면 예외가 발생하고 앞서 만든 Entity는 장면에 남을 수 있다.
+ * 부모 관계, Mesh 범위, GPU Mesh와 Material은 Entity를 만들기 전에 검사한다. Scene 자체의 Entity 생성이 실패하면 먼저 만든 Entity가 남을 수 있다.
  */
 class PrefabFactory final
 {
@@ -35,7 +35,7 @@ public:
      * @param shader 만들어지는 모든 표면이 사용할 화면 그리기 프로그램.
      * @return 선택된 최상위 부품을 가리키는 Entity wrapper.
      * @throws std::runtime_error 그리기 프로그램, 부품 관계, GPU 형상 또는 재질 참조가 잘못됐을 때 발생한다.
-     * 실패 전에 만든 Entity는 장면에 남을 수 있다.
+     * 모델 관계·GPU 형상·재질 참조가 잘못된 경우 Entity를 만들기 전에 실패한다. Scene 생성 자체가 실패하면 앞서 만든 Entity가 남을 수 있다.
      * @details 각 부품의 위치는 부모 기준 [m], 회전은 길이 1인 quaternion, 크기는 배율이다. GPU 자료는 번호로 찾아 공유한다.
      * 재질 번호가 -1인 표면만 기본 재질을 사용한다. 여러 표면 묶음은 각각 자식 Entity가 맡아 연결 번호의 일부를 그린다.
      */

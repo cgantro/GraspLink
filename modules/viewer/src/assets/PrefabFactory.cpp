@@ -13,6 +13,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <cstdint>
 #include <vector>
 
 namespace
@@ -39,6 +40,67 @@ std::shared_ptr<Material> ResolveMaterial(
         throw std::runtime_error("Material has not been uploaded");
 
     return material;
+}
+
+void ValidateModelBeforeSceneChanges(
+    const ModelResource& model,
+    const AssetManager& assets,
+    const std::shared_ptr<Shader>& shader)
+{
+    if (!shader)
+        throw std::runtime_error("PrefabFactory requires a shader");
+    if (model.nodes.empty())
+        throw std::runtime_error("Model has no nodes");
+    if (model.rootNodeIndex < 0 || model.rootNodeIndex >= static_cast<int>(model.nodes.size()))
+        throw std::runtime_error("Model has invalid root node");
+
+    std::vector<std::uint8_t> parentState(model.nodes.size(), 0);
+    for (std::size_t start = 0; start < model.nodes.size(); ++start)
+    {
+        std::vector<std::size_t> path;
+        std::size_t current = start;
+        while (parentState[current] == 0)
+        {
+            parentState[current] = 1;
+            path.push_back(current);
+            const int parent = model.nodes[current].parentIndex;
+            if (parent < -1 || parent >= static_cast<int>(model.nodes.size()))
+                throw std::runtime_error("Invalid parent index");
+            if (parent < 0)
+                break;
+            current = static_cast<std::size_t>(parent);
+        }
+        if (parentState[current] == 1 && model.nodes[current].parentIndex >= 0)
+            throw std::runtime_error("Model contains a parent cycle");
+        for (const std::size_t index : path)
+            parentState[index] = 2;
+    }
+
+    for (const NodeData& node : model.nodes)
+    {
+        if (node.meshIndex < -1 || node.meshIndex >= static_cast<int>(model.meshes.size()))
+            throw std::runtime_error("Invalid mesh index in model node");
+        if (node.meshIndex < 0)
+            continue;
+
+        const MeshData& mesh = model.meshes[static_cast<std::size_t>(node.meshIndex)];
+        if (!mesh.gpuMesh)
+            throw std::runtime_error("Mesh has not been uploaded: " + mesh.name);
+        for (const SubMeshInfo& subMesh : mesh.subMeshes)
+        {
+            const std::size_t begin = subMesh.indexStart;
+            const std::size_t count = subMesh.indexCount;
+            if (count == 0 || count % 3 != 0 || begin > mesh.indices.size() ||
+                count > mesh.indices.size() - begin)
+                throw std::runtime_error("Invalid primitive index range");
+            if (subMesh.defaultMaterialIndex < -1)
+                throw std::runtime_error("Invalid material index");
+            (void)ResolveMaterial(model, assets, subMesh.defaultMaterialIndex);
+            for (std::size_t index = begin; index < begin + count; ++index)
+                if (mesh.indices[index] >= mesh.vertices.size())
+                    throw std::runtime_error("Invalid primitive vertex index");
+        }
+    }
 }
 
 /**
@@ -115,18 +177,8 @@ Entity PrefabFactory::CreateModel(
     const AssetManager& assets,
     const std::shared_ptr<Shader>& shader)
 {
-    // Entity를 만들려면 장면이 활성 상태여야 한다. 형상과 이미지도 먼저 그래픽 카드에 올려야 한다.
-    if (!shader)
-        throw std::runtime_error("PrefabFactory requires a shader");
-
-    if (model.nodes.empty())
-        throw std::runtime_error("Model has no nodes");
-
-    if (model.rootNodeIndex < 0 ||
-        model.rootNodeIndex >= static_cast<int>(model.nodes.size()))
-    {
-        throw std::runtime_error("Model has invalid root node");
-    }
+    // 참조와 계층을 먼저 검증해 잘못된 Asset 때문에 Scene에 일부 Entity만 남는 일을 막는다.
+    ValidateModelBeforeSceneChanges(model, assets, shader);
 
     // 첫 단계: 부모 부품이 배열에서 자식 뒤에 있어도 되도록 모든 Entity를 먼저 만든다.
     std::vector<Entity> entities(model.nodes.size());
