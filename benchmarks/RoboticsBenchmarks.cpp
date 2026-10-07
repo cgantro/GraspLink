@@ -90,7 +90,7 @@ void LinearPathPlanning(benchmark::State& state)
     };
 
     LinearPathPlan plan;
-    const auto validation = LinearPathPlanner::Build(
+    const auto validation = BuildLinearPath(
         command, kHcr12a, kSeed, startTcp, solveCollisionFree, solveEndpoint, plan);
     if (!validation)
     {
@@ -100,7 +100,7 @@ void LinearPathPlanning(benchmark::State& state)
 
     for (auto _ : state)
     {
-        const auto result = LinearPathPlanner::Build(
+        const auto result = BuildLinearPath(
             command, kHcr12a, kSeed, startTcp, solveCollisionFree, solveEndpoint, plan);
         if (!result)
         {

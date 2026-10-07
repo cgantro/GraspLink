@@ -80,18 +80,14 @@ using CollisionAwareIkSolver = std::function<std::optional<kinematics::IkResult>
 // 표본 한도 초과 시 끝점 자체가 도달 불가능한지와 경로 해상도만 부족한지를 구분한다.
 using EndpointReachabilitySolver = std::function<kinematics::IkResult(const CartesianPose&, const JointVector&)>;
 
-class LinearPathPlanner
-{
-public:
-    static Result Build(
-        const LinearPathMoveCommand& command,
-        const models::RobotSpecification& specification,
-        const JointVector& startJoints,
-        const CartesianPose& startTcp,
-        const CollisionAwareIkSolver& solveCollisionFreeIk,
-        const EndpointReachabilitySolver& solveEndpointReachability,
-        LinearPathPlan& plan,
-        const SimulationMotionPolicy& policy = kDefaultSimulationMotionPolicy);
-};
+Result BuildLinearPath(
+    const LinearPathMoveCommand& command,
+    const models::RobotSpecification& specification,
+    const JointVector& startJoints,
+    const CartesianPose& startTcp,
+    const CollisionAwareIkSolver& solveCollisionFreeIk,
+    const EndpointReachabilitySolver& solveEndpointReachability,
+    LinearPathPlan& plan,
+    const SimulationMotionPolicy& policy = kDefaultSimulationMotionPolicy);
 
 } // namespace grasplink::robotics::backends::simulation::detail

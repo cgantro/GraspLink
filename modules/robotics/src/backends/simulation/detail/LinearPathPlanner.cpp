@@ -9,7 +9,7 @@
 
 namespace grasplink::robotics::backends::simulation::detail
 {
-Result LinearPathPlanner::Build(
+Result BuildLinearPath(
     const LinearPathMoveCommand& command,
     const models::RobotSpecification& specification,
     const JointVector& startJoints,

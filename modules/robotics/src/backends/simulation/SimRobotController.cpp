@@ -311,7 +311,7 @@ Result SimRobotController::MoveLinearPath(const LinearPathMoveCommand& command)
         return Failure(ErrorCode::Unsupported, "SimRobotController: missing ToolFrame for TCP motion");
 
     detail::LinearPathPlan plan;
-    const auto result = detail::LinearPathPlanner::Build(
+    const auto result = detail::BuildLinearPath(
         command,
         *specification_,
         state_.jointPositionRadians,
