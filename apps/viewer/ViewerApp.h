@@ -25,9 +25,13 @@ class PhysicsWorld;
 
 namespace grasplink::robotics
 {
-class IRobotController;
-class IGripperController;
 namespace kinematics { class RobotKinematics; class GripperKinematics; }
+}
+
+namespace grasplink::robotics::backends::simulation
+{
+class SimRobotController;
+class SimGripperController;
 }
 
 namespace grasplink::viewer::robotics
@@ -134,10 +138,10 @@ private:
     flecs::world m_World;
 
     // 로봇의 관절 상태를 갱신하고 이동 명령을 처리하는 제어 backend다.
-    std::unique_ptr<grasplink::robotics::IRobotController> m_RobotController;
+    std::unique_ptr<grasplink::robotics::backends::simulation::SimRobotController> m_RobotController;
 
     // 그리퍼의 개폐 명령과 현재 상태를 관리한다. GUI는 명령을 보내고 상태의 독립된 복사본을 읽는다.
-    std::unique_ptr<grasplink::robotics::IGripperController> m_GripperController;
+    std::unique_ptr<grasplink::robotics::backends::simulation::SimGripperController> m_GripperController;
 
     // 아래 변환 adapter는 Scene Entity handle을 빌려 쓰므로 Scene보다 먼저 파괴해야 한다.
     std::unique_ptr<grasplink::robotics::kinematics::RobotKinematics> m_RobotKinematics;

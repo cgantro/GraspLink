@@ -32,8 +32,6 @@
 
 #include "robotics/backends/simulation/SimRobotController.h"
 #include "robotics/backends/simulation/SimGripperController.h"
-#include "robotics/core/IRobotController.h"
-#include "robotics/core/IGripperController.h"
 #include "robotics/models/hanwha/Hcr12a.h"
 #include "robotics/models/robotiq/TwoF85.h"
 #include "robotics/kinematics/RobotKinematics.h"
@@ -346,8 +344,7 @@ bool ViewerApp::InitGripper(const Entity& robotRoot)
 
 void ViewerApp::ApplyControllerPoses()
 {
-    const auto& simulator = static_cast<const SimRobotController&>(*m_RobotController);
-    const auto& robotPose = m_RobotKinematics->Update(simulator.GetStateView());
+    const auto& robotPose = m_RobotKinematics->Update(m_RobotController->GetStateView());
     m_RobotTransformAdapter->Apply(robotPose);
     m_RobotPhysicsAdapter->Apply(robotPose);
     // 한 고정 tick에서 팔의 관절 자세와 그리퍼의 부모 기준 Local 회전을 함께 적용한다. 이어지는 World 변환 갱신으로 화면과 충돌 프록시가 같은 계층 자세를 얻는다.
@@ -381,12 +378,12 @@ void ViewerApp::InitPhysics(const Entity& robotRoot, Entity& floorEntity)
         m_World, *m_PhysicsWorld, &m_Logger);
     m_GripperGraspAdapter = std::make_unique<grasplink::simulation::GripperGraspAdapter>(
         *m_PhysicsWorld, *m_PhysicsSystemModule,
-        static_cast<grasplink::robotics::backends::simulation::SimGripperController&>(*m_GripperController));
+        *m_GripperController);
     if (!m_GripperGraspAdapter->Bind(robotRoot))
         throw std::runtime_error("ViewerApp: cannot bind gripper contact bodies");
 
     m_RobotCollisionGuard = std::make_unique<grasplink::viewer::ViewerRobotCollisionGuard>(
-        static_cast<SimRobotController&>(*m_RobotController), *m_GripperController,
+        *m_RobotController, *m_GripperController,
         *m_RobotKinematics, *m_RobotTransformAdapter, *m_RobotPhysicsAdapter,
         *m_GripperKinematics, *m_GripperTransformAdapter, m_World, *m_PhysicsWorld,
         *m_PhysicsSystemModule, robotRoot);
@@ -502,20 +499,19 @@ void ViewerApp::MainLoop()
             ImGui::Begin("Robot controls", nullptr, sidebarFlags);
             ImGui::TextUnformatted("GraspLink | HCR-12A");
             ImGui::Separator();
-            auto& simulationController = static_cast<SimRobotController&>(*m_RobotController);
-            const auto& stateForMission = simulationController.GetStateView();
+            const auto& stateForMission = m_RobotController->GetStateView();
             m_PickPlaceMission.Update(stateForMission, *m_RobotController, *m_GripperController,
                 graspState.grasped, boxPose, placementPose);
-            const auto& robotState = simulationController.GetStateView();
+            const auto& robotState = m_RobotController->GetStateView();
             const auto mission = m_PickPlaceMission.Snapshot();
             const grasplink::gui::RobotPanelMissionView missionView{mission.stageLabel, mission.lastMessage,
                 mission.completedCount, 2.0, 8.0, mission.paused, mission.missionSucceeded,
                 mission.autoRepeat, mission.hasResult, mission.lastRequestAccepted, mission.canStart};
             const grasplink::gui::RobotPanelView robotPanelView{robotState,
-                simulationController.GetSpecification(), boxPose, placementPose, missionView};
+                m_RobotController->GetSpecification(), boxPose, placementPose, missionView};
             const auto panelActions = m_RobotPanel->DrawContents(robotPanelView);
             m_PickPlaceMission.ApplyActions({panelActions.start, panelActions.resume, panelActions.stop},
-                simulationController.GetStateView(), *m_RobotController, graspState.grasped, boxPose);
+                m_RobotController->GetStateView(), *m_RobotController, graspState.grasped, boxPose);
             if (m_PickPlaceMission.ConsumeSuccessEvent())
             {
                 const auto nextPosition = grasplink::simulation::scenario::SampleBoxPosition();
