@@ -7,9 +7,10 @@
 #include <glm/gtx/matrix_decompose.hpp>
 #include <glm/gtx/quaternion.hpp>
 
-#include <cstdint>
+#include <array>
 #include <cmath>
 #include <cstring>
+#include <cstdint>
 #include <limits>
 #include <numeric>
 #include <stdexcept>
@@ -133,57 +134,30 @@ float CheckedFloat(double value, const char* error)
     return static_cast<float>(value);
 }
 
-// 정점 위치와 법선은 세 실수로 읽는다. 현재 렌더러는 접선 속성을 사용하지 않는다.
-std::vector<glm::vec3> ReadVec3FloatAccessor(
+// FLOAT VEC2와 VEC3 속성은 동일한 stride 검사로 읽는다.
+template<typename Vector, std::size_t ComponentCount, typename Convert>
+std::vector<Vector> ReadFloatVectorAccessor(
     const tinygltf::Model& model,
-    int accessorIndex)
+    int accessorIndex,
+    int expectedType,
+    const char* expectedTypeName,
+    Convert convert)
 {
     const tinygltf::Accessor& accessor = model.accessors.at(accessorIndex);
-    if (accessor.type != TINYGLTF_TYPE_VEC3 ||
+    if (accessor.type != expectedType ||
         accessor.componentType != TINYGLTF_COMPONENT_TYPE_FLOAT)
-        throw std::runtime_error("Expected FLOAT VEC3 ACCESSOR");
+        throw std::runtime_error(expectedTypeName);
 
-    const AccessorView view = GetAccessorView(model, accessorIndex, sizeof(float) * 3U);
-
-    std::vector<glm::vec3> result(view.count);
+    const AccessorView view = GetAccessorView(model, accessorIndex, sizeof(float) * ComponentCount);
+    std::vector<Vector> result(view.count);
 
     for (std::size_t i = 0; i < view.count; ++i)
     {
-        const unsigned char* source = view.data + i * view.stride;
-        float values[4]{};
+        std::array<float, ComponentCount> values{};
 
-        // 파일의 값 시작 주소가 C++ float 정렬에 맞는다고 가정하지 않고 byte를 복사한다.
-        std::memcpy(values, source, sizeof(float) * 3U);
-        result[i] = glm::vec3{values[0], values[1], values[2]};
-        RequireFinite(result[i]);
-    }
-
-    return result;
-}
-
-// UV는 표면에서 이미지의 어느 위치를 읽을지 나타내는 좌표다. 이 함수는 각 정점의 2개 실수 UV를 읽는다.
-std::vector<glm::vec2> ReadVec2FloatAccessor(
-    const tinygltf::Model& model,
-    int accessorIndex)
-{
-    const tinygltf::Accessor& accessor = model.accessors.at(accessorIndex);
-    if (accessor.type != TINYGLTF_TYPE_VEC2 ||
-        accessor.componentType != TINYGLTF_COMPONENT_TYPE_FLOAT)
-    {
-        throw std::runtime_error("Expected FLOAT VEC2 ACCESSOR");
-    }
-
-    constexpr std::size_t kElementSize = sizeof(float) * 2U;
-    const AccessorView view = GetAccessorView(model, accessorIndex, kElementSize);
-
-    std::vector<glm::vec2> result(view.count);
-
-    for (std::size_t i = 0; i < view.count; ++i)
-    {
-        const unsigned char* source = view.data + i * view.stride;
-        float values[2]{};
-        std::memcpy(values, source, sizeof(values));
-        result[i] = glm::vec2{values[0], values[1]};
+        // 파일 byte를 정렬에 의존하지 않고 float 배열로 복사한다.
+        std::memcpy(values.data(), view.data + i * view.stride, sizeof(float) * ComponentCount);
+        result[i] = convert(values.data());
         RequireFinite(result[i]);
     }
 
@@ -348,8 +322,11 @@ MeshData ConvertMesh(
         if (positionIterator == primitive.attributes.end())
             throw std::runtime_error("glTF primitive has no POSITION");
 
-        const std::vector<glm::vec3> positions =
-            ReadVec3FloatAccessor(model, positionIterator->second);
+        const std::vector<glm::vec3> positions = ReadFloatVectorAccessor<glm::vec3, 3>(
+            model, positionIterator->second, TINYGLTF_TYPE_VEC3,
+            "Expected FLOAT VEC3 ACCESSOR", [](const float* value) {
+                return glm::vec3{value[0], value[1], value[2]};
+            });
 
         const std::size_t vertexCount = positions.size();
         if (vertexCount == 0)
@@ -363,7 +340,11 @@ MeshData ConvertMesh(
         const auto normalIterator = primitive.attributes.find("NORMAL");
         if (normalIterator != primitive.attributes.end())
         {
-            normals = ReadVec3FloatAccessor(model, normalIterator->second);
+            normals = ReadFloatVectorAccessor<glm::vec3, 3>(
+                model, normalIterator->second, TINYGLTF_TYPE_VEC3,
+                "Expected FLOAT VEC3 ACCESSOR", [](const float* value) {
+                    return glm::vec3{value[0], value[1], value[2]};
+                });
             if (normals.size() != vertexCount)
                 throw std::runtime_error("NORMAL count does not match POSITION count");
         }
@@ -372,7 +353,11 @@ MeshData ConvertMesh(
         const auto texCoordIterator = primitive.attributes.find("TEXCOORD_0");
         if (texCoordIterator != primitive.attributes.end())
         {
-            texCoords = ReadVec2FloatAccessor(model, texCoordIterator->second);
+            texCoords = ReadFloatVectorAccessor<glm::vec2, 2>(
+                model, texCoordIterator->second, TINYGLTF_TYPE_VEC2,
+                "Expected FLOAT VEC2 ACCESSOR", [](const float* value) {
+                    return glm::vec2{value[0], value[1]};
+                });
             if (texCoords.size() != vertexCount)
                 throw std::runtime_error("TEXCOORD_0 count does not match POSITION count");
         }
