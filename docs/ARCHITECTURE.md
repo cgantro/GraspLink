@@ -34,7 +34,7 @@ flowchart TD
 
 `modules/physics` does not depend on Flecs, Viewer, or OpenGL. Jolt-specific types stay inside that module. `modules/simulation` owns Flecs physics configuration and the private runtime binding between an Entity and `PhysicsBodyHandle`.
 
-`modules/diagnostics` has no dependency on the simulation or graphics stack. `Logger` sends copied log, metric, and profile records through a bounded queue to one file-writing thread. `Profiler::Trace` wraps work at application or module boundaries, so timing and exception reporting do not need to be embedded in controller and physics operations. `ViewerApp` owns the Logger longer than the systems that borrow it, then drains and joins the writer during shutdown. See [Diagnostics](DIAGNOSTICS.md) for the API, queue policy, and output format.
+`modules/diagnostics` has no dependency on the simulation or graphics stack. `Logger` sends copied log and semantic metric records through a bounded queue to one file-writing thread. Tracy measures runtime zones and frames without routing timing records through Logger. `ViewerApp` owns the Logger longer than the systems that borrow it, then drains and joins the writer during shutdown. See [Diagnostics](DIAGNOSTICS.md) for the API and output format.
 
 ## Robot state flow
 
@@ -51,7 +51,7 @@ IRobotController
 
 FK는 모델에 ToolFrame이 있으면 `toolFrameInBaseFrame`을 제공한다. `DampedLeastSquaresIk`는 ToolFrame에 고정 공구 변환을 더해 TCP 목표를 만드는 관절각을 계산한다. `SimRobotController::MovePose`는 이를 `MoveJoint`로 연결하고 `MoveLinear`은 TCP의 직선 위치와 최단 회전 경로를 따라간다. `tcpPoseValid=true`인 시뮬레이션 상태는 Robot base 기준 모델 FK 결과이며 실제 장치 측정값이 아니다. 가속도 제한, Hardware Gripper backend와 관절 동역학은 구현하지 않았다. 상세 계약은 [로봇 이동과 파지](ROBOT_MOTION_AND_GRASP.md)를 참고한다.
 
-`RobotTransformAdapter`는 자세를 authored GLB 계층에 적용한다. `RobotPhysicsAdapter`는 연결된 GLB 조각에서 링크별 Convex Hull을 만들며 다음 가동 관절 아래와 Gripper를 제외한다. 삼각형 중심 기준 16 cm 셀을 사용하고 4 cm 미만 부품·1 cm 미만 셀·부피 없는 hull 입력을 제외한다. `ConfigureTwoF85Colliders`는 고정 Gripper 또는 가동 관절 Entity 아래 Gripper-layer Kinematic proxy 7개를 만든다. rigid part마다 이름 있는 GLB 메시의 축약 hull을 사용하며 outer knuckle에는 attached finger 메시도 포함한다. proxy의 Local 원점은 소유 body/joint 원점이다. robot Base collider와 관절 동역학은 없다.
+`RobotTransformAdapter`는 계산한 자세를 GLB 관절 계층에 적용한다. `RobotPhysicsAdapter`는 연결된 GLB 메시에서 각 링크의 Convex Hull을 만들고, 그리퍼 형상은 별도 설정 함수가 처리한다. Robot base에도 고정 Environment 충돌 형상을 둔다. `ConfigureTwoF85Colliders`는 GLB 메시를 축약한 hull로 Gripper-layer Kinematic proxy 7개를 만들며, 각 proxy의 위치는 소유 body 또는 joint를 기준으로 둔다. Robot과 Gripper의 충돌 프록시는 Kinematic이며 관절 동역학은 계산하지 않는다.
 
 ## 그리퍼 상태 흐름
 

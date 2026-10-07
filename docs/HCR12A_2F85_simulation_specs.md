@@ -276,7 +276,7 @@ software Stop
 ### 아직 미구현/후순위
 
 ```text
-Acceleration limiting (구현 안 됨; 검증된 max acceleration 값 필요)
+관절 공간 `MoveJoint` 가속도 제한(미구현, Cartesian 경로 가속도 제한은 구현됨)
 Hardware Robot backend
 Hardware Gripper backend
 Gripper force / current
@@ -361,18 +361,18 @@ docs/GRIPPER_RUNTIME_DESIGN.md
 
 HCR-12A의 GLB link geometry에서 만든 Convex Hull을 별도 Kinematic proxy Entity에 연결한다.
 Controller의 관절 상태로 계산한 FK link pose를 proxy의 Local 값에 저장하고, Physics integration이
-World pose로 바꿔 Jolt에 전달한다. Link1~Link6을 지원하며 robot Base collider는 없다. Gripper는
+The Simulation adapter converts these local poses to World poses and sends them to Jolt. It creates a fixed Environment collider for Robot Base and Kinematic colliders for Link1 through Link6. The Gripper collider is built separately.
 `ConfigureTwoF85Colliders`가 현재 asset의 메시별 축약 Convex Hull로 일곱 Kinematic proxy를 구성한다.
 고정 base, outer knuckle+finger compound, inner knuckle, fingertip proxy는 authored `Gripper` 또는
 6개 joint Entity의 자식이라 ECS 계층의 fixed-step World transform을 따른다. 각 hull 정점은 owning
 body/joint origin 기준으로 표현되며, 초기 자유공간 open gap 약 85 mm를 보존한다. 개폐 자세의 기준은
-`GripperState.closureFraction`이며 `GripperKinematics`와 `GripperTransformAdapter`가 원본 관절에 적용한다. 접촉 후 수동 linkage 적응, grasp, constraint와
-관절 동역학은 구현 범위 밖이다.
+The open/close state follows `GripperState.closureFraction`, calculated by `GripperKinematics` and applied to the authored hierarchy by `GripperTransformAdapter`. When both fingertips contact opposite sides of the same Dynamic object, the grasp adapter connects the object to the gripper with a fixed constraint. This does not simulate finger force or individual finger adaptation.
+Collider hulls are approximations of the source mesh geometry; thin or small features may not be represented.
 이 proxy는 관절 축 제약이나 모터 토크를 계산하지 않는다.
 
 2F-85에는 현재 `IGripperController` contract와 model specification, 자유공간 Simulation controller·기구학·GLB adapter 및
 메시 기반 gripper Collider proxy가 있다. force는 raw 범위만 검사하고 전류는 제공하지 않는다.
-물체 접촉 판정·접촉 시 정지·수동 linkage 적응·grasp는 구현 범위 밖이다. `0.7929 rad`는 현재 GLB geometry 기준의 nominal closed master linkage
+관절 공간 `MoveJoint` 가속도 제한은 구현되지 않았고, Cartesian 경로 가속도 제한은 구현되어 있다.
 angle이며 실제 motor shaft angle이나 접촉 후 finger 자세를 뜻하지 않는다.
 
 Physics/Flecs 설정, ownership, fixed-step 및 좌표 변환은 [`PHYSICS_ECS_INTEGRATION.md`](PHYSICS_ECS_INTEGRATION.md)에 정리한다.

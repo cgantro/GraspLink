@@ -1,7 +1,7 @@
 # GraspLink
 
 C++17/OpenGL/Flecs 기반 HCR-12A + 2F-85 로봇 시뮬레이터 프로젝트다.
-Controller가 관절 상태를 갱신하면 공통 FK 결과를 Viewer의 J1~J6 변환과 Jolt Kinematic 충돌 프록시에 반영한다. 2F-85는 `SimGripperController`의 연속 개폐 상태를 `GripperKinematics`와 `GripperTransformAdapter`로 GLB 관절에 적용하고, 그 자식인 7개 Kinematic hull proxy도 같은 계층을 따른다. 자유공간 개폐는 구현됐으며 힘·접촉 시 정지·grasp 동역학은 아직 구현하지 않았다. FK ToolFrame은 backend TCP feedback과 별도이며, IK·가속도 제한·관절 동역학도 구현 범위 밖이다.
+Controller가 관절 상태를 갱신하면 공통 FK 결과를 Viewer의 J1~J6 변환과 Jolt Kinematic 충돌 프록시에 반영한다. Damped Least Squares IK는 `MovePose`와 사전 계획 방식의 `MoveLinearPath`를 지원한다. Cartesian 경로에는 TCP 기준 가속·감속 프로파일을 적용한다. 2F-85는 연속 개폐를 지원하며, 양쪽 손끝이 같은 Dynamic 물체의 반대 면에 닿으면 고정 constraint를 만들어 운반한다. 실제 힘 계산, 개별 손가락 적응, 관절 공간 `MoveJoint`의 가속도 제한은 구현하지 않았다. FK ToolFrame과 backend TCP feedback은 별도다.
 
 ## 디렉터리
 
@@ -103,6 +103,6 @@ cd build-ninja-debug
 
 모듈 경계는 [Architecture](docs/ARCHITECTURE.md), 물리 제약은 [Physics / Flecs Integration](docs/PHYSICS_ECS_INTEGRATION.md), 현재 점검 결과는 [Code Documentation Audit](docs/CODE_DOCUMENTATION_AUDIT.md)를 참고한다.
 
-비동기 Logger와 Profiler 사용법 및 파일 출력·대기열 정책은 [Diagnostics](docs/DIAGNOSTICS.md)를 참고한다.
+Logger usage and file output policy are documented in [Diagnostics](docs/DIAGNOSTICS.md). Tracy provides runtime frame and zone timing; see the same document for setup.
 
 그리퍼 충돌, 팔 형상 수 감소와 한글 Doxygen 보강 결과는 [후속 작업 결과](docs/GRIPPER_COLLISION_AND_COMMENT_RESULTS.md)에 정리했다.
