@@ -83,7 +83,7 @@ ctest --test-dir build-ninja-release --output-on-failure
 
 Ninja는 단일 configuration generator이므로 Debug/Release는 별도 build directory와 `CMAKE_BUILD_TYPE`으로 선택한다. `--config Release`로 Debug directory를 Release로 바꾸지 않는다.
 
-화면 없이 robotics/physics 테스트만 실행하려면:
+화면 없이 Robotics, Physics, ECS Simulation, GLB CPU 로더 테스트를 빌드하고 실행하려면:
 
 ```powershell
 cmake -S . -B build-headless-debug -G Ninja -DCMAKE_BUILD_TYPE=Debug -DGRASPLINK_BUILD_GRAPHICS=OFF -DBUILD_TESTING=ON

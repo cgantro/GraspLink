@@ -10,13 +10,7 @@ function(grasplink_add_common_dependencies)
   FetchContent_MakeAvailable(glm)
 endfunction()
 
-function(grasplink_add_graphics_dependencies)
-  FetchContent_Declare(
-    glfw
-    GIT_REPOSITORY https://github.com/glfw/glfw.git
-    GIT_TAG 3.4
-    GIT_SHALLOW TRUE
-  )
+function(grasplink_add_scene_dependencies)
   FetchContent_Declare(
     flecs
     GIT_REPOSITORY https://github.com/SanderMertens/flecs.git
@@ -34,7 +28,17 @@ function(grasplink_add_graphics_dependencies)
     GIT_TAG v2.9.7
     GIT_SHALLOW TRUE
   )
-  FetchContent_MakeAvailable(glfw flecs tinygltf)
+  FetchContent_MakeAvailable(flecs tinygltf)
+endfunction()
+
+function(grasplink_add_graphics_dependencies)
+  FetchContent_Declare(
+    glfw
+    GIT_REPOSITORY https://github.com/glfw/glfw.git
+    GIT_TAG 3.4
+    GIT_SHALLOW TRUE
+  )
+  FetchContent_MakeAvailable(glfw)
   find_package(OpenGL REQUIRED)
 endfunction()
 

@@ -161,6 +161,75 @@ option(
   ON
 )
 
+grasplink_add_scene_dependencies()
+
+add_library(grasplink_scene STATIC
+  modules/viewer/src/Entity.cpp
+  modules/viewer/src/scene/Scene.cpp
+  modules/viewer/src/systems/TransformSystemModule.cpp
+  modules/viewer/src/robotics/RobotTransformAdapter.cpp
+  modules/viewer/src/robotics/GripperTransformAdapter.cpp
+)
+target_include_directories(grasplink_scene PUBLIC
+  modules/viewer/include
+  modules/viewer/include/components
+  modules/viewer/include/systems
+)
+target_link_libraries(grasplink_scene PUBLIC flecs::flecs_static glm::glm grasplink_robotics)
+target_compile_definitions(grasplink_scene PRIVATE GLM_ENABLE_EXPERIMENTAL)
+
+add_library(grasplink_model_data STATIC modules/viewer/src/assets/GltfLoader.cpp)
+target_include_directories(grasplink_model_data PUBLIC modules/viewer/include)
+target_link_libraries(grasplink_model_data PUBLIC glm::glm PRIVATE tinygltf)
+target_compile_definitions(grasplink_model_data PRIVATE GLM_ENABLE_EXPERIMENTAL)
+
+add_library(grasplink_simulation STATIC
+  modules/simulation/src/SimulationSceneBuilder.cpp
+  modules/simulation/src/robotics/CollisionGeometry.cpp
+  modules/simulation/src/robotics/GripperColliders.cpp
+  modules/simulation/src/robotics/GripperGraspAdapter.cpp
+  modules/simulation/src/robotics/RobotCollisionGeometryBuilder.cpp
+  modules/simulation/src/robotics/RobotPhysicsAdapter.cpp
+  modules/simulation/src/systems/PhysicsSystemModule.cpp
+)
+target_include_directories(grasplink_simulation PUBLIC modules/simulation/include)
+target_link_libraries(grasplink_simulation PUBLIC
+  grasplink_scene
+  grasplink_model_data
+  grasplink_physics
+  grasplink_robotics
+  grasplink_diagnostics
+)
+target_compile_definitions(grasplink_simulation PRIVATE GLM_ENABLE_EXPERIMENTAL)
+
+add_library(grasplink_application STATIC apps/viewer/PickPlaceMission.cpp)
+target_include_directories(grasplink_application PUBLIC apps/viewer)
+target_link_libraries(grasplink_application PUBLIC grasplink_robotics glm::glm)
+target_compile_definitions(grasplink_application PRIVATE GLM_ENABLE_EXPERIMENTAL)
+
+if(BUILD_TESTING)
+  grasplink_add_test(grasplink_pick_place_mission_tests PickPlaceMission tests/PickPlaceMissionTests.cpp grasplink_application GTEST_DISCOVERY)
+  grasplink_add_test(grasplink_gltf_tests GltfLoader tests/GltfLoaderTests.cpp grasplink_model_data)
+  target_compile_definitions(grasplink_gltf_tests PRIVATE GRASPLINK_TEST_ASSET_DIR="${CMAKE_SOURCE_DIR}/assets")
+
+  grasplink_add_test(grasplink_physics_ecs_tests PhysicsEcsIntegration tests/PhysicsEcsIntegrationTests.cpp grasplink_simulation)
+  grasplink_add_test(grasplink_collision_tests RobotCollisionGeometry tests/RobotCollisionGeometryTests.cpp grasplink_simulation)
+  target_compile_definitions(grasplink_collision_tests PRIVATE GRASPLINK_TEST_SCENE_SUPPORT)
+  set_tests_properties(RobotCollisionGeometry PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+
+  grasplink_add_test(grasplink_gripper_collision_tests GripperCollisionIntegration tests/GripperCollisionIntegrationTests.cpp grasplink_simulation)
+  target_compile_definitions(grasplink_gripper_collision_tests PRIVATE GRASPLINK_TEST_SCENE_SUPPORT)
+  set_tests_properties(GripperCollisionIntegration PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" TIMEOUT 60)
+
+  grasplink_add_test(grasplink_gripper_pose_tests GripperPoseIntegration tests/GripperPoseIntegrationTests.cpp grasplink_simulation)
+  target_compile_definitions(grasplink_gripper_pose_tests PRIVATE GRASPLINK_TEST_SCENE_SUPPORT)
+  set_tests_properties(GripperPoseIntegration PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" TIMEOUT 60)
+
+  grasplink_add_test(grasplink_gripper_grasp_tests GripperGraspIntegration tests/GripperGraspIntegrationTests.cpp grasplink_simulation)
+  target_compile_definitions(grasplink_gripper_grasp_tests PRIVATE GRASPLINK_TEST_SCENE_SUPPORT)
+  set_tests_properties(GripperGraspIntegration PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" TIMEOUT 60)
+endif()
+
 if(GRASPLINK_BUILD_GRAPHICS)
 
   # Viewer가 사용하는 OpenGL, GLFW, Flecs, TinyGLTF 등의 외부 의존성을 구성한다.
@@ -178,18 +247,9 @@ if(GRASPLINK_BUILD_GRAPHICS)
   # ----------------------------------------------------------
 
   set(GRASPLINK_VIEWER_SOURCES
-    modules/viewer/src/Entity.cpp
-
     modules/viewer/src/systems/RenderSystemModule.cpp
-    modules/viewer/src/systems/TransformSystemModule.cpp
-    modules/viewer/src/scene/Scene.cpp
-
-    modules/viewer/src/assets/GltfLoader.cpp
     modules/viewer/src/assets/AssetManager.cpp
     modules/viewer/src/assets/PrefabFactory.cpp
-
-    modules/viewer/src/robotics/RobotTransformAdapter.cpp
-    modules/viewer/src/robotics/GripperTransformAdapter.cpp
   )
 
   add_library(grasplink_viewer STATIC
@@ -205,40 +265,13 @@ if(GRASPLINK_BUILD_GRAPHICS)
 
 
   target_link_libraries(grasplink_viewer PUBLIC
+    grasplink_scene
+    grasplink_model_data
     grasplink_robotics
     grasplink_graphics
-    flecs::flecs_static
-
-    PRIVATE
-      tinygltf
   )
 
   target_compile_definitions(grasplink_viewer PRIVATE
-    GLM_ENABLE_EXPERIMENTAL
-  )
-
-  add_library(grasplink_simulation STATIC
-    modules/simulation/src/SimulationSceneBuilder.cpp
-    modules/simulation/src/robotics/CollisionGeometry.cpp
-    modules/simulation/src/robotics/GripperColliders.cpp
-    modules/simulation/src/robotics/GripperGraspAdapter.cpp
-    modules/simulation/src/robotics/RobotCollisionGeometryBuilder.cpp
-    modules/simulation/src/robotics/RobotPhysicsAdapter.cpp
-    modules/simulation/src/systems/PhysicsSystemModule.cpp
-  )
-
-  target_include_directories(grasplink_simulation PUBLIC
-    modules/simulation/include
-  )
-
-  target_link_libraries(grasplink_simulation PUBLIC
-    grasplink_viewer
-    grasplink_physics
-    grasplink_robotics
-    grasplink_diagnostics
-  )
-
-  target_compile_definitions(grasplink_simulation PRIVATE
     GLM_ENABLE_EXPERIMENTAL
   )
 
@@ -257,29 +290,11 @@ if(GRASPLINK_BUILD_GRAPHICS)
   target_link_libraries(grasplink_gui PUBLIC
     grasplink_robotics
     grasplink_simulation
+    grasplink_graphics
     grasplink_imgui_backend
   )
 
   target_compile_definitions(grasplink_gui PRIVATE
-    GLM_ENABLE_EXPERIMENTAL
-  )
-
-
-  add_library(grasplink_application STATIC
-    apps/viewer/PickPlaceMission.cpp
-    apps/viewer/PickPlaceMission.h
-  )
-
-  target_include_directories(grasplink_application PUBLIC
-    apps/viewer
-  )
-
-  target_link_libraries(grasplink_application PUBLIC
-    grasplink_robotics
-    glm::glm
-  )
-
-  target_compile_definitions(grasplink_application PRIVATE
     GLM_ENABLE_EXPERIMENTAL
   )
 
@@ -344,38 +359,13 @@ if(GRASPLINK_BUILD_GRAPHICS)
   )
 
   if(BUILD_TESTING)
-    grasplink_add_test(grasplink_pick_place_mission_tests PickPlaceMission tests/PickPlaceMissionTests.cpp grasplink_application GTEST_DISCOVERY)
     grasplink_add_test(grasplink_gui_composition_tests GuiComposition tests/GuiCompositionTests.cpp grasplink_gui)
     grasplink_add_test(grasplink_quaternion_transform_tests QuaternionTransforms tests/QuaternionTransformTests.cpp grasplink_viewer)
     grasplink_add_test(grasplink_graphics_tests GraphicsResources tests/GraphicsResourceTests.cpp grasplink_graphics)
     set_tests_properties(GraphicsResources PROPERTIES TIMEOUT 60)
 
-    grasplink_add_test(grasplink_gltf_tests GltfLoader tests/GltfLoaderTests.cpp grasplink_viewer)
-    target_compile_definitions(grasplink_gltf_tests PRIVATE GRASPLINK_TEST_ASSET_DIR="${CMAKE_SOURCE_DIR}/assets")
-
     grasplink_add_test(grasplink_robot_pose_integration_tests RobotPoseIntegration tests/RobotPoseIntegrationTests.cpp grasplink_viewer)
     set_tests_properties(RobotPoseIntegration PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
-
-    grasplink_add_test(grasplink_physics_ecs_tests PhysicsEcsIntegration tests/PhysicsEcsIntegrationTests.cpp grasplink_simulation)
-
-    grasplink_add_test(grasplink_collision_tests RobotCollisionGeometry tests/RobotCollisionGeometryTests.cpp grasplink_simulation)
-    target_compile_definitions(grasplink_collision_tests PRIVATE GRASPLINK_TEST_SCENE_SUPPORT)
-    set_tests_properties(RobotCollisionGeometry PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
-
-    grasplink_add_test(grasplink_gripper_collision_tests GripperCollisionIntegration tests/GripperCollisionIntegrationTests.cpp grasplink_simulation)
-    target_compile_definitions(grasplink_gripper_collision_tests PRIVATE GRASPLINK_TEST_SCENE_SUPPORT)
-    set_tests_properties(GripperCollisionIntegration PROPERTIES
-      WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" TIMEOUT 60)
-
-    grasplink_add_test(grasplink_gripper_pose_tests GripperPoseIntegration tests/GripperPoseIntegrationTests.cpp grasplink_simulation)
-    target_compile_definitions(grasplink_gripper_pose_tests PRIVATE GRASPLINK_TEST_SCENE_SUPPORT)
-    set_tests_properties(GripperPoseIntegration PROPERTIES
-      WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" TIMEOUT 60)
-
-    grasplink_add_test(grasplink_gripper_grasp_tests GripperGraspIntegration tests/GripperGraspIntegrationTests.cpp grasplink_simulation)
-    target_compile_definitions(grasplink_gripper_grasp_tests PRIVATE GRASPLINK_TEST_SCENE_SUPPORT)
-    set_tests_properties(GripperGraspIntegration PROPERTIES
-      WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" TIMEOUT 60)
 
     add_test(NAME ViewerSmoke COMMAND grasplink_simulator --smoke-test)
     set_tests_properties(ViewerSmoke PROPERTIES
