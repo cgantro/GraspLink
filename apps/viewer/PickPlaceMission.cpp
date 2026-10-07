@@ -147,6 +147,19 @@ PickPlaceMission::PickPlaceMission(const robotics::models::RobotSpecification& s
 {
 }
 
+robotics::Result PickPlaceMission::RequestJ6Unwind(const robotics::RobotState& state,
+    robotics::IRobotController& controller) const
+{
+    if (state.jointPositionRadians.empty())
+        return {robotics::ErrorCode::InvalidCommand, "RobotPanel: current joint positions are unavailable"};
+
+    robotics::JointMoveCommand command;
+    command.targetPositionRadians = state.jointPositionRadians;
+    command.targetPositionRadians.back() = 0.0;
+    command.preserveJointTurns = true;
+    return controller.MoveJoint(command);
+}
+
 void PickPlaceMission::Update(const robotics::RobotState& state, robotics::IRobotController& controller,
     robotics::IGripperController& gripper, bool boxGrasped,
     const robotics::CartesianPose& graspBoxPoseInBase,
@@ -408,22 +421,11 @@ void PickPlaceMission::Update(const robotics::RobotState& state, robotics::IRobo
     {
         if (placementReleased_ && taskSucceeded_ && !boxGrasped)
         {
-            auto unwindTarget = state.jointPositionRadians;
-            if (unwindTarget.empty())
-            {
-                stage_ = Stage::Failed;
+            lastResult_ = RequestJ6Unwind(state, controller);
+            hasResult_ = true;
+            stage_ = lastResult_.Ok() ? Stage::UnwindingWrist : Stage::Failed;
+            if (!lastResult_.Ok())
                 autoLoopEnabled_ = false;
-            }
-            else
-            {
-                unwindTarget.back() = 0.0;
-                robotics::JointMoveCommand unwindCommand;
-                unwindCommand.targetPositionRadians = std::move(unwindTarget);
-                unwindCommand.preserveJointTurns = true;
-                lastResult_ = controller.MoveJoint(unwindCommand);
-                hasResult_ = true;
-                stage_ = lastResult_.Ok() ? Stage::UnwindingWrist : Stage::Failed;
-            }
         }
         else
             stage_ = Stage::UnwindingWrist;
@@ -572,23 +574,9 @@ void PickPlaceMission::ApplyActions(const RobotPanelActions& actions,
         missionSucceeded_ = false;
         transitWaypointCount_ = 0;
         autoLoopEnabled_ = true;
-        auto unwindTarget = state.jointPositionRadians;
-        if (unwindTarget.empty())
-        {
-            lastResult_ = {robotics::ErrorCode::InvalidCommand, "RobotPanel: current joint positions are unavailable"};
-            hasResult_ = true;
-            stage_ = Stage::Failed;
-        }
-        else
-        {
-            unwindTarget.back() = 0.0;
-            robotics::JointMoveCommand unwindCommand;
-            unwindCommand.targetPositionRadians = std::move(unwindTarget);
-            unwindCommand.preserveJointTurns = true;
-            lastResult_ = controller.MoveJoint(unwindCommand);
-            hasResult_ = true;
-            stage_ = lastResult_.Ok() ? Stage::UnwindingBeforeTask : Stage::Failed;
-        }
+        lastResult_ = RequestJ6Unwind(state, controller);
+        hasResult_ = true;
+        stage_ = lastResult_.Ok() ? Stage::UnwindingBeforeTask : Stage::Failed;
     }
     if (taskPaused_ && actions.resume)
     {
@@ -629,24 +617,9 @@ void PickPlaceMission::ApplyActions(const RobotPanelActions& actions,
             }
             else if (placementReleased_)
             {
-                auto unwindTarget = state.jointPositionRadians;
-                if (unwindTarget.empty())
-                {
-                    lastResult_ = {robotics::ErrorCode::InvalidCommand,
-                        "RobotPanel: current joint positions are unavailable"};
-                    hasResult_ = true;
-                    stage_ = Stage::Failed;
-                }
-                else
-                {
-                    unwindTarget.back() = 0.0;
-                    robotics::JointMoveCommand unwindCommand;
-                    unwindCommand.targetPositionRadians = std::move(unwindTarget);
-                    unwindCommand.preserveJointTurns = true;
-                    lastResult_ = controller.MoveJoint(unwindCommand);
-                    hasResult_ = true;
-                    stage_ = lastResult_.Ok() ? Stage::UnwindingWrist : Stage::Failed;
-                }
+                lastResult_ = RequestJ6Unwind(state, controller);
+                hasResult_ = true;
+                stage_ = lastResult_.Ok() ? Stage::UnwindingWrist : Stage::Failed;
             }
             else if (stage_ == Stage::Opening)
             {
@@ -656,24 +629,9 @@ void PickPlaceMission::ApplyActions(const RobotPanelActions& actions,
             else
             {
                 placementReleased_ = false;
-                auto unwindTarget = state.jointPositionRadians;
-                if (unwindTarget.empty())
-                {
-                    lastResult_ = {robotics::ErrorCode::InvalidCommand,
-                        "RobotPanel: current joint positions are unavailable"};
-                    hasResult_ = true;
-                    stage_ = Stage::Failed;
-                }
-                else
-                {
-                    unwindTarget.back() = 0.0;
-                    robotics::JointMoveCommand unwindCommand;
-                    unwindCommand.targetPositionRadians = std::move(unwindTarget);
-                    unwindCommand.preserveJointTurns = true;
-                    lastResult_ = controller.MoveJoint(unwindCommand);
-                    hasResult_ = true;
-                    stage_ = lastResult_.Ok() ? Stage::UnwindingBeforeTask : Stage::Failed;
-                }
+                lastResult_ = RequestJ6Unwind(state, controller);
+                hasResult_ = true;
+                stage_ = lastResult_.Ok() ? Stage::UnwindingBeforeTask : Stage::Failed;
             }
     }
     else if (actions.stop)

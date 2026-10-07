@@ -65,6 +65,10 @@ public:
     void PrepareNextTask() noexcept;
 
 private:
+    /** @brief 현재 자세를 유지하면서 J6만 0도로 되돌리는 명령을 보낸다. */
+    [[nodiscard]] robotics::Result RequestJ6Unwind(const robotics::RobotState& state,
+        robotics::IRobotController& controller) const;
+
     const robotics::models::RobotSpecification& specification_;
     enum class Stage
     {
