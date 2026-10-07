@@ -43,7 +43,8 @@ std::optional<WristAlignmentTarget> PlanWristOnlyTarget(
     const models::RobotSpecification& specification,
     const RobotState& state,
     const std::array<double, 4>& targetOrientationXyzw,
-    const std::optional<std::array<double, 3>>& boxOffsetInTcpMeters)
+    const std::optional<std::array<double, 3>>& boxOffsetInTcpMeters,
+    const WristAlignmentPolicy& policy)
 {
     if (!state.valid || !state.tcpPoseValid || specification.joints == nullptr ||
         specification.jointCount == 0 || state.jointPositionRadians.size() != specification.jointCount ||
@@ -68,10 +69,8 @@ std::optional<WristAlignmentTarget> PlanWristOnlyTarget(
     const Vec3 pivot = pose.linkPosesInBaseFrame.back().positionMeters;
     const Vec3 tcpPosition{
         state.tcpPose.positionMeters[0], state.tcpPose.positionMeters[1], state.tcpPose.positionMeters[2]};
-    constexpr double maximumRadialOffsetMeters = 0.002;
-    constexpr double maximumAttachedBoxSweepMeters = 0.02;
     double attachedBoxRadialOffsetMeters = 0.0;
-    if (Length(RadialOffset(tcpPosition, pivot, axis)) > maximumRadialOffsetMeters)
+    if (Length(RadialOffset(tcpPosition, pivot, axis)) > policy.maximumTcpRadialOffsetMeters)
         return std::nullopt;
 
     if (boxOffsetInTcpMeters)
@@ -100,7 +99,7 @@ std::optional<WristAlignmentTarget> PlanWristOnlyTarget(
 
     const double attachedBoxSweepMeters = 2.0 * attachedBoxRadialOffsetMeters *
         std::sin(std::abs(signedRotation) * 0.5);
-    if (attachedBoxSweepMeters > maximumAttachedBoxSweepMeters)
+    if (attachedBoxSweepMeters > policy.maximumAttachedBoxSweepMeters)
         return std::nullopt;
 
     const auto& wrist = specification.joints[specification.jointCount - 1];

@@ -76,6 +76,10 @@ void CheckWristTargetChangesOnlyJ6()
     Require(radialBoxPlan.has_value(), "a small attached-box arc does not block wrist alignment");
     Require(radialBoxPlan->attachedBoxSweepMeters < 0.02,
         "the wrist plan reports the attached box center movement during rotation");
+    const grasplink::robotics::planning::WristAlignmentPolicy strictSweepPolicy{0.002, 0.005};
+    Require(!PlanWristOnlyTarget(models::hanwha::kHcr12a, state, targetXyzw, radialBoxOffset,
+        strictSweepPolicy).has_value(),
+        "a caller can tighten the maximum attached-box sweep policy");
     const std::array<double, 3> largeRadialBoxOffset{0.10, 0.0, 0.0};
     Require(!PlanWristOnlyTarget(models::hanwha::kHcr12a, state, targetXyzw, largeRadialBoxOffset).has_value(),
         "a wrist rotation is rejected when the attached box sweep would exceed two centimeters");

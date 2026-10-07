@@ -29,6 +29,18 @@ struct WristAlignmentTarget
 };
 
 /**
+ * @brief 손목만 정렬할 때 허용하는 축 오차와 파지 물체 이동량이다.
+ * @details TCP는 J6 회전축에서 거의 벗어나지 않아야 하고, 파지 물체는 회전 중 작은 원호 이동만 허용한다.
+ */
+struct WristAlignmentPolicy final
+{
+    double maximumTcpRadialOffsetMeters = 0.002;
+    double maximumAttachedBoxSweepMeters = 0.02;
+};
+
+inline constexpr WristAlignmentPolicy kDefaultWristAlignmentPolicy{};
+
+/**
  * @brief TCP가 J6 축과 거의 일치하고 목표 방향이 그 축 주위 회전만으로 만들어질 때 J6 목표를 계산한다.
  * @param specification 관절 순서와 허용 범위를 제공하는 로봇 사양이다.
  * @param state 현재 관절각 [rad]과 TCP 자세 [m, quaternion x,y,z,w]를 담은 Controller 상태다.
@@ -40,6 +52,7 @@ std::optional<WristAlignmentTarget> PlanWristOnlyTarget(
     const models::RobotSpecification& specification,
     const RobotState& state,
     const std::array<double, 4>& targetOrientationXyzw,
-    const std::optional<std::array<double, 3>>& boxOffsetInTcpMeters = std::nullopt);
+    const std::optional<std::array<double, 3>>& boxOffsetInTcpMeters = std::nullopt,
+    const WristAlignmentPolicy& policy = kDefaultWristAlignmentPolicy);
 
 } // namespace grasplink::robotics::planning
