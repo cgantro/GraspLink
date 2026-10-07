@@ -36,38 +36,59 @@ public:
     std::vector<std::uint8_t> commands;
 };
 
-class ScriptedRobotController final : public IRobotController
+class FakeRobotController final : public IRobotController
 {
 public:
-    ScriptedRobotController()
+    explicit FakeRobotController(
+        const models::RobotSpecification& specification = models::hanwha::kHcr12a,
+        bool completeMovesImmediately = false)
+        : ik_(specification), completeMovesImmediately_(completeMovesImmediately)
     {
-        state.jointPositionRadians = JointVector(6, 0.0);
+        state.jointPositionRadians.assign(specification.jointCount, 0.0);
+        state.tcpPose = ik_.EvaluateTcp(state.jointPositionRadians);
         state.mode = RobotMode::Idle;
         state.tcpPoseValid = true;
         state.valid = true;
     }
 
-    Result Connect() override { connected = true; return {}; }
-    void Disconnect() noexcept override { connected = false; }
-    bool IsConnected() const noexcept override { return connected; }
+    Result Connect() override { connected_ = true; return {}; }
+    void Disconnect() noexcept override { connected_ = false; }
+    bool IsConnected() const noexcept override { return connected_; }
     Result MoveJoint(const JointMoveCommand& command) override
     {
         ++jointRequests;
-        if (jointResult)
+        if (!jointResult)
+            return jointResult;
+        if (completeMovesImmediately_)
+        {
+            state.jointPositionRadians = command.targetPositionRadians;
+            state.tcpPose = ik_.EvaluateTcp(state.jointPositionRadians);
+            state.mode = RobotMode::Idle;
+        }
+        else
             state.mode = RobotMode::Moving;
         return jointResult;
     }
     Result MoveLinear(const LinearMoveCommand& command) override
     {
         ++linearRequests;
-        if (linearResult)
-            state.mode = RobotMode::Moving;
+        if (!linearResult)
+            return linearResult;
+        state.tcpPose = command.targetPose;
+        state.mode = completeMovesImmediately_ ? RobotMode::Idle : RobotMode::Moving;
         return linearResult;
     }
     Result MoveLinearPath(const LinearPathMoveCommand& command) override
     {
         ++pathRequests;
-        if (pathResult)
+        if (!pathResult)
+            return pathResult;
+        if (completeMovesImmediately_)
+        {
+            state.tcpPose = command.targetPoses.back();
+            state.mode = RobotMode::Idle;
+        }
+        else
             state.mode = RobotMode::Moving;
         return pathResult;
     }
@@ -92,56 +113,9 @@ public:
     int stopRequests = 0;
 
 private:
-    bool connected = false;
-};
-
-class ImmediateController final : public IRobotController
-{
-public:
-    explicit ImmediateController(const models::RobotSpecification& specification)
-        : ik_(specification)
-    {
-        state.jointPositionRadians.assign(specification.jointCount, 0.0);
-        state.tcpPose = ik_.EvaluateTcp(state.jointPositionRadians);
-        state.mode = RobotMode::Idle;
-        state.tcpPoseValid = true;
-        state.valid = true;
-    }
-
-    Result Connect() override { return {}; }
-    void Disconnect() noexcept override {}
-    bool IsConnected() const noexcept override { return true; }
-    Result MoveJoint(const JointMoveCommand& command) override
-    {
-        state.jointPositionRadians = command.targetPositionRadians;
-        state.mode = RobotMode::Idle;
-        return {};
-    }
-    Result MoveLinear(const LinearMoveCommand& command) override
-    {
-        state.tcpPose = command.targetPose;
-        state.mode = RobotMode::Idle;
-        return {};
-    }
-    Result MoveLinearPath(const LinearPathMoveCommand& command) override
-    {
-        ++pathRequests;
-        if (!pathResult)
-            return pathResult;
-        state.tcpPose = command.targetPoses.back();
-        state.mode = RobotMode::Idle;
-        return {};
-    }
-    Result Stop() override { state.mode = RobotMode::Stopped; return {}; }
-    RobotState GetState() const override { return state; }
-    void Update(double) override {}
-
-    RobotState state;
-    Result pathResult{};
-    int pathRequests = 0;
-
-private:
     kinematics::DampedLeastSquaresIk ik_;
+    bool completeMovesImmediately_ = false;
+    bool connected_ = false;
 };
 
 }
@@ -200,7 +174,7 @@ TEST(PickPlaceMissionTests, UnreachablePickupFailsWithoutMotion)
 
 TEST(PickPlaceMissionTests, RejectedStartCommandFailsImmediately)
 {
-    ScriptedRobotController controller;
+    FakeRobotController controller;
     StubGripper gripper;
     ASSERT_TRUE(gripper.Connect());
     controller.jointResult = {ErrorCode::Busy, "controller is busy"};
@@ -219,7 +193,7 @@ TEST(PickPlaceMissionTests, RejectedStartCommandFailsImmediately)
 
 TEST(PickPlaceMissionTests, AcceptedCommandWaitsForControllerToBecomeIdle)
 {
-    ScriptedRobotController controller;
+    FakeRobotController controller;
     StubGripper gripper;
     ASSERT_TRUE(gripper.Connect());
     grasplink::viewer::PickPlaceMission mission(models::hanwha::kHcr12a);
@@ -235,7 +209,7 @@ TEST(PickPlaceMissionTests, AcceptedCommandWaitsForControllerToBecomeIdle)
 
 TEST(PickPlaceMissionTests, EnvironmentContactRequestsRetreat)
 {
-    ScriptedRobotController controller;
+    FakeRobotController controller;
     StubGripper gripper;
     ASSERT_TRUE(gripper.Connect());
     grasplink::viewer::PickPlaceMission mission(models::hanwha::kHcr12a);
@@ -260,7 +234,7 @@ TEST(PickPlaceMissionTests, EnvironmentContactRequestsRetreat)
 
 TEST(PickPlaceMissionTests, UnrelatedControllerErrorDoesNotTriggerCollisionRecovery)
 {
-    ScriptedRobotController controller;
+    FakeRobotController controller;
     StubGripper gripper;
     ASSERT_TRUE(gripper.Connect());
     grasplink::viewer::PickPlaceMission mission(models::hanwha::kHcr12a);
@@ -282,7 +256,7 @@ TEST(PickPlaceMissionTests, UnrelatedControllerErrorDoesNotTriggerCollisionRecov
 
 TEST(PickPlaceMissionTests, RejectedStopDoesNotPauseMission)
 {
-    ScriptedRobotController controller;
+    FakeRobotController controller;
     StubGripper gripper;
     ASSERT_TRUE(gripper.Connect());
     controller.stopResult = {ErrorCode::Fault, "stop rejected"};
@@ -300,7 +274,7 @@ TEST(PickPlaceMissionTests, RejectedStopDoesNotPauseMission)
 
 TEST(PickPlaceMissionTests, ResumeWithHeldObjectRequiresValidTcpFeedback)
 {
-    ScriptedRobotController controller;
+    FakeRobotController controller;
     StubGripper gripper;
     ASSERT_TRUE(gripper.Connect());
     grasplink::viewer::PickPlaceMission mission(models::hanwha::kHcr12a);
@@ -322,7 +296,7 @@ TEST(PickPlaceMissionTests, ResumeWithHeldObjectRequiresValidTcpFeedback)
 
 TEST(PickPlaceMissionTests, SuccessfulCyclePublishesOneCompletionEvent)
 {
-    ImmediateController controller(models::hanwha::kHcr12a);
+    FakeRobotController controller(models::hanwha::kHcr12a, true);
     StubGripper gripper;
     grasplink::viewer::PickPlaceMission mission(models::hanwha::kHcr12a);
     CartesianPose box{};
@@ -357,7 +331,7 @@ TEST(PickPlaceMissionTests, SuccessfulCyclePublishesOneCompletionEvent)
 
 TEST(PickPlaceMissionTests, GripperMissReleasesAndFailsWithoutSuccessEvent)
 {
-    ImmediateController controller(models::hanwha::kHcr12a);
+    FakeRobotController controller(models::hanwha::kHcr12a, true);
     StubGripper gripper;
     gripper.state.mode = GripperMode::Idle;
     gripper.state.objectStatus = GripperObjectStatus::AtRequestedPosition;
@@ -382,7 +356,7 @@ TEST(PickPlaceMissionTests, GripperMissReleasesAndFailsWithoutSuccessEvent)
 
 TEST(PickPlaceMissionTests, RejectedTransitPathPreservesControllerError)
 {
-    ImmediateController controller(models::hanwha::kHcr12a);
+    FakeRobotController controller(models::hanwha::kHcr12a, true);
     controller.pathResult = {ErrorCode::Unsupported, "path execution unavailable"};
     StubGripper gripper;
     grasplink::viewer::PickPlaceMission mission(models::hanwha::kHcr12a);
