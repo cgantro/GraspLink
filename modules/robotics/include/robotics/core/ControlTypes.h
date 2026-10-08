@@ -43,7 +43,8 @@ enum class ErrorCode
     IkDidNotConverge, // IK가 반복 한도나 수치 정체로 해를 찾지 못했다. 다른 시작각에서 해가 없다는 뜻은 아니다.
     EnvironmentContact, // 다음 Robot 또는 Gripper 목표 자세가 Environment와 겹쳐 물리 반영 전에 직전 관절 자세로 돌아갔다.
     SelfCollision, // 계획한 관절 자세에서 로봇 링크끼리 충돌한다.
-    AttachedObjectCollision // 계획한 관절 자세에서 로봇에 붙은 물체가 충돌한다.
+    AttachedObjectCollision, // 계획한 관절 자세에서 로봇에 붙은 물체가 충돌한다.
+    Cancelled // 진행 중인 소프트웨어 계획 또는 동작 요청이 취소되었다.
 };
 
 /**
@@ -133,6 +134,7 @@ enum class RobotMode
     Disconnected, // 제어 구현 연결 또는 초기화 전.
     Idle,         // 연결은 되었고 실행 중인 동작 명령은 없다.
     Moving,       // 관절이 목표각을 향해 움직이는 중이다.
+    Planning,     // 관절 자세는 유지하며 경로 계획을 분할 실행하는 중이다.
     Stopped,      // 소프트웨어 Stop 요청에 따라 동작이 멈춘 상태다.
     Fault         // 오류가 있어 정상적인 제어를 할 수 없다.
 };

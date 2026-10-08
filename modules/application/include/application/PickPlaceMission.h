@@ -72,13 +72,14 @@ private:
     {
         Ready, UnwindingBeforeTask, MovingAbovePickup, AligningAbovePickup,
         MovingDownToPickup, Closing, Lifting, MovingAbovePlacement,
-        TransitingToPlacement, TransitPathRunning, MovingToPlacementOverhead,
+        TransitingToPlacement, PlanningMotion, TransitPathRunning, MovingToPlacementOverhead,
         AligningAbovePlacement, MovingDownToPlacement, Opening, Retreating,
         UnwindingWrist, Recovering, Complete, Failed, RaisingAfterResume
     };
 
     bool SetResult(robotics::Result result);
     void SetStageFromResult(robotics::Result result, Stage next);
+    void SetStageFromMotionResult(robotics::Result result, Stage next, robotics::IRobotController& controller);
 
     std::array<double, 4> graspOrientationXyzw_{};
     std::array<double, 4> pickupOrientationXyzw_{};
@@ -91,6 +92,7 @@ private:
     robotics::CartesianPose recoveryPose_{};
     robotics::Result lastResult_{};
     Stage stage_ = Stage::Ready;
+    Stage pendingStageAfterPlanning_ = Stage::Ready;
     bool orientationReady_ = false;
     bool hasResult_ = false;
     bool taskSucceeded_ = true;

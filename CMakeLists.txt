@@ -94,6 +94,12 @@ add_library(grasplink_robotics STATIC
 target_include_directories(grasplink_robotics PUBLIC
   modules/robotics/include
 )
+if(GRASPLINK_BUILD_GRAPHICS AND GRASPLINK_ENABLE_TRACY)
+  target_compile_definitions(grasplink_robotics PRIVATE GRASPLINK_ENABLE_TRACY=1)
+  target_link_libraries(grasplink_robotics PRIVATE Tracy::TracyClient)
+else()
+  target_compile_definitions(grasplink_robotics PRIVATE GRASPLINK_ENABLE_TRACY=0)
+endif()
 
 # ============================================================
 # Physics
@@ -138,7 +144,7 @@ if(BUILD_TESTING)
       if(TEST_WORKING_DIRECTORY)
         list(APPEND discovery_options PROPERTIES WORKING_DIRECTORY "${TEST_WORKING_DIRECTORY}")
       endif()
-      gtest_discover_tests(${target} TEST_PREFIX "${name}." ${discovery_options})
+      gtest_discover_tests(${target} TEST_PREFIX "${name}." DISCOVERY_TIMEOUT 60 ${discovery_options})
     else()
       target_link_libraries(${target} PRIVATE ${TEST_UNPARSED_ARGUMENTS})
       add_test(NAME ${name} COMMAND ${target})
@@ -344,9 +350,9 @@ if(GRASPLINK_BUILD_GRAPHICS)
   # ----------------------------------------------------------
 
   set(GRASPLINK_APP_SOURCES
-    apps/viewer/main.cpp
-    apps/viewer/ViewerApp.cpp
-    apps/viewer/PickPlaceScenario.cpp
+    apps/simulator/main.cpp
+    apps/simulator/ViewerApp.cpp
+    apps/simulator/PickPlaceScenario.cpp
   )
 
   add_executable(grasplink_simulator
@@ -354,7 +360,7 @@ if(GRASPLINK_BUILD_GRAPHICS)
   )
 
   target_include_directories(grasplink_simulator PRIVATE
-    apps/viewer
+    apps/simulator
   )
 
   target_link_libraries(grasplink_simulator PRIVATE
@@ -406,7 +412,7 @@ if(GRASPLINK_BUILD_GRAPHICS)
 
     add_test(NAME ViewerSmoke COMMAND grasplink_simulator --smoke-test)
     set_tests_properties(ViewerSmoke PROPERTIES
-      WORKING_DIRECTORY "$<TARGET_FILE_DIR:grasplink_simulator>" TIMEOUT 60)
+      WORKING_DIRECTORY "$<TARGET_FILE_DIR:grasplink_simulator>" TIMEOUT 60 RUN_SERIAL TRUE)
 
   endif()
 

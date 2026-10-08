@@ -2,6 +2,9 @@
 
 #include "robotics/core/ControlTypes.h"
 
+#include <cstddef>
+#include <optional>
+
 namespace grasplink::robotics
 {
 
@@ -63,6 +66,17 @@ public:
             return {ErrorCode::InvalidCommand, "IRobotController: linear path requires at least one target pose"};
         return {ErrorCode::Unsupported, "IRobotController: continuous multi-waypoint paths are not supported"};
     }
+
+    /** @brief 선형 경로 계획을 시작한다. 증분 계획을 지원하지 않는 컨트롤러는 기존 동기 실행 방식을 사용한다. */
+    virtual Result BeginLinearPathPlanning(const LinearPathMoveCommand& command)
+    {
+        return MoveLinearPath(command);
+    }
+
+    /** @brief 지정한 작업 단위만큼 계획을 진행한다. 한 단위는 IK 반복, 직선성 검사 또는 충돌 검사 한 번이다. */
+    virtual void AdvanceMotionPlanning(std::size_t workBudget) { (void)workBudget; }
+    [[nodiscard]] virtual bool IsMotionPlanning() const noexcept { return false; }
+    virtual std::optional<Result> TakeMotionPlanningResult() { return std::nullopt; }
 
     /**
      * @brief 구현 안에서 실행 중인 동작을 소프트웨어 방식으로 정지하도록 요청한다.

@@ -54,7 +54,7 @@ RobotController / GripperController Update
 
 ## Robot pose와 충돌 프록시
 
-`RobotKinematics` converts bind-pivot offsets using the preceding accumulated rotation, then calculates each joint rotation and base-frame link pose from the joint axis and controller angle. Bind pivots are inputs to this calculation. The IK solver adds the fixed tool transform to ToolFrame when solving a TCP pose in Robot base coordinates. `MovePose` solves Damped Least Squares IK from the current joint angles and sends the result to `MoveJoint`. `MoveLinear` samples the straight TCP position and shortest quaternion rotation path, solves IK for those samples before execution, then interpolates the stored joint samples on fixed updates. It only retries IK at runtime to reorient near a singular configuration when TCP tracking would exceed the configured speed limit. If ToolFrame exists, the controller reports model-derived `tcpPoseValid=true`; this is not a hardware measurement. The Viewer adapter applies joint rotations to the GLB hierarchy, while the Simulation adapter updates separate Kinematic collision entities, including a fixed Environment collider for Robot Base. Render meshes and Jolt body IDs remain separate.
+`RobotKinematics`는 앞 관절까지 누적한 회전을 반영해 bind pivot의 위치를 계산하고, 관절 축과 Controller 각도로 각 링크의 회전과 로봇 기준 위치를 구한다. IK는 TCP 목표를 풀 때 ToolFrame에 고정된 tool 변환을 적용한다. `MovePose`는 현재 관절각을 시작값으로 Damped Least Squares IK를 풀고 결과를 `MoveJoint`에 전달한다. `MoveLinear`는 TCP의 직선 위치와 quaternion 최단 회전 경로를 표본으로 나누어 실행 전에 IK를 계산한 뒤, 저장한 관절 표본을 고정 제어 주기마다 보간한다. IK 반복과 관절 경로 검사는 `LinearPathPlanningJob`이 작은 작업 단위로 나누며, Viewer는 렌더 루프에서 제한된 시간 동안 이를 진행한다. 이때 Jolt와 ECS를 작업자 스레드에서 읽지 않도록 시뮬레이션 갱신을 잠시 멈추고 화면 렌더링은 계속한다. 실행 중에는 설정 속도를 넘는 TCP 추종 오차가 생기는 특이 자세에서만 IK를 다시 계산한다. ToolFrame이 있으면 Controller는 모델에서 계산한 `tcpPoseValid=true`를 보고하지만, 이는 하드웨어 측정값이 아니다. Viewer adapter는 GLB 계층에 관절 회전을 적용하고 Simulation adapter는 Robot Base의 고정 Environment collider를 포함해 별도 Kinematic 충돌 Entity를 갱신한다. 렌더 메시와 Jolt body ID는 서로 별도로 유지한다.
 
 HCR-12A collider는 GLB 재질 메시의 삼각형 연결로 나눈 부품별로 생성한다. 같은 위치의 seam 정점도 연결해 부품을 판별한다. 4 cm 미만 부품은 제외하고, 나머지는 삼각형 중심을 관절 좌표계 기준 16 cm 셀로 묶는다. 삼각형은 셀 경계에서 자르지 않는다. 1 cm 미만 크기 셀과 부피가 없는 hull 입력도 제외한다. 각 셀의 Convex Hull은 오목한 부분이나 셀 경계 사이를 메울 수 있다. 다음 가동 관절 아래와 `Gripper` geometry는 이 adapter의 hull 생성 대상이 아니다.
 
@@ -68,7 +68,7 @@ HCR-12A collider는 GLB 재질 메시의 삼각형 연결로 나눈 부품별로
 
 Floor의 `plane.glb` Mesh와 Static Box Collider는 하나의 model root Entity가 소유한다. GLB 평면은 root scale 3으로 X/Z ±3 m 범위이며, Collider도 half-extents `{3, 0.02, 3}` m로 맞춘다. Collider 윗면은 수치 오차 방지를 위해 시각 평면보다 5 mm 위에 둔다. GLB를 Jolt triangle mesh로 변환하지 않는다.
 
-`apps/viewer`의 `PickPlaceScenario`는 미션에서 사용할 상자와 더 넓은 배치 목표의 시각·물리 Entity를 만든다. 위치와 yaw 회전 표본은 `grasplink::simulation::scenario`에서 생성하며, 같은 seed와 함수 호출 순서를 주면 같은 표본을 다시 만들 수 있다. 별도의 50개 낙하 상자 데모나 자동 관절 동작 옵션은 없다.
+`apps/simulator`의 `PickPlaceScenario`는 미션에서 사용할 상자와 더 넓은 배치 목표의 시각·물리 Entity를 만든다. 위치와 yaw 회전 표본은 `grasplink::simulation::scenario`에서 생성하며, 같은 seed와 함수 호출 순서를 주면 같은 표본을 다시 만들 수 있다. 별도의 50개 낙하 상자 데모나 자동 관절 동작 옵션은 없다.
 
 `GuiModule`은 ImGui context·GLFW/OpenGL backend와 프레임·입력 capture 수명을 관리한다. `ViewerApp`이 `BeginFrame`과 `EndFrame` 사이에 `GripperPanel`, `PhysicsDebugPanel`, `ColliderOverlay`를 명시적으로 호출한다. `PhysicsDebugPanel`은 `Show configured colliders` 체크박스 상태를 보관하고 `ColliderOverlay`가 ECS shape의 Box 외곽선과 Convex Hull 투영을 layer별 색으로 표시한다. Overlay는 World query와 화면 선 캐시를 소유하며 Camera는 Draw 동안만 빌린다. 첫 표시·resize 때 즉시 갱신하고 이후 100 ms 간격으로 캐시를 갱신한다. Jolt 내부 shape를 조회하거나 깊이를 검사하지 않으며 Camera 이동도 다음 갱신 전까지 이전 투영으로 보일 수 있다.
 

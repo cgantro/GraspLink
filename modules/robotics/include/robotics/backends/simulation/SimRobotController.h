@@ -6,6 +6,7 @@
 #include "robotics/models/RobotSpecification.h"
 
 #include <functional>
+#include <optional>
 
 namespace grasplink::robotics::backends::simulation
 {
@@ -102,6 +103,10 @@ public:
      */
     Result MoveLinear(const LinearMoveCommand& command) override;
     Result MoveLinearPath(const LinearPathMoveCommand& command) override;
+    Result BeginLinearPathPlanning(const LinearPathMoveCommand& command) override;
+    void AdvanceMotionPlanning(std::size_t workBudget) override;
+    [[nodiscard]] bool IsMotionPlanning() const noexcept override;
+    std::optional<Result> TakeMotionPlanningResult() override;
 
     /**
      * @brief 현재 관절 위치에서 Simulation 동작을 멈춘다.
@@ -163,6 +168,8 @@ private:
     void RefreshTcp();
     void UpdateLinear(double dtSeconds);
     bool ReorientForLinear(const JointVector& plannedJoints, double availableSeconds);
+    Result CommitLinearPathPlan(const LinearPathMoveCommand& command, planning::LinearPathPlan plan);
+    Result ValidateLinearPathRequest(const LinearPathMoveCommand& command) const;
 
     // 소유하지 않는 robot model specification 주소.
     const models::RobotSpecification* specification_ = nullptr;
@@ -200,6 +207,9 @@ private:
     // IK 계산기는 같은 사양을 빌리며 모델 ToolFrame에 고정 공구 변환을 적용해 TCP를 계산한다.
     kinematics::DampedLeastSquaresIk inverse_;
     planning::StateValidityChecker jointStateValidityChecker_;
+    planning::LinearPathPlanningJob linearPathPlanningJob_;
+    LinearPathMoveCommand pendingLinearPathCommand_;
+    std::optional<Result> linearPathPlanningResult_;
     std::vector<LinearPathPoint> linearPath_;
     std::size_t linearSegment_ = 1;
     double linearSegmentFraction_ = 0.0;

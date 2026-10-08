@@ -176,6 +176,128 @@ TEST(LinearPathPlanner, RefinesJointInterpolationUntilTcpFollowsTheRequestedLine
     }
 }
 
+TEST(LinearPathPlanner, IncrementalJobMatchesSynchronousPlanAndPreservesValidityChecks)
+{
+    const auto& specification = models::hanwha::kHcr12a;
+    DampedLeastSquaresIk synchronousIk(specification);
+    DampedLeastSquaresIk incrementalIk(specification);
+    const JointVector startJoints(specification.jointCount, 0.0);
+    const CartesianPose startTcp = synchronousIk.EvaluateTcp(startJoints);
+    const CartesianPose target = synchronousIk.EvaluateTcp({0.12, -0.08, 0.06, 0.12, -0.04, 0.1});
+    LinearPathMoveCommand command;
+    command.targetPoses.push_back(target);
+    std::size_t synchronousValidityCalls = 0;
+    std::size_t incrementalValidityCalls = 0;
+    const auto synchronousChecker = [&](const JointVector&) {
+        ++synchronousValidityCalls;
+        return JointStateInvalidity::None;
+    };
+    const auto incrementalChecker = [&](const JointVector&) {
+        ++incrementalValidityCalls;
+        return JointStateInvalidity::None;
+    };
+
+    LinearPathPlan synchronousPlan;
+    ASSERT_TRUE(BuildLinearPath(command, specification, startJoints, startTcp,
+        synchronousIk, synchronousChecker, synchronousPlan));
+
+    LinearPathPlanningJob job;
+    ASSERT_TRUE(job.Begin(command, specification, startJoints, startTcp,
+        incrementalIk, incrementalChecker));
+    std::size_t advances = 0;
+    while (job.GetState() == LinearPathPlanningState::Running)
+    {
+        const auto& before = job.GetPlan();
+        const std::array<std::size_t, 3> beforeWork{
+            before.ikIterationCount, before.tcpStraightnessChecks, before.validityStateChecks};
+        const auto nextState = job.Advance(1);
+        EXPECT_TRUE(nextState == LinearPathPlanningState::Running ||
+            nextState == LinearPathPlanningState::Completed);
+        const auto& after = job.GetPlan();
+        const std::size_t ikWork = after.ikIterationCount - beforeWork[0];
+        const std::size_t tcpWork = after.tcpStraightnessChecks - beforeWork[1];
+        const std::size_t validityWork = after.validityStateChecks - beforeWork[2];
+        const std::size_t consumedWork = ikWork + tcpWork + validityWork;
+        EXPECT_LE(consumedWork, 1u)
+            << "one interactive work unit never performs multiple DLS, TCP, or validity checks; "
+            << "DLS=" << ikWork << ", TCP=" << tcpWork << ", validity=" << validityWork;
+        ++advances;
+    }
+    ASSERT_EQ(job.GetState(), LinearPathPlanningState::Completed);
+    const auto& incrementalPlan = job.GetPlan();
+    EXPECT_GT(advances, 1u) << "the job yields between TCP samples";
+    ASSERT_EQ(incrementalPlan.points.size(), synchronousPlan.points.size());
+    EXPECT_EQ(incrementalPlan.ikSolveCount, synchronousPlan.ikSolveCount);
+    EXPECT_EQ(incrementalPlan.ikIterationCount, synchronousPlan.ikIterationCount);
+    EXPECT_EQ(incrementalPlan.tcpStraightnessChecks, synchronousPlan.tcpStraightnessChecks);
+    EXPECT_EQ(incrementalPlan.jointPathValidityChecks, synchronousPlan.jointPathValidityChecks);
+    EXPECT_EQ(incrementalPlan.validityStateChecks, synchronousPlan.validityStateChecks);
+    EXPECT_EQ(incrementalPlan.tcpRefinementCount, synchronousPlan.tcpRefinementCount);
+    EXPECT_EQ(incrementalValidityCalls, synchronousValidityCalls)
+        << "incremental planning retains every joint-path collision check";
+    for (std::size_t point = 0; point < synchronousPlan.points.size(); ++point)
+    {
+        ASSERT_EQ(incrementalPlan.points[point].joints.size(), synchronousPlan.points[point].joints.size());
+        for (std::size_t joint = 0; joint < synchronousPlan.points[point].joints.size(); ++joint)
+            EXPECT_DOUBLE_EQ(incrementalPlan.points[point].joints[joint], synchronousPlan.points[point].joints[joint]);
+        EXPECT_DOUBLE_EQ(incrementalPlan.points[point].durationSeconds,
+            synchronousPlan.points[point].durationSeconds);
+        for (std::size_t axis = 0; axis < 3; ++axis)
+            EXPECT_DOUBLE_EQ(incrementalPlan.points[point].tcpPose.positionMeters[axis],
+                synchronousPlan.points[point].tcpPose.positionMeters[axis]);
+        for (std::size_t axis = 0; axis < 4; ++axis)
+            EXPECT_DOUBLE_EQ(incrementalPlan.points[point].tcpPose.orientationXyzw[axis],
+                synchronousPlan.points[point].tcpPose.orientationXyzw[axis]);
+    }
+
+    DampedLeastSquaresIk batchedIk(specification);
+    LinearPathPlanningJob batchedJob;
+    ASSERT_TRUE(batchedJob.Begin(command, specification, startJoints, startTcp,
+        batchedIk, {}));
+    while (batchedJob.GetState() == LinearPathPlanningState::Running)
+    {
+        const auto& before = batchedJob.GetPlan();
+        const std::array<std::size_t, 3> beforeWork{
+            before.ikIterationCount, before.tcpStraightnessChecks, before.validityStateChecks};
+        const auto nextState = batchedJob.Advance(11);
+        EXPECT_TRUE(nextState == LinearPathPlanningState::Running ||
+            nextState == LinearPathPlanningState::Completed);
+        const auto& after = batchedJob.GetPlan();
+        const std::size_t consumedWork = after.ikIterationCount - beforeWork[0] +
+            after.tcpStraightnessChecks - beforeWork[1] +
+            after.validityStateChecks - beforeWork[2];
+        EXPECT_LE(consumedWork, 11u)
+            << "batched planning never exceeds the caller's work budget";
+    }
+    ASSERT_EQ(batchedJob.GetState(), LinearPathPlanningState::Completed)
+        << batchedJob.GetResult().message;
+    const auto& batchedPlan = batchedJob.GetPlan();
+    EXPECT_DOUBLE_EQ(batchedPlan.plannedLinearVelocity, synchronousPlan.plannedLinearVelocity);
+    EXPECT_DOUBLE_EQ(batchedPlan.plannedAngularVelocity, synchronousPlan.plannedAngularVelocity);
+    EXPECT_EQ(batchedPlan.hasMotion, synchronousPlan.hasMotion);
+    EXPECT_EQ(batchedPlan.ikSolveCount, synchronousPlan.ikSolveCount);
+    EXPECT_EQ(batchedPlan.ikIterationCount, synchronousPlan.ikIterationCount);
+    EXPECT_EQ(batchedPlan.tcpStraightnessChecks, synchronousPlan.tcpStraightnessChecks);
+    EXPECT_EQ(batchedPlan.jointPathValidityChecks, synchronousPlan.jointPathValidityChecks);
+    EXPECT_EQ(batchedPlan.validityStateChecks, synchronousPlan.validityStateChecks);
+    EXPECT_EQ(batchedPlan.tcpRefinementCount, synchronousPlan.tcpRefinementCount);
+    ASSERT_EQ(batchedPlan.points.size(), synchronousPlan.points.size());
+    for (std::size_t point = 0; point < synchronousPlan.points.size(); ++point)
+    {
+        ASSERT_EQ(batchedPlan.points[point].joints.size(), synchronousPlan.points[point].joints.size());
+        for (std::size_t joint = 0; joint < synchronousPlan.points[point].joints.size(); ++joint)
+            EXPECT_DOUBLE_EQ(batchedPlan.points[point].joints[joint], synchronousPlan.points[point].joints[joint]);
+        EXPECT_DOUBLE_EQ(batchedPlan.points[point].durationSeconds,
+            synchronousPlan.points[point].durationSeconds);
+        for (std::size_t axis = 0; axis < 3; ++axis)
+            EXPECT_DOUBLE_EQ(batchedPlan.points[point].tcpPose.positionMeters[axis],
+                synchronousPlan.points[point].tcpPose.positionMeters[axis]);
+        for (std::size_t axis = 0; axis < 4; ++axis)
+            EXPECT_DOUBLE_EQ(batchedPlan.points[point].tcpPose.orientationXyzw[axis],
+                synchronousPlan.points[point].tcpPose.orientationXyzw[axis]);
+    }
+}
+
 TEST(LinearPathPlanner, ReportsBoundedFailureWhenTcpRefinementBudgetIsExhausted)
 {
     const auto& specification = models::hanwha::kHcr12a;
@@ -197,6 +319,30 @@ TEST(LinearPathPlanner, ReportsBoundedFailureWhenTcpRefinementBudgetIsExhausted)
     ASSERT_EQ(result.code, ErrorCode::IkDidNotConverge)
         << "the planner rejects a path whose joint interpolation exceeds TCP tolerance without exceeding its refinement budget";
     ASSERT_TRUE(plan.points.empty()) << "failed refinement does not publish a partial path";
+}
+
+TEST(LinearPathPlanner, RestartingAnActiveJobCancelsItsPreviousIkSession)
+{
+    const auto& specification = models::hanwha::kHcr12a;
+    DampedLeastSquaresIk inverse(specification);
+    const JointVector startJoints(specification.jointCount, 0.0);
+    const CartesianPose startTcp = inverse.EvaluateTcp(startJoints);
+    LinearPathMoveCommand firstCommand;
+    firstCommand.targetPoses.push_back(inverse.EvaluateTcp({0.1, -0.1, 0.05, 0.1, -0.05, 0.1}));
+    LinearPathMoveCommand replacementCommand;
+    replacementCommand.targetPoses.push_back(inverse.EvaluateTcp({-0.1, -0.1, 0.05, 0.1, -0.05, 0.1}));
+    LinearPathPlanningJob job;
+
+    ASSERT_TRUE(job.Begin(firstCommand, specification, startJoints, startTcp, inverse, {}));
+    ASSERT_EQ(job.Advance(1), LinearPathPlanningState::Running);
+    ASSERT_TRUE(job.Begin(replacementCommand, specification, startJoints, startTcp, inverse, {}));
+    for (std::size_t work = 0; work < 20000 && job.GetState() == LinearPathPlanningState::Running; ++work)
+        job.Advance(1);
+
+    ASSERT_EQ(job.GetState(), LinearPathPlanningState::Completed) << job.GetResult().message;
+    ASSERT_FALSE(job.GetPlan().points.empty());
+    const auto& finalJoints = job.GetPlan().points.back().joints;
+    EXPECT_LT(finalJoints[0], 0.0) << "the replacement job, not the cancelled job, supplies the result";
 }
 
 TEST(LinearPathPlanner, RejectsSeedBudgetSmallerThanCandidateBeam)

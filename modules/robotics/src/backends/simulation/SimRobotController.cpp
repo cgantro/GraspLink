@@ -122,12 +122,26 @@ SimRobotController::SimRobotController(const models::RobotSpecification& specifi
 void SimRobotController::SetJointStateValidityChecker(
     planning::StateValidityChecker checker)
 {
+    if (IsMotionPlanning())
+    {
+        linearPathPlanningJob_.Cancel();
+        state_.mode = RobotMode::Idle;
+        state_.errorCode = ErrorCode::Cancelled;
+        linearPathPlanningResult_.emplace(
+            Failure(ErrorCode::Cancelled, "SimRobotController: motion planning cancelled because the validity checker changed"));
+        pendingLinearPathCommand_ = {};
+    }
+    linearPathPlanningJob_ = {};
     jointStateValidityChecker_ = std::move(checker);
 }
 
 Result SimRobotController::Connect()
 {
     // 재연결은 이전 명령과 상태를 이어가지 않고 q=0의 새 논리 세션을 만든다.
+    linearPathPlanningJob_.Cancel();
+    linearPathPlanningJob_ = {};
+    linearPathPlanningResult_.reset();
+    pendingLinearPathCommand_ = {};
     state_ = {};
     state_.jointPositionRadians.assign(specification_->jointCount, 0.0);
     state_.jointVelocityRadiansPerSecond.assign(specification_->jointCount, 0.0);
@@ -156,6 +170,9 @@ Result SimRobotController::Connect()
 
 void SimRobotController::Disconnect() noexcept
 {
+    linearPathPlanningJob_.Cancel();
+    linearPathPlanningResult_.reset();
+    pendingLinearPathCommand_ = {};
     // 백엔드의 관절 배열은 재사용하되 연결/feedback 유효성을 내리고 속도만 즉시 0으로 만든다.
     connected_ = false;
     state_.mode = RobotMode::Disconnected;
@@ -182,6 +199,8 @@ Result SimRobotController::MoveJointImpl(const JointMoveCommand& command, bool v
 {
     if (!connected_)
         return Failure(ErrorCode::NotConnected, "SimRobotController: not connected");
+    if (IsMotionPlanning())
+        return Failure(ErrorCode::Busy, "SimRobotController: linear path planning is in progress");
 
     if (command.targetPositionRadians.size() != specification_->jointCount)
         return Failure(ErrorCode::InvalidCommand, "SimRobotController: joint count mismatch");
@@ -313,6 +332,8 @@ Result SimRobotController::MovePose(const CartesianPose& targetInBase, double ve
 {
     if (!connected_)
         return Failure(ErrorCode::NotConnected, "SimRobotController: not connected");
+    if (IsMotionPlanning())
+        return Failure(ErrorCode::Busy, "SimRobotController: linear path planning is in progress");
     if (!IsScaleValid(velocityScale) || !IsScaleValid(accelerationScale))
         return Failure(ErrorCode::InvalidCommand, "SimRobotController: scale must be in (0, 1]");
     planning::JointStateInvalidity invalidity = planning::JointStateInvalidity::None;
@@ -344,13 +365,9 @@ Result SimRobotController::MoveLinear(const LinearMoveCommand& command)
 
 Result SimRobotController::MoveLinearPath(const LinearPathMoveCommand& command)
 {
-    if (!connected_)
-        return Failure(ErrorCode::NotConnected, "SimRobotController: not connected");
-    const Result validation = planning::ValidateLinearPathCommand(command);
+    const Result validation = ValidateLinearPathRequest(command);
     if (!validation)
         return validation;
-    if (!specification_->hasToolFrame)
-        return Failure(ErrorCode::Unsupported, "SimRobotController: missing ToolFrame for TCP motion");
 
     planning::LinearPathPlan plan;
     const auto result = planning::BuildLinearPath(
@@ -358,6 +375,96 @@ Result SimRobotController::MoveLinearPath(const LinearPathMoveCommand& command)
         inverse_.EvaluateTcp(state_.jointPositionRadians), inverse_, jointStateValidityChecker_, plan);
     if (!result)
         return result;
+    return CommitLinearPathPlan(command, std::move(plan));
+}
+
+Result SimRobotController::BeginLinearPathPlanning(const LinearPathMoveCommand& command)
+{
+    const Result validation = ValidateLinearPathRequest(command);
+    if (!validation)
+        return validation;
+
+    pendingLinearPathCommand_ = command;
+    linearPathPlanningResult_.reset();
+    const Result begin = linearPathPlanningJob_.Begin(command, *specification_,
+        state_.jointPositionRadians, inverse_.EvaluateTcp(state_.jointPositionRadians),
+        inverse_, jointStateValidityChecker_);
+    if (!begin)
+    {
+        linearPathPlanningResult_ = begin;
+        pendingLinearPathCommand_ = {};
+        linearPathPlanningJob_ = {};
+        return begin;
+    }
+    if (linearPathPlanningJob_.GetState() == planning::LinearPathPlanningState::Completed)
+    {
+        auto plan = linearPathPlanningJob_.TakePlan();
+        const Result committed = plan ? CommitLinearPathPlan(command, std::move(*plan)) :
+            Failure(ErrorCode::Fault, "SimRobotController: completed planner returned no plan");
+        linearPathPlanningResult_ = committed;
+        pendingLinearPathCommand_ = {};
+        return committed;
+    }
+    state_.mode = RobotMode::Planning;
+    state_.errorCode = ErrorCode::None;
+    return Result::Success();
+}
+
+void SimRobotController::AdvanceMotionPlanning(std::size_t workBudget)
+{
+    if (!IsMotionPlanning())
+        return;
+    const auto planningState = linearPathPlanningJob_.Advance(workBudget);
+    if (planningState == planning::LinearPathPlanningState::Running)
+        return;
+    if (planningState == planning::LinearPathPlanningState::Completed)
+    {
+        auto plan = linearPathPlanningJob_.TakePlan();
+        linearPathPlanningResult_ = plan ?
+            CommitLinearPathPlan(pendingLinearPathCommand_, std::move(*plan)) :
+            Failure(ErrorCode::Fault, "SimRobotController: completed planner returned no plan");
+        pendingLinearPathCommand_ = {};
+    }
+    else
+    {
+        linearPathPlanningResult_ = linearPathPlanningJob_.GetResult();
+        state_.mode = RobotMode::Idle;
+        state_.errorCode = linearPathPlanningResult_->code;
+        pendingLinearPathCommand_ = {};
+        linearPathPlanningJob_ = {};
+    }
+}
+
+bool SimRobotController::IsMotionPlanning() const noexcept
+{
+    return linearPathPlanningJob_.GetState() == planning::LinearPathPlanningState::Running;
+}
+
+std::optional<Result> SimRobotController::TakeMotionPlanningResult()
+{
+    auto result = std::move(linearPathPlanningResult_);
+    linearPathPlanningResult_.reset();
+    return result;
+}
+
+Result SimRobotController::ValidateLinearPathRequest(
+    const LinearPathMoveCommand& command) const
+{
+    if (!connected_)
+        return Failure(ErrorCode::NotConnected, "SimRobotController: not connected");
+    if (IsMotionPlanning())
+        return Failure(ErrorCode::Busy, "SimRobotController: linear path planning is in progress");
+    const Result validation = planning::ValidateLinearPathCommand(command);
+    if (!validation)
+        return validation;
+    if (!specification_->hasToolFrame)
+        return Failure(ErrorCode::Unsupported, "SimRobotController: missing ToolFrame for TCP motion");
+    return Result::Success();
+}
+
+Result SimRobotController::CommitLinearPathPlan(
+    const LinearPathMoveCommand& command, planning::LinearPathPlan plan)
+{
     if (!plan.hasMotion)
         return MoveJoint({state_.jointPositionRadians, 1.0, 1.0});
 
@@ -400,6 +507,17 @@ Result SimRobotController::Stop()
 {
     if (!connected_)
         return Failure(ErrorCode::NotConnected, "SimRobotController: not connected");
+
+    if (IsMotionPlanning())
+    {
+        linearPathPlanningJob_.Cancel();
+        linearPathPlanningResult_ = Failure(
+            ErrorCode::Cancelled, "SimRobotController: linear path planning cancelled");
+        state_.mode = RobotMode::Idle;
+        state_.errorCode = ErrorCode::Cancelled;
+        pendingLinearPathCommand_ = {};
+        linearPathPlanningJob_ = {};
+    }
 
     // 현재 q를 새 목표로 고정해 이후 Update가 남은 동작을 재개하지 않게 한다.
     targetPositionRadians_ = state_.jointPositionRadians;

@@ -4,15 +4,19 @@
 
 실행 중 성능은 Tracy로 확인한다. 시뮬레이터는 프레임 전체와 `Frame`, `FixedTick`, `RobotUpdate`, `CollisionCheck`, `PhysicsStep`, `Render` 구간을 기록한다. `TRACY_ON_DEMAND`를 켜면 Tracy Profiler가 연결될 때 기록을 시작한다. 시뮬레이터를 빌드하고 Tracy Profiler를 실행한 다음, 실행 중인 시뮬레이터에 연결해 각 구간의 시간을 살펴본다. Tracy CMake client는 `v0.14.1`로 고정되어 있다. Logger는 로그와 임무 결과 같은 의미 지표를 기록하며, 실행 시간 측정에는 사용하지 않는다.
 
-다음 명령으로 고정 seed를 사용하는 경로 스트레스 벤치마크를 실행한다.
+다음 명령으로 고정 seed를 사용하는 경로 스트레스 벤치마크를 실행한다. `/64`와 `/256`은 한 번의 반복에서 생성하는 목표 수다.
 
 ```powershell
 build-ninja-release/grasplink_robotics_benchmarks.exe --benchmark_filter=RuntimeLinearPathStress
 ```
 
-각 케이스의 TCP 목표는 관절 한계 안에 있는 관절값에서 FK로 만든다. `/64`와 `/256`은 한 번의 벤치마크 반복에서 생성하는 목표 수다. 결과에는 경로 계획 거절, 실행 중 Fault, 제한 시간 초과, 완료 수가 나온다. 각 결과의 label에는 마지막으로 거절된 경로의 TCP 샘플 번호와 IK 실패 이유가 표시된다. `planner_ik_limit_stalls`는 IK가 관절 경계에서 더 나아가지 못해 멈춘 횟수다. 이 값만으로 목표나 전체 경로가 도달 불가능하다거나, 시뮬레이션 중인 로봇 관절이 한계에 닿았다고 결론 내릴 수 없다. `planner_verified_joint_limit_violations`는 경로 관절값 검사에서 실제 범위 초과를 확인한 횟수다. `rejections_with_known_reachable_endpoints`는 실패한 경로 중 끝점이 합법 관절값에서 만들어져 도달 가능하다고 확인된 수다. 끝점에 도달할 수 있어도 그곳까지의 직선 TCP 경로 전체가 가능한지는 별도로 확인해야 한다.
+각 TCP 목표는 관절 한계 안의 관절값에서 FK로 만든다. 결과에는 경로 계획 거절, 실행 중 Fault, 제한 시간 초과와 완료 수가 나온다. label에는 마지막으로 거절된 경로의 TCP 표본 번호와 IK 실패 이유가 표시된다. `planner_ik_limit_stalls`는 IK 반복 중 관절 한계가 수렴을 막은 횟수다. 이 값만으로 전체 목표 경로나 실제 로봇 관절이 한계에 닿았다고 판단할 수 없다. `planner_verified_joint_limit_violations`는 검증한 경로 관절값에서 실제 한계 초과를 확인한 횟수다. `rejections_with_known_reachable_endpoints`는 실패한 목표의 끝점이 합법 관절값에서 만들어져 도달 가능하다고 확인된 수다. 끝점이 도달 가능해도 그곳까지의 직선 TCP 경로 전체가 가능하다는 뜻은 아니다.
 
-벤치마크 Controller에는 매 검증 호출을 세는 결정적 validity checker를 등록한다. `validity_checker_calls`는 이 callback이 호출된 총 횟수이며, `validity_checks_per_case`는 전체 케이스당 평균 호출 수다. Callback은 모든 상태를 유효하다고 반환하므로 실제 환경 충돌이나 Jolt collision query는 수행하지 않는다. 따라서 이 값은 상태 유효성 검사 경계의 호출량만 보여 주며 충돌 쿼리 횟수나 그 소요 시간을 뜻하지 않는다.
+`LinearPathPlanner`와 `IncrementalLinearPathPlanner`는 같은 고정 목표 경로를 각각 한 번에 계산하는 방식과 1.5 ms 프레임 예산으로 나눠 계산하는 방식으로 측정한다. `planning_us_per_path`는 전체 계산 시간이고 `work_frames_per_path` 및 `estimated_latency_ms_at_60hz_*`는 60 Hz 화면에서 예상되는 완료 지연을 나타낸다. 프레임별 `slice_p50_us`, `slice_p95_us`, `slice_p99_us`, `slice_max_us`는 계획 계산이 한 번의 화면 갱신을 얼마나 오래 사용했는지 보여 준다. 한 작업 단위 자체가 예산을 넘으면 실제 slice 시간도 예산을 넘을 수 있다.
+
+`ik_solves_per_path`, `ik_iterations_per_path`, `tcp_refinements_per_path`, `tcp_straightness_checks_per_path`와 `planner_state_checks_per_path`는 경로 하나를 만드는 데 사용한 계산량을 보여 준다. TCP 경로 오차는 각 관절 구간의 25%, 50%, 75% 지점에서 FK로 계산한 실제 자세와 요청 직선 경로의 차이를 측정한다. `max_fk_tcp_position_error_mm`와 `max_fk_tcp_orientation_error_mrad`가 그 최대 오차다. Incremental benchmark에는 실제 Jolt 충돌 검사기가 연결되지 않으므로 `planner_state_checks_per_path`는 상태 검사 호출 수일 뿐 충돌 쿼리 수가 아니다.
+
+스트레스 벤치마크의 Controller에는 매 상태 검증 호출마다 횟수를 올리는 callback을 등록한다. `dummy_state_validity_callback_calls`는 callback 총 호출 수이고 `dummy_state_validity_callback_calls_per_case`는 목표 하나당 평균 호출 수다. Callback은 모든 상태를 유효하다고 반환하므로 실제 환경 충돌이나 Jolt 검사는 하지 않는다. 이 수치는 상태 검증 경계의 호출량을 나타내며 충돌 검사 횟수나 소요 시간을 뜻하지 않는다.
 
 실제 Viewer에서 Tracy 캡처를 시작하면 충돌 검증 구간은 `CollisionCandidateFK`, `CollisionCheck`, `SelfCollisionCheck`, `JoltEnvironmentOverlap`, `JoltPairShapeOverlap`으로 나뉘어 표시된다. `CollisionCandidateFK`는 Scene을 수정하지 않고 FK에서 Jolt 입력 변환까지 만드는 시간이며, 두 Jolt 구간은 각각 환경 형상과 로봇 형상 쌍을 실제 검사한 시간이다. `SelfCollisionCheck`에는 허용 충돌 행렬과 각 쌍 반복 비용도 포함된다.
 

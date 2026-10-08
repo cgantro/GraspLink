@@ -25,7 +25,8 @@ public:
     void Draw(::grasplink::robotics::IGripperController& gripper, const ::grasplink::simulation::GripperGraspState* graspState = nullptr);
 
     /** @brief 이미 열린 ImGui 창 안에 그리퍼 조작과 상태 내용을 그린다. */
-    void DrawContents(::grasplink::robotics::IGripperController& gripper, const ::grasplink::simulation::GripperGraspState* graspState = nullptr);
+    void DrawContents(::grasplink::robotics::IGripperController& gripper,
+        const ::grasplink::simulation::GripperGraspState* graspState = nullptr, bool commandsEnabled = true);
 
 private:
     bool hasGripperResult = false;

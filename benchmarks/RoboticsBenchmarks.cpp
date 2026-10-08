@@ -2,11 +2,15 @@
 #include "robotics/backends/simulation/SimRobotController.h"
 #include "robotics/kinematics/RobotInverseKinematics.h"
 #include "robotics/kinematics/RobotKinematics.h"
+#include "robotics/kinematics/detail/PoseMath.h"
 #include "robotics/models/hanwha/Hcr12a.h"
 
 #include <benchmark/benchmark.h>
 
+#include <algorithm>
 #include <charconv>
+#include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <iomanip>
 #include <iostream>
@@ -86,6 +90,11 @@ void LinearPathPlanning(benchmark::State& state)
         return;
     }
 
+    std::size_t ikSolveCount = 0;
+    std::size_t ikIterationCount = 0;
+    std::size_t refinementCount = 0;
+    std::size_t validityStateChecks = 0;
+    std::size_t straightnessChecks = 0;
     for (auto _ : state)
     {
         const auto result = BuildLinearPath(
@@ -97,8 +106,139 @@ void LinearPathPlanning(benchmark::State& state)
         }
         benchmark::DoNotOptimize(plan.points.data());
         benchmark::DoNotOptimize(plan.points.size());
+        ikSolveCount += plan.ikSolveCount;
+        ikIterationCount += plan.ikIterationCount;
+        refinementCount += plan.tcpRefinementCount;
+        validityStateChecks += plan.validityStateChecks;
+        straightnessChecks += plan.tcpStraightnessChecks;
     }
     state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(plan.points.size()));
+    state.counters["ik_solves_per_path"] = static_cast<double>(ikSolveCount) / state.iterations();
+    state.counters["ik_iterations_per_path"] = static_cast<double>(ikIterationCount) / state.iterations();
+    state.counters["tcp_refinements_per_path"] = static_cast<double>(refinementCount) / state.iterations();
+    state.counters["planner_state_checks_per_path"] = static_cast<double>(validityStateChecks) / state.iterations();
+    state.counters["tcp_straightness_checks_per_path"] = static_cast<double>(straightnessChecks) / state.iterations();
+}
+
+void IncrementalLinearPathPlanning(benchmark::State& state)
+{
+    using Clock = std::chrono::steady_clock;
+    using namespace grasplink::robotics::kinematics::detail;
+
+    DampedLeastSquaresIk solver(kHcr12a);
+    LinearPathMoveCommand command;
+    command.targetPoses.push_back(MakeTargetPose());
+    const CartesianPose startTcp = solver.EvaluateTcp(kSeed);
+    std::vector<double> sliceMicroseconds;
+    std::vector<double> workFramesPerPath;
+    std::size_t succeeded = 0;
+    std::size_t plannerStateChecks = 0;
+    double totalPlanningMicroseconds = 0.0;
+    double maximumPositionErrorMeters = 0.0;
+    double maximumOrientationErrorRadians = 0.0;
+    std::size_t totalWorkFrames = 0;
+
+    for (auto _ : state)
+    {
+        LinearPathPlanningJob job;
+        if (!job.Begin(command, kHcr12a, kSeed, startTcp, solver, {}))
+        {
+            state.SkipWithError("incremental planner could not begin the benchmark path");
+            break;
+        }
+
+        std::size_t workFrames = 0;
+        const auto planningStart = Clock::now();
+        while (job.GetState() == LinearPathPlanningState::Running && workFrames < 4096)
+        {
+            const auto frameStart = Clock::now();
+            const auto frameDeadline = frameStart + std::chrono::microseconds(1500);
+            do
+            {
+                job.Advance(1);
+            } while (job.GetState() == LinearPathPlanningState::Running && Clock::now() < frameDeadline);
+            sliceMicroseconds.push_back(std::chrono::duration<double, std::micro>(
+                Clock::now() - frameStart).count());
+            ++workFrames;
+        }
+        const auto planningEnd = Clock::now();
+        if (job.GetState() != LinearPathPlanningState::Completed)
+        {
+            state.SkipWithError("incremental planner did not complete a valid benchmark path");
+            break;
+        }
+
+        const auto& plan = job.GetPlan();
+        for (std::size_t point = 1; point < plan.points.size(); ++point)
+        {
+            const auto& start = plan.points[point - 1];
+            const auto& end = plan.points[point];
+            const Pose3 desiredStart = FromCartesian(start.tcpPose);
+            const Pose3 desiredEnd = FromCartesian(end.tcpPose);
+            JointVector joints(start.joints.size());
+            for (const double fraction : {0.25, 0.5, 0.75})
+            {
+                for (std::size_t joint = 0; joint < joints.size(); ++joint)
+                    joints[joint] = start.joints[joint] +
+                        (end.joints[joint] - start.joints[joint]) * fraction;
+                const Pose3 actual = FromCartesian(solver.EvaluateTcp(joints));
+                const Pose3 desired = Interpolate(desiredStart, desiredEnd, fraction);
+                maximumPositionErrorMeters = std::max(maximumPositionErrorMeters,
+                    Length(Subtract(actual.positionMeters, desired.positionMeters)));
+                maximumOrientationErrorRadians = std::max(maximumOrientationErrorRadians,
+                    Length(RotationError(desired.rotation, actual.rotation)));
+            }
+        }
+
+        totalPlanningMicroseconds += std::chrono::duration<double, std::micro>(planningEnd - planningStart).count();
+        plannerStateChecks += plan.validityStateChecks;
+        totalWorkFrames += workFrames;
+        workFramesPerPath.push_back(static_cast<double>(workFrames));
+        ++succeeded;
+        benchmark::DoNotOptimize(plan.points.data());
+    }
+
+    const auto percentile = [](std::vector<double>& values, double fraction)
+    {
+        if (values.empty())
+            return 0.0;
+        std::sort(values.begin(), values.end());
+        const std::size_t index = static_cast<std::size_t>(std::ceil(
+            fraction * static_cast<double>(values.size()))) - 1;
+        return values[std::min(index, values.size() - 1)];
+    };
+    if (!sliceMicroseconds.empty())
+    {
+        state.counters["slice_p50_us"] = percentile(sliceMicroseconds, 0.50);
+        state.counters["slice_p95_us"] = percentile(sliceMicroseconds, 0.95);
+        state.counters["slice_p99_us"] = percentile(sliceMicroseconds, 0.99);
+        state.counters["slice_max_us"] = *std::max_element(sliceMicroseconds.begin(), sliceMicroseconds.end());
+    }
+    if (succeeded != 0)
+    {
+        const double averageWorkFrames = static_cast<double>(totalWorkFrames) / succeeded;
+        const double workFramesP50 = percentile(workFramesPerPath, 0.50);
+        const double workFramesP95 = percentile(workFramesPerPath, 0.95);
+        const double workFramesP99 = percentile(workFramesPerPath, 0.99);
+        const double workFramesMax = *std::max_element(workFramesPerPath.begin(), workFramesPerPath.end());
+        constexpr double millisecondsPerFrameAt60Hz = 1000.0 / 60.0;
+        state.counters["success_rate"] = static_cast<double>(succeeded) / state.iterations();
+        state.counters["planning_us_per_path"] = totalPlanningMicroseconds / succeeded;
+        state.counters["work_frames"] = static_cast<double>(totalWorkFrames);
+        state.counters["work_frames_per_path"] = averageWorkFrames;
+        state.counters["work_frames_p50"] = workFramesP50;
+        state.counters["work_frames_p95"] = workFramesP95;
+        state.counters["work_frames_p99"] = workFramesP99;
+        state.counters["work_frames_max"] = workFramesMax;
+        state.counters["estimated_latency_ms_at_60hz"] = averageWorkFrames * millisecondsPerFrameAt60Hz;
+        state.counters["estimated_latency_ms_at_60hz_p50"] = workFramesP50 * millisecondsPerFrameAt60Hz;
+        state.counters["estimated_latency_ms_at_60hz_p95"] = workFramesP95 * millisecondsPerFrameAt60Hz;
+        state.counters["estimated_latency_ms_at_60hz_p99"] = workFramesP99 * millisecondsPerFrameAt60Hz;
+        state.counters["estimated_latency_ms_at_60hz_max"] = workFramesMax * millisecondsPerFrameAt60Hz;
+        state.counters["planner_state_checks_per_path"] = static_cast<double>(plannerStateChecks) / succeeded;
+        state.counters["max_fk_tcp_position_error_mm"] = maximumPositionErrorMeters * 1000.0;
+        state.counters["max_fk_tcp_orientation_error_mrad"] = maximumOrientationErrorRadians * 1000.0;
+    }
 }
 
 struct RuntimePathCase
@@ -141,7 +281,7 @@ void RuntimeLinearPathStress(benchmark::State& state)
     std::uint64_t runtimeIkFaults = 0;
     std::uint64_t timeouts = 0;
     std::uint64_t completed = 0;
-    std::uint64_t validityCheckerCalls = 0;
+    std::uint64_t stateValidityCallbackCalls = 0;
     std::string lastPlannerRejection;
 
     for (auto _ : state)
@@ -155,9 +295,9 @@ void RuntimeLinearPathStress(benchmark::State& state)
                 state.SkipWithError("SimRobotController could not connect");
                 return;
             }
-            controller.SetJointStateValidityChecker([&validityCheckerCalls](const JointVector&)
+            controller.SetJointStateValidityChecker([&stateValidityCallbackCalls](const JointVector&)
             {
-                ++validityCheckerCalls;
+                ++stateValidityCallbackCalls;
                 return JointStateInvalidity::None;
             });
 
@@ -234,9 +374,9 @@ void RuntimeLinearPathStress(benchmark::State& state)
     state.counters["runtime_ik_faults"] = static_cast<double>(runtimeIkFaults);
     state.counters["timeouts"] = static_cast<double>(timeouts);
     state.counters["completed"] = static_cast<double>(completed);
-    state.counters["validity_checker_calls"] = static_cast<double>(validityCheckerCalls);
-    state.counters["validity_checks_per_case"] = totalCases > 0.0 ?
-        static_cast<double>(validityCheckerCalls) / totalCases : 0.0;
+    state.counters["dummy_state_validity_callback_calls"] = static_cast<double>(stateValidityCallbackCalls);
+    state.counters["dummy_state_validity_callback_calls_per_case"] = totalCases > 0.0 ?
+        static_cast<double>(stateValidityCallbackCalls) / totalCases : 0.0;
     if (!lastPlannerRejection.empty())
         state.SetLabel(lastPlannerRejection);
     state.SetItemsProcessed(static_cast<std::int64_t>(totalCases));
@@ -279,6 +419,8 @@ int main(int argc, char** argv)
     auto* fk = benchmark::RegisterBenchmark("FK", Fk);
     auto* ik = benchmark::RegisterBenchmark("DLS_IK", BenchmarkDlsIk);
     auto* planner = benchmark::RegisterBenchmark("LinearPathPlanner", LinearPathPlanning);
+    auto* incrementalPlanner = benchmark::RegisterBenchmark(
+        "IncrementalLinearPathPlanner", IncrementalLinearPathPlanning);
     benchmark::RegisterBenchmark("RuntimeLinearPathStress", RuntimeLinearPathStress)
         ->Arg(64)
         ->Arg(256);
@@ -287,6 +429,7 @@ int main(int argc, char** argv)
         fk->Iterations(iterations);
         ik->Iterations(iterations);
         planner->Iterations(iterations);
+        incrementalPlanner->Iterations(iterations);
     }
 
     benchmark::RunSpecifiedBenchmarks();

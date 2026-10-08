@@ -450,33 +450,45 @@ void ViewerApp::MainLoop()
         if (!m_GuiModule->WantsMouse())
             m_CameraController->OnUpdate();
 
-        // 고정 갱신에서는 Controller 상태를 읽어 FK를 계산하고 Entity 자세와 World 행렬을 만든 뒤 Jolt를 진행한다.
+        const bool planningFrame = m_RobotController->IsMotionPlanning();
+        if (planningFrame)
+        {
+            const auto planningDeadline = Clock::now() + std::chrono::microseconds(1500);
+            do
+            {
+                m_RobotController->AdvanceMotionPlanning(1);
+            } while (m_RobotController->IsMotionPlanning() && Clock::now() < planningDeadline);
+        }
+
+        // 경로 계획 중에는 Jolt와 로봇 상태를 고정해 계획에 사용한 충돌 환경을 유지한다.
         // PhysicsSystem은 Kinematic Body의 목표 자세를 Jolt에 보내고, Dynamic Body가 계산한 결과를 ECS Local 값으로 되돌린다.
         // 물리 step 뒤 World 행렬을 다시 계산해야 다음 렌더가 부모와 자식의 최신 자세를 사용한다. 창이 최소화되어도 이 시뮬레이션 갱신은 계속된다.
-        m_ControlLoop.Advance(frameDeltaSeconds, [this](double fixedDeltaSeconds)
+        if (!planningFrame)
         {
-            ZoneScopedN("FixedTick");
+            m_ControlLoop.Advance(frameDeltaSeconds, [this](double fixedDeltaSeconds)
             {
-                // 열기·Reset·연결 해제 요청은 물리 계산 전에 파지 제약을 없애야 물체가 다음 계산부터 자유롭게 떨어진다.
-                m_GripperGraspAdapter->BeforePhysicsStep();
-                m_RobotCollisionGuard->CaptureSafeJointPose();
+                ZoneScopedN("FixedTick");
                 {
-                    ZoneScopedN("RobotUpdate");
-                    m_RobotController->Update(fixedDeltaSeconds);
-                    m_GripperController->Update(fixedDeltaSeconds);
-                    ApplyControllerPoses();
+                    // 열기·Reset·연결 해제 요청은 물리 계산 전에 파지 제약을 없애야 물체가 다음 계산부터 자유롭게 떨어진다.
+                    m_GripperGraspAdapter->BeforePhysicsStep();
+                    m_RobotCollisionGuard->CaptureSafeJointPose();
+                    {
+                        ZoneScopedN("RobotUpdate");
+                        m_RobotController->Update(fixedDeltaSeconds);
+                        m_GripperController->Update(fixedDeltaSeconds);
+                        ApplyControllerPoses();
+                    }
+                    TransformSystemModule::UpdateWorldTransforms(m_World);
+                    m_RobotCollisionGuard->RestoreSafePoseIfOverlapping();
+                    {
+                        ZoneScopedN("PhysicsStep");
+                        m_PhysicsSystemModule->Step(fixedDeltaSeconds);
+                    }
+                    m_GripperGraspAdapter->AfterPhysicsStep();
+                    TransformSystemModule::UpdateWorldTransforms(m_World);
                 }
-                TransformSystemModule::UpdateWorldTransforms(m_World);
-                m_RobotCollisionGuard->RestoreSafePoseIfOverlapping();
-                {
-                    ZoneScopedN("PhysicsStep");
-                    m_PhysicsSystemModule->Step(fixedDeltaSeconds);
-                }
-                // Jolt가 이번 간격의 접촉을 모두 계산한 뒤 그리퍼에 결과를 돌려준다. 접촉 정지는 다음 고정 갱신부터 개폐 진행을 막는다.
-                m_GripperGraspAdapter->AfterPhysicsStep();
-                TransformSystemModule::UpdateWorldTransforms(m_World);
-            }
-        });
+            });
+        }
 
         const auto boxPose = ToRobotBasePose(m_RobotRoot, m_GraspBox.GetWorldMatrix(), 0.0F);
         const auto placementPose = ToRobotBasePose(m_RobotRoot, m_PlacementArea.GetWorldMatrix(),
@@ -550,7 +562,7 @@ void ViewerApp::MainLoop()
             m_PickPlaceMission.ApplyActions(grasplink::application::PickPlaceMissionActions{
                 panelActions.start, panelActions.resume, panelActions.stop},
                 m_RobotController->GetStateView(), *m_RobotController, graspState.grasped, boxPose);
-            m_GripperPanel->DrawContents(*m_GripperController, &graspState);
+            m_GripperPanel->DrawContents(*m_GripperController, &graspState, !m_RobotController->IsMotionPlanning());
             m_PhysicsDebugPanel->DrawContents();
             ImGui::End();
             m_ColliderOverlay->Draw(*m_Camera, m_PhysicsDebugPanel->IsColliderVisible(),

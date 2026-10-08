@@ -6,6 +6,7 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <utility>
 #include <vector>
 namespace
 {
@@ -88,9 +89,42 @@ public:
             state.mode = RobotMode::Moving;
         return pathResult;
     }
+    Result BeginLinearPathPlanning(const LinearPathMoveCommand& command) override
+    {
+        const bool pathRequest = std::exchange(expectPathRequest, false);
+        if (!pathRequest)
+        {
+            return MoveLinear({command.targetPoses.front(), command.maxLinearVelocityMetersPerSecond,
+                command.maxAngularVelocityRadiansPerSecond, command.maxLinearAccelerationMetersPerSecondSquared,
+                command.maxAngularAccelerationRadiansPerSecondSquared});
+        }
+        if (!deferPathPlanning)
+            return MoveLinearPath(command);
+        ++pathRequests;
+        if (!pathResult)
+            return pathResult;
+        planning = true;
+        state.mode = RobotMode::Planning;
+        return {};
+    }
+    void AdvanceMotionPlanning(std::size_t) override {}
+    bool IsMotionPlanning() const noexcept override { return planning; }
+    std::optional<Result> TakeMotionPlanningResult() override
+    {
+        if (!planningResultReady)
+            return std::nullopt;
+        planningResultReady = false;
+        return planningResult;
+    }
     Result Stop() override
     {
         ++stopRequests;
+        if (planning)
+        {
+            planning = false;
+            planningResult = {ErrorCode::Cancelled, "path planning cancelled"};
+            planningResultReady = true;
+        }
         if (stopResult)
             state.mode = RobotMode::Stopped;
         return stopResult;
@@ -107,6 +141,20 @@ public:
     int linearRequests = 0;
     int pathRequests = 0;
     int stopRequests = 0;
+    bool deferPathPlanning = false;
+    bool expectPathRequest = false;
+    bool planning = false;
+    bool planningResultReady = false;
+    Result planningResult{};
+
+    void CompletePathPlanning(Result result = {})
+    {
+        planning = false;
+        planningResult = std::move(result);
+        planningResultReady = true;
+        state.mode = planningResult ? RobotMode::Moving : RobotMode::Idle;
+        state.errorCode = planningResult.code;
+    }
 
 private:
     kinematics::DampedLeastSquaresIk ik_;
@@ -156,7 +204,12 @@ TEST(PickPlaceMissionTests, UnreachablePickupFailsWithoutMotion)
     mission.ApplyActions({true, false, false}, controller.GetStateView(), controller, false, unreachableBox);
     ASSERT_EQ(mission.Snapshot().stageLabel, "Unwinding J6 before pickup");
 
-    mission.Update(controller.GetStateView(), controller, gripper, false, unreachableBox, goal);
+    for (std::size_t frame = 0; frame < 20000 && mission.Snapshot().stageLabel != "Failed"; ++frame)
+    {
+        if (controller.IsMotionPlanning())
+            controller.AdvanceMotionPlanning(2);
+        mission.Update(controller.GetStateView(), controller, gripper, false, unreachableBox, goal);
+    }
     const auto failed = mission.Snapshot();
     ASSERT_EQ(failed.stageLabel, "Failed");
     EXPECT_TRUE(failed.hasResult);
@@ -358,6 +411,7 @@ TEST(PickPlaceMissionTests, RejectedTransitPathPreservesControllerError)
         mission.Snapshot().stageLabel != "Failed"; ++tick)
     {
         boxGrasped = mission.Snapshot().stageLabel == "Closing gripper" || boxGrasped;
+        controller.expectPathRequest = mission.Snapshot().stageLabel == "Planning path to goal";
         mission.Update(controller.state, controller, gripper, boxGrasped, box, box);
     }
 
@@ -366,6 +420,51 @@ TEST(PickPlaceMissionTests, RejectedTransitPathPreservesControllerError)
     EXPECT_EQ(snapshot.lastMessage, "path execution unavailable");
     EXPECT_EQ(controller.pathRequests, 1);
     EXPECT_FALSE(snapshot.missionSucceeded);
+}
+
+TEST(PickPlaceMissionTests, WaitsForIncrementalTransitPlanningBeforeMovingToPlacement)
+{
+    FakeRobotController controller(models::hanwha::kHcr12a, true);
+    controller.deferPathPlanning = true;
+    StubGripper gripper;
+    grasplink::application::PickPlaceMission mission(models::hanwha::kHcr12a);
+    CartesianPose box{};
+    box.positionMeters = controller.state.tcpPose.positionMeters;
+    box.positionMeters[1] -= 0.25;
+
+    mission.Update(controller.state, controller, gripper, false, box, box);
+    mission.ApplyActions({true, false, false}, controller.state, controller, false, box);
+    bool boxGrasped = false;
+    for (int tick = 0; tick < 40 && mission.Snapshot().stageLabel != "Planning motion" &&
+        mission.Snapshot().stageLabel != "Failed"; ++tick)
+    {
+        boxGrasped = boxGrasped || mission.Snapshot().stageLabel == "Closing gripper";
+        controller.expectPathRequest = mission.Snapshot().stageLabel == "Planning path to goal";
+        mission.Update(controller.state, controller, gripper, boxGrasped, box, box);
+    }
+    ASSERT_EQ(mission.Snapshot().stageLabel, "Planning motion");
+    ASSERT_TRUE(controller.IsMotionPlanning());
+    ASSERT_EQ(controller.pathRequests, 1);
+    const int linearRequestsBeforePlanning = controller.linearRequests;
+
+    for (int frame = 0; frame < 4; ++frame)
+        mission.Update(controller.state, controller, gripper, true, box, box);
+    EXPECT_EQ(mission.Snapshot().stageLabel, "Planning motion");
+    EXPECT_EQ(controller.pathRequests, 1);
+    EXPECT_EQ(controller.linearRequests, linearRequestsBeforePlanning)
+        << "the mission does not submit the next pose while path planning is pending";
+
+    controller.CompletePathPlanning();
+    mission.Update(controller.state, controller, gripper, true, box, box);
+    EXPECT_EQ(mission.Snapshot().stageLabel, "Moving to goal");
+    EXPECT_EQ(controller.linearRequests, linearRequestsBeforePlanning);
+    mission.Update(controller.state, controller, gripper, true, box, box);
+    EXPECT_EQ(controller.linearRequests, linearRequestsBeforePlanning)
+        << "the next pose waits until controller motion completes";
+
+    controller.state.mode = RobotMode::Idle;
+    mission.Update(controller.state, controller, gripper, true, box, box);
+    EXPECT_EQ(controller.linearRequests, linearRequestsBeforePlanning + 1);
 }
 
 TEST(PickPlaceMissionTests, RuntimeControllerFaultFailsActiveMission)

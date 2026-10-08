@@ -17,6 +17,7 @@ const char* RobotModeName(robotics::RobotMode mode)
     case robotics::RobotMode::Disconnected: return "Disconnected";
     case robotics::RobotMode::Idle: return "Idle";
     case robotics::RobotMode::Moving: return "Moving";
+    case robotics::RobotMode::Planning: return "Planning";
     case robotics::RobotMode::Stopped: return "Stopped";
     case robotics::RobotMode::Fault: return "Fault";
     }

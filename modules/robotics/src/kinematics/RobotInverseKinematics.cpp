@@ -118,65 +118,116 @@ CartesianPose DampedLeastSquaresIk::EvaluateTcp(const JointVector& jointPosition
 
 IkResult DampedLeastSquaresIk::SolveSingleSeed(const CartesianPose& targetInBase, const JointVector& currentSeed, const IkOptions& options)
 {
-    IkResult result;
-    result.positionErrorMeters = std::numeric_limits<double>::infinity();
-    result.orientationErrorRadians = std::numeric_limits<double>::infinity();
-    auto fail = [&](IkStatus status, const char* message) {
-        result.status = status;
-        result.message = message;
-        return result;
+    const SessionId session = BeginSingleSeed(targetInBase, currentSeed, options);
+    while (StepSingleSeed(session, options.maxIterations) == IkSessionState::Running) {}
+    return GetSingleSeedResult(session);
+}
+
+DampedLeastSquaresIk::SessionId DampedLeastSquaresIk::BeginSingleSeed(
+    const CartesianPose& targetInBase, const JointVector& currentSeed, const IkOptions& options)
+{
+    if (++nextSessionId_ == 0)
+        ++nextSessionId_;
+    activeSessionId_ = nextSessionId_;
+    sessionState_ = IkSessionState::Running;
+    sessionOptions_ = options;
+    sessionIteration_ = 0;
+    sessionDamping_ = options.damping;
+    sessionBoundaryBlocked_ = false;
+    sessionResult_ = {};
+    sessionResult_.positionErrorMeters = std::numeric_limits<double>::infinity();
+    sessionResult_.orientationErrorRadians = std::numeric_limits<double>::infinity();
+    const auto fail = [&](IkStatus status, const char* message) {
+        sessionResult_.status = status;
+        sessionResult_.message = message;
+        sessionState_ = IkSessionState::Completed;
     };
     if (currentSeed.size() != specification_.jointCount || options.maxIterations == 0 ||
         !Positive(options.positionToleranceMeters) || !Positive(options.orientationToleranceRadians) ||
         !Positive(options.damping) || !Positive(options.orientationWeightMetersPerRadian) || !Positive(options.maxJointStepRadians))
-        return fail(IkStatus::InvalidInput, "IK: invalid seed size or solver options");
+    {
+        fail(IkStatus::InvalidInput, "IK: invalid seed size or solver options");
+        return activeSessionId_;
+    }
     for (std::size_t i = 0; i < currentSeed.size(); ++i)
     {
         if (!std::isfinite(currentSeed[i]) || currentSeed[i] < specification_.joints[i].minPositionRadians ||
             currentSeed[i] > specification_.joints[i].maxPositionRadians)
-            return fail(IkStatus::InvalidInput, "IK: seed outside joint limits or non-finite");
+        {
+            fail(IkStatus::InvalidInput, "IK: seed outside joint limits or non-finite");
+            return activeSessionId_;
+        }
     }
-    Pose3 target;
-    try { target = FromCartesian(targetInBase); }
-    catch (const std::invalid_argument&) { return fail(IkStatus::InvalidInput, "IK: invalid target pose"); }
-    result.jointPositionRadians = currentSeed;
+    try { sessionTarget_ = FromCartesian(targetInBase); }
+    catch (const std::invalid_argument&)
+    {
+        fail(IkStatus::InvalidInput, "IK: invalid target pose");
+        return activeSessionId_;
+    }
+    sessionResult_.jointPositionRadians = currentSeed;
     if (!specification_.hasToolFrame)
-        return fail(IkStatus::MissingToolFrame, "IK: robot specification has no ToolFrame");
-    const double targetRadius = Length(Subtract(target.positionMeters, specification_.joints[0].bindPivotMeters));
+    {
+        fail(IkStatus::MissingToolFrame, "IK: robot specification has no ToolFrame");
+        return activeSessionId_;
+    }
+    const double targetRadius = Length(Subtract(sessionTarget_.positionMeters, specification_.joints[0].bindPivotMeters));
     if (!std::isfinite(targetRadius) || targetRadius > maximumReachMeters_ + options.positionToleranceMeters)
     {
-        result.status = IkStatus::Unreachable;
-        result.message = "IK: target radius " + std::to_string(targetRadius) +
+        sessionResult_.status = IkStatus::Unreachable;
+        sessionResult_.message = "IK: target radius " + std::to_string(targetRadius) +
             " m exceeds conservative robot reach " + std::to_string(maximumReachMeters_) + " m";
-        return result;
+        sessionState_ = IkSessionState::Completed;
+        return activeSessionId_;
     }
 
+    std::copy(currentSeed.begin(), currentSeed.end(), anglesScratch_.begin());
+    return activeSessionId_;
+}
+
+IkSessionState DampedLeastSquaresIk::StepSingleSeed(SessionId session, std::size_t iterationBudget)
+{
+    if (session != activeSessionId_)
+        throw std::invalid_argument("IK: session is no longer active");
+    if (sessionState_ != IkSessionState::Running || iterationBudget == 0)
+        return sessionState_;
+
     auto& angles = anglesScratch_;
-    std::copy(currentSeed.begin(), currentSeed.end(), angles.begin());
     auto& jointStep = jointStepScratch_;
     auto& candidate = candidateScratch_;
-    const double weight = options.orientationWeightMetersPerRadian;
-    double damping = options.damping;
-    bool boundaryBlocked = false;
     auto& columns = jacobianColumnsScratch_;
-    for (std::size_t iteration = 0; iteration <= options.maxIterations; ++iteration)
+    const auto finish = [&](IkStatus status, const char* message) {
+        sessionResult_.status = status;
+        sessionResult_.message = message;
+        sessionState_ = IkSessionState::Completed;
+    };
+    std::size_t iterationsUsed = 0;
+    while (sessionState_ == IkSessionState::Running && iterationsUsed < iterationBudget)
     {
         const auto& state = forward_.Update(angles);
         const Pose3 current = Compose(state.toolFrameInBaseFrame, tcpInToolFrame_);
-        const Error error = Measure(target, current, weight);
-        result.jointPositionRadians = angles;
-        result.iterations = iteration;
-        result.positionErrorMeters = error.position;
-        result.orientationErrorRadians = error.orientation;
-        if (error.position <= options.positionToleranceMeters && error.orientation <= options.orientationToleranceRadians)
+        const Error error = Measure(sessionTarget_, current, sessionOptions_.orientationWeightMetersPerRadian);
+        sessionResult_.jointPositionRadians = angles;
+        sessionResult_.iterations = sessionIteration_;
+        sessionResult_.positionErrorMeters = error.position;
+        sessionResult_.orientationErrorRadians = error.orientation;
+        if (error.position <= sessionOptions_.positionToleranceMeters &&
+            error.orientation <= sessionOptions_.orientationToleranceRadians)
         {
-            result.status = IkStatus::Success;
-            return result;
+            sessionResult_.status = IkStatus::Success;
+            sessionState_ = IkSessionState::Completed;
+            break;
         }
         if (!std::isfinite(error.cost))
-            return fail(IkStatus::InvalidInput, "IK: target or solver scaling exceeds numeric range");
-        if (iteration == options.maxIterations)
+        {
+            finish(IkStatus::InvalidInput, "IK: target or solver scaling exceeds numeric range");
             break;
+        }
+        if (sessionIteration_ == sessionOptions_.maxIterations)
+        {
+            finish(sessionBoundaryBlocked_ ? IkStatus::JointLimitReached : IkStatus::DidNotConverge,
+                sessionBoundaryBlocked_ ? "IK: iteration limit while constrained by joint limits" : "IK: iteration limit reached");
+            break;
+        }
 
         for (auto& column : columns)
             column.fill(0.0);
@@ -186,11 +237,14 @@ IkResult DampedLeastSquaresIk::SolveSingleSeed(const CartesianPose& targetInBase
         {
             const Vec3 axis = state.jointAxesInBaseFrame[i];
             const Vec3 linear = Cross(axis, Subtract(current.positionMeters, state.linkPosesInBaseFrame[i].positionMeters));
-            columns[i] = {linear.x, linear.y, linear.z, axis.x * weight, axis.y * weight, axis.z * weight};
+            columns[i] = {linear.x, linear.y, linear.z,
+                axis.x * sessionOptions_.orientationWeightMetersPerRadian,
+                axis.y * sessionOptions_.orientationWeightMetersPerRadian,
+                axis.z * sessionOptions_.orientationWeightMetersPerRadian};
         }
 
         bool improved = false;
-        boundaryBlocked = false;
+        sessionBoundaryBlocked_ = false;
         for (std::size_t attempt = 0; attempt < kMaximumDampingAttempts && !improved; ++attempt)
         {
             // Damped Least Squares는 Δq = Jᵀ (J Jᵀ + λ² I)⁻¹ e를 계산한다.
@@ -201,12 +255,12 @@ IkResult DampedLeastSquaresIk::SolveSingleSeed(const CartesianPose& targetInBase
                 for (std::size_t column = 0; column < 6; ++column)
                     for (const auto& jointColumn : columns)
                         normal[row][column] += jointColumn[row] * jointColumn[column];
-                normal[row][row] += damping * damping;
+                normal[row][row] += sessionDamping_ * sessionDamping_;
             }
             SixVector taskStep{};
             if (!SolveSystem(normal, error.weighted, taskStep))
             {
-                damping *= kSingularSystemDampingGrowth;
+                sessionDamping_ *= kSingularSystemDampingGrowth;
                 continue;
             }
             std::fill(jointStep.begin(), jointStep.end(), 0.0);
@@ -218,8 +272,12 @@ IkResult DampedLeastSquaresIk::SolveSingleSeed(const CartesianPose& targetInBase
                 largest = std::max(largest, std::abs(jointStep[i]));
             }
             if (!std::isfinite(largest))
-                return fail(IkStatus::DidNotConverge, "IK: non-finite numerical step");
-            const double stepScale = largest > options.maxJointStepRadians ? options.maxJointStepRadians / largest : 1.0;
+            {
+                finish(IkStatus::DidNotConverge, "IK: non-finite numerical step");
+                break;
+            }
+            const double stepScale = largest > sessionOptions_.maxJointStepRadians ?
+                sessionOptions_.maxJointStepRadians / largest : 1.0;
             for (std::size_t line = 0; line < kMaximumLineSearchSteps && !improved; ++line)
             {
                 const double fraction = stepScale * std::ldexp(1.0, -line);
@@ -236,28 +294,73 @@ IkResult DampedLeastSquaresIk::SolveSingleSeed(const CartesianPose& targetInBase
                         (angles[i] <= limits.minPositionRadians + boundaryTolerance && requested < limits.minPositionRadians) ||
                         (angles[i] >= limits.maxPositionRadians - boundaryTolerance && requested > limits.maxPositionRadians);
                 }
-                boundaryBlocked = boundaryBlocked || clippedAtActiveLimit;
-                const Error next = Measure(target, Compose(forward_.Update(candidate).toolFrameInBaseFrame, tcpInToolFrame_), weight);
+                sessionBoundaryBlocked_ = sessionBoundaryBlocked_ || clippedAtActiveLimit;
+                const Error next = Measure(sessionTarget_, Compose(forward_.Update(candidate).toolFrameInBaseFrame, tcpInToolFrame_),
+                    sessionOptions_.orientationWeightMetersPerRadian);
                 if (next.cost < error.cost)
                 {
                     angles.swap(candidate);
                     // 오차가 실제로 줄었으면 damping을 낮춰 특이 자세 근처의 작은 변화율도 더 정확히 따른다.
                     // 초기값을 항상 하한으로 쓰면 홈 자세의 손목처럼 거의 겹친 축에서 필요한 관절 변화가 지나치게 억제되어 도달 가능한 목표도 반복 한도에 막힐 수 있다.
                     // 초기값의 1%를 하한으로 남기고 maxJointStepRadians와 오차 감소 검사를 유지해 큰 관절 변화는 계속 제한한다.
-                    damping = std::max(options.damping * kMinimumDampingRatio,
-                        damping * kAcceptedStepDampingDecay);
+                    sessionDamping_ = std::max(sessionOptions_.damping * kMinimumDampingRatio,
+                        sessionDamping_ * kAcceptedStepDampingDecay);
                     improved = true;
                 }
             }
             if (!improved)
-                damping *= kRejectedStepDampingGrowth;
+                sessionDamping_ *= kRejectedStepDampingGrowth;
         }
+        if (sessionState_ != IkSessionState::Running)
+            break;
         if (!improved)
-            return fail(boundaryBlocked ? IkStatus::JointLimitReached : IkStatus::DidNotConverge,
-                boundaryBlocked ? "IK: joint limits block local improvement" : "IK: local iteration stalled");
+        {
+            finish(sessionBoundaryBlocked_ ? IkStatus::JointLimitReached : IkStatus::DidNotConverge,
+                sessionBoundaryBlocked_ ? "IK: joint limits block local improvement" : "IK: local iteration stalled");
+            break;
+        }
+        ++sessionIteration_;
+        ++iterationsUsed;
+        sessionResult_.iterations = sessionIteration_;
     }
-    return fail(boundaryBlocked ? IkStatus::JointLimitReached : IkStatus::DidNotConverge,
-        boundaryBlocked ? "IK: iteration limit while constrained by joint limits" : "IK: iteration limit reached");
+    if (sessionState_ == IkSessionState::Running && sessionIteration_ == sessionOptions_.maxIterations)
+    {
+        const auto& state = forward_.Update(angles);
+        const Error error = Measure(sessionTarget_, Compose(state.toolFrameInBaseFrame, tcpInToolFrame_),
+            sessionOptions_.orientationWeightMetersPerRadian);
+        sessionResult_.jointPositionRadians = angles;
+        sessionResult_.iterations = sessionIteration_;
+        sessionResult_.positionErrorMeters = error.position;
+        sessionResult_.orientationErrorRadians = error.orientation;
+        if (error.position <= sessionOptions_.positionToleranceMeters &&
+            error.orientation <= sessionOptions_.orientationToleranceRadians)
+        {
+            sessionResult_.status = IkStatus::Success;
+            sessionState_ = IkSessionState::Completed;
+        }
+        else
+            finish(sessionBoundaryBlocked_ ? IkStatus::JointLimitReached : IkStatus::DidNotConverge,
+                sessionBoundaryBlocked_ ? "IK: iteration limit while constrained by joint limits" : "IK: iteration limit reached");
+    }
+    return sessionState_;
+}
+
+void DampedLeastSquaresIk::CancelSingleSeed(SessionId session)
+{
+    if (session != activeSessionId_)
+        throw std::invalid_argument("IK: session is no longer active");
+    if (sessionState_ != IkSessionState::Running)
+        return;
+    sessionResult_.status = IkStatus::DidNotConverge;
+    sessionResult_.message = "IK: cancelled";
+    sessionState_ = IkSessionState::Cancelled;
+}
+
+const IkResult& DampedLeastSquaresIk::GetSingleSeedResult(SessionId session) const
+{
+    if (session != activeSessionId_)
+        throw std::invalid_argument("IK: session is no longer active");
+    return sessionResult_;
 }
 
 IkResult DampedLeastSquaresIk::Solve(

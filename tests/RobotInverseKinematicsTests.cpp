@@ -7,6 +7,7 @@
 #include <cmath>
 #include <gtest/gtest.h>
 #include <limits>
+#include <stdexcept>
 
 using namespace grasplink::robotics;
 using namespace grasplink::robotics::kinematics;
@@ -142,6 +143,87 @@ TEST(RobotInverseKinematicsTests, RoundTripsReachablePoseAndIgnoresQuaternionSig
     EXPECT_LT(OrientationDistance(signRecovered, target), 2e-4) << "sign-flipped orientation error";
 }
 
+TEST(RobotInverseKinematicsTests, IncrementalSingleSeedMatchesSynchronousResult)
+{
+    DampedLeastSquaresIk synchronous(models::hanwha::kHcr12a);
+    DampedLeastSquaresIk incremental(models::hanwha::kHcr12a);
+    const JointVector seed{0.2, -0.35, 0.3, 0.2, -0.25, 0.1};
+    const JointVector targetJoints{0.9, -0.2, 0.1, 0.45, -0.1, 0.35};
+    const CartesianPose target = synchronous.EvaluateTcp(targetJoints);
+    const IkResult expected = synchronous.SolveSingleSeed(target, seed);
+    ASSERT_EQ(expected.status, IkStatus::Success) << "the comparison target converges from the selected seed";
+    const auto session = incremental.BeginSingleSeed(target, seed);
+
+    EXPECT_EQ(incremental.StepSingleSeed(session, 0), IkSessionState::Running)
+        << "zero budget reports progress without running an iteration";
+    IkSessionState state = incremental.StepSingleSeed(session, 1);
+    EXPECT_EQ(state, IkSessionState::Running) << "one iteration can be yielded before the solve is complete";
+    while (state == IkSessionState::Running)
+        state = incremental.StepSingleSeed(session, 2);
+
+    const IkResult& actual = incremental.GetSingleSeedResult(session);
+    EXPECT_EQ(state, IkSessionState::Completed) << "the incremental session reaches a terminal state";
+    EXPECT_EQ(actual.status, expected.status) << "incremental and synchronous status match";
+    EXPECT_EQ(actual.iterations, expected.iterations) << "incremental and synchronous iteration counts match";
+    EXPECT_EQ(actual.message, expected.message) << "incremental and synchronous diagnostics match";
+    EXPECT_EQ(actual.jointPositionRadians.size(), expected.jointPositionRadians.size());
+    for (std::size_t joint = 0; joint < expected.jointPositionRadians.size(); ++joint)
+        EXPECT_DOUBLE_EQ(actual.jointPositionRadians[joint], expected.jointPositionRadians[joint])
+            << "incremental solve preserves the synchronous joint result";
+    EXPECT_DOUBLE_EQ(actual.positionErrorMeters, expected.positionErrorMeters);
+    EXPECT_DOUBLE_EQ(actual.orientationErrorRadians, expected.orientationErrorRadians);
+}
+
+TEST(RobotInverseKinematicsTests, IncrementalIterationCountRespectsEachStepBudgetAtLimit)
+{
+    DampedLeastSquaresIk inverse(models::hanwha::kHcr12a);
+    const JointVector seed{0.2, -0.35, 0.3, 0.2, -0.25, 0.1};
+    const JointVector targetJoints{0.9, -0.2, 0.1, 0.45, -0.1, 0.35};
+    const CartesianPose target = inverse.EvaluateTcp(targetJoints);
+    IkOptions options;
+    options.maxIterations = 2;
+    const auto session = inverse.BeginSingleSeed(target, seed, options);
+    IkSessionState state = IkSessionState::Running;
+    std::size_t calls = 0;
+
+    while (state == IkSessionState::Running && calls < options.maxIterations + 1)
+    {
+        const std::size_t before = inverse.GetSingleSeedResult(session).iterations;
+        state = inverse.StepSingleSeed(session, 1);
+        const std::size_t after = inverse.GetSingleSeedResult(session).iterations;
+        EXPECT_GE(after, before) << "reported solver work never moves backwards";
+        EXPECT_LE(after - before, 1u)
+            << "one incremental unit reports at most one completed DLS iteration";
+        EXPECT_LE(after, options.maxIterations)
+            << "reported work never exceeds the configured iteration boundary";
+        ++calls;
+    }
+
+    ASSERT_EQ(state, IkSessionState::Completed);
+    EXPECT_EQ(inverse.GetSingleSeedResult(session).iterations, options.maxIterations)
+        << "the final budgeted step publishes the exact max-iteration count";
+}
+
+TEST(RobotInverseKinematicsTests, IncrementalSingleSeedCanBeCancelledAndOldSessionsExpire)
+{
+    DampedLeastSquaresIk inverse(models::hanwha::kHcr12a);
+    const JointVector seed{0.2, -0.35, 0.3, 0.2, -0.25, 0.1};
+    const JointVector targetJoints{0.9, -0.2, 0.1, 0.45, -0.1, 0.35};
+    const CartesianPose target = inverse.EvaluateTcp(targetJoints);
+    const auto cancelledSession = inverse.BeginSingleSeed(target, seed);
+
+    ASSERT_EQ(inverse.StepSingleSeed(cancelledSession, 1), IkSessionState::Running);
+    inverse.CancelSingleSeed(cancelledSession);
+    EXPECT_EQ(inverse.StepSingleSeed(cancelledSession, 10), IkSessionState::Cancelled)
+        << "a cancelled session stays terminal";
+    EXPECT_EQ(inverse.GetSingleSeedResult(cancelledSession).message, "IK: cancelled");
+
+    const auto nextSession = inverse.BeginSingleSeed(target, seed);
+    EXPECT_THROW((void)inverse.StepSingleSeed(cancelledSession, 1), std::invalid_argument)
+        << "starting another seed invalidates the previous session identifier";
+    EXPECT_EQ(inverse.StepSingleSeed(nextSession, 1), IkSessionState::Running);
+}
+
 TEST(RobotInverseKinematicsTests, FallbackEscapesSingularSeedLocalMinimum)
 {
     DampedLeastSquaresIk inverse(models::hanwha::kHcr12a);
@@ -195,7 +277,7 @@ TEST(RobotInverseKinematicsTests, AppliesToolOffsetAndRejectsInvalidInputs)
     DampedLeastSquaresIk missingTool(withoutToolFrame);
     EXPECT_EQ(missingTool.Solve(offsetPose, {0.0}).status, IkStatus::MissingToolFrame)
         << "IK distinguishes a model without a ToolFrame";
-    EXPECT_THROW(missingTool.EvaluateTcp({0.0}), std::invalid_argument)
+    EXPECT_THROW((void)missingTool.EvaluateTcp({0.0}), std::invalid_argument)
         << "FK TCP evaluation rejects a missing ToolFrame";
 
     CartesianPose invalidTarget = offsetPose;

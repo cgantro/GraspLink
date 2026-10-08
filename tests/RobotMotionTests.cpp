@@ -134,14 +134,16 @@ void CheckMovePoseAndFailurePreservation()
     const RobotState beforeRejected = controller.GetState();
     const CartesianPose farTarget{{50.0, 0.0, 0.0}, {0.0, 0.0, 0.0, 1.0}};
     const Result unreachablePose = controller.MovePose(farTarget);
-    ASSERT_TRUE((unreachablePose.code == ErrorCode::Unreachable)) << "MovePose maps unreachable IK status";
+    ASSERT_TRUE((unreachablePose.code == ErrorCode::Unreachable))
+        << "MovePose maps unreachable IK status: " << unreachablePose.message;
     const RobotState afterRejectedPose = controller.GetState();
     ASSERT_TRUE((afterRejectedPose.jointPositionRadians == beforeRejected.jointPositionRadians &&
         afterRejectedPose.jointVelocityRadiansPerSecond == beforeRejected.jointVelocityRadiansPerSecond &&
         afterRejectedPose.mode == beforeRejected.mode)) << "failed MovePose preserves the active motion state";
     const Result unreachable = controller.MoveLinear(
         {farTarget, 0.05, 0.2});
-    ASSERT_TRUE((unreachable.code == ErrorCode::Unreachable)) << "unreachable replacement path is reported";
+    ASSERT_TRUE((unreachable.code == ErrorCode::Unreachable))
+        << "a line with a definitely unreachable endpoint is rejected early: " << unreachable.message;
     const RobotState afterRejected = controller.GetState();
     ASSERT_TRUE((afterRejected.jointPositionRadians == beforeRejected.jointPositionRadians &&
         afterRejected.jointVelocityRadiansPerSecond == beforeRejected.jointVelocityRadiansPerSecond &&
@@ -1083,6 +1085,104 @@ TEST(RobotMotion, LinearPathRejectsJointPathThatCannotMaintainTcpStraightness)
     CheckLinearPathRejectsJointPathThatCannotMaintainTcpStraightness();
 }
 TEST(RobotMotion, LinearPathAvoidsJ1ZeroDetourNearLimit) { CheckLinearPathAvoidsJ1ZeroDetourNearLimit(); }
+
+TEST(RobotMotion, IncrementalLinearPlanningDoesNotCommitBeforePathValidation)
+{
+    const auto& specification = grasplink::robotics::models::hanwha::kHcr12a;
+    SimRobotController controller(specification);
+    ASSERT_TRUE(controller.Connect());
+    const JointVector initial = controller.GetStateView().jointPositionRadians;
+    DampedLeastSquaresIk inverse(specification);
+    const JointVector targetJoints{0.12, -0.08, 0.06, 0.12, -0.04, 0.1};
+    LinearPathMoveCommand command;
+    command.targetPoses.push_back(inverse.EvaluateTcp(targetJoints));
+    std::size_t validityCalls = 0;
+    controller.SetJointStateValidityChecker([&](const JointVector&)
+    {
+        ++validityCalls;
+        return JointStateInvalidity::None;
+    });
+
+    ASSERT_TRUE(controller.BeginLinearPathPlanning(command));
+    ASSERT_TRUE(controller.IsMotionPlanning());
+    EXPECT_EQ(controller.GetStateView().mode, RobotMode::Planning);
+    for (std::size_t work = 0; work < 20000 && controller.IsMotionPlanning(); ++work)
+    {
+        controller.AdvanceMotionPlanning(1);
+        EXPECT_EQ(controller.GetStateView().jointPositionRadians, initial)
+            << "an incomplete path never changes the active joint state";
+    }
+
+    ASSERT_FALSE(controller.IsMotionPlanning());
+    const auto result = controller.TakeMotionPlanningResult();
+    ASSERT_TRUE(result.has_value());
+    ASSERT_TRUE(result.value());
+    EXPECT_GT(validityCalls, 0u);
+    EXPECT_EQ(controller.GetStateView().mode, RobotMode::Moving);
+    EXPECT_EQ(controller.GetStateView().jointPositionRadians, initial)
+        << "a validated path commits without teleporting the robot";
+}
+
+TEST(RobotMotion, ReplacingValidityCheckerCancelsInFlightPlan)
+{
+    const auto& specification = grasplink::robotics::models::hanwha::kHcr12a;
+    SimRobotController controller(specification);
+    ASSERT_TRUE(controller.Connect());
+    std::size_t oldCheckerCalls = 0;
+    controller.SetJointStateValidityChecker([&](const JointVector&)
+    {
+        ++oldCheckerCalls;
+        return JointStateInvalidity::None;
+    });
+    DampedLeastSquaresIk inverse(specification);
+    LinearPathMoveCommand command;
+    command.targetPoses.push_back(inverse.EvaluateTcp({0.12, -0.08, 0.06, 0.12, -0.04, 0.1}));
+
+    ASSERT_TRUE(controller.BeginLinearPathPlanning(command));
+    ASSERT_TRUE(controller.IsMotionPlanning());
+    for (std::size_t work = 0; work < 1000 && controller.IsMotionPlanning() && oldCheckerCalls == 0; ++work)
+        controller.AdvanceMotionPlanning(1);
+    ASSERT_GT(oldCheckerCalls, 0u);
+    const std::size_t callsBeforeReplacement = oldCheckerCalls;
+    controller.SetJointStateValidityChecker([](const JointVector&)
+    {
+        return JointStateInvalidity::EnvironmentCollision;
+    });
+
+    EXPECT_FALSE(controller.IsMotionPlanning());
+    EXPECT_EQ(controller.GetStateView().mode, RobotMode::Idle);
+    const auto cancelled = controller.TakeMotionPlanningResult();
+    ASSERT_TRUE(cancelled.has_value());
+    EXPECT_EQ(cancelled->code, ErrorCode::Cancelled);
+    EXPECT_EQ(controller.TakeMotionPlanningResult(), std::nullopt);
+    controller.AdvanceMotionPlanning(64);
+    EXPECT_EQ(oldCheckerCalls, callsBeforeReplacement)
+        << "a cancelled job never calls the replaced validity checker";
+}
+
+TEST(RobotMotion, ReconnectCancelsAndClearsInFlightPlan)
+{
+    const auto& specification = grasplink::robotics::models::hanwha::kHcr12a;
+    SimRobotController controller(specification);
+    ASSERT_TRUE(controller.Connect());
+    DampedLeastSquaresIk inverse(specification);
+    LinearPathMoveCommand command;
+    command.targetPoses.push_back(inverse.EvaluateTcp({0.12, -0.08, 0.06, 0.12, -0.04, 0.1}));
+    ASSERT_TRUE(controller.BeginLinearPathPlanning(command));
+    ASSERT_TRUE(controller.IsMotionPlanning());
+
+    ASSERT_TRUE(controller.Connect());
+
+    EXPECT_FALSE(controller.IsMotionPlanning());
+    EXPECT_EQ(controller.GetStateView().mode, RobotMode::Idle);
+    EXPECT_TRUE(controller.GetStateView().valid);
+    EXPECT_EQ(controller.GetStateView().jointPositionRadians, JointVector(6, 0.0));
+    EXPECT_EQ(controller.TakeMotionPlanningResult(), std::nullopt);
+    controller.AdvanceMotionPlanning(64);
+    EXPECT_EQ(controller.GetStateView().mode, RobotMode::Idle)
+        << "a plan from the previous connection cannot commit after reconnect";
+}
+
 TEST(RobotMotion, StopRetargetAndDisconnect) { CheckStopRetargetAndDisconnect(); }
 TEST(RobotMotion, ModelWithoutToolFrame) { CheckModelWithoutToolFrame(); }
 TEST(RobotMotion, UnreachableLineInteriorPreservesActiveJointMotion) { CheckUnreachableLineInteriorPreservesActiveJointMotion(); }

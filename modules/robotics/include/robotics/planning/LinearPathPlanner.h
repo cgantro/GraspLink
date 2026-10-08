@@ -8,6 +8,7 @@
 
 #include <cmath>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <vector>
 
@@ -19,8 +20,8 @@ inline kinematics::IkOptions PathIkOptions()
 {
     kinematics::IkOptions options;
     // 경로의 각 표본을 직선 목표에 충분히 가깝게 맞추도록 일반 IK보다 엄격한 오차를 사용한다.
-    options.positionToleranceMeters = 1e-7;
-    options.orientationToleranceRadians = 1e-6;
+    options.positionToleranceMeters = 1e-6;
+    options.orientationToleranceRadians = 1e-5;
     return options;
 }
 
@@ -81,6 +82,54 @@ struct LinearPathPlan
     double plannedLinearVelocity = 0.0;
     double plannedAngularVelocity = 0.0;
     bool hasMotion = false;
+    std::size_t ikSolveCount = 0;
+    std::size_t ikIterationCount = 0;
+    std::size_t tcpStraightnessChecks = 0;
+    std::size_t jointPathValidityChecks = 0;
+    std::size_t validityStateChecks = 0;
+    std::size_t tcpRefinementCount = 0;
+};
+
+enum class LinearPathPlanningState { Idle, Running, Completed, Failed, Cancelled };
+
+/**
+ * @brief 직선 TCP 경로를 여러 번의 짧은 호출로 나누어 계획한다.
+ * @details IK 반복과 관절 경로 검사를 호출한 스레드에서 수행한다. 상태 검사 함수가 Jolt나 ECS를 참조할 수 있으므로 이 객체와 검사 함수를 소유한 스레드에서 진행해야 한다.
+ * Robot 사양과 IK 계산기는 빌린 채 사용하므로 작업이 끝나거나 취소될 때까지 살아 있어야 한다.
+ */
+class LinearPathPlanningJob final
+{
+public:
+    LinearPathPlanningJob();
+    ~LinearPathPlanningJob();
+    LinearPathPlanningJob(LinearPathPlanningJob&&) noexcept;
+    LinearPathPlanningJob& operator=(LinearPathPlanningJob&&) noexcept;
+    LinearPathPlanningJob(const LinearPathPlanningJob&) = delete;
+    LinearPathPlanningJob& operator=(const LinearPathPlanningJob&) = delete;
+
+    Result Begin(const LinearPathMoveCommand& command,
+        const models::RobotSpecification& specification,
+        const JointVector& startJoints,
+        const CartesianPose& startTcp,
+        kinematics::DampedLeastSquaresIk& inverse,
+        const StateValidityChecker& stateValidityChecker,
+        const PlanningPolicy& policy = kDefaultPlanningPolicy);
+    /**
+     * @brief 지정한 작업 단위 수만큼 경로 계획을 진행한다.
+     * @details IK 반복 1회, TCP 직선성 검사 1회, 관절 경로 표본의 상태 검사 1회를 각각 작업 단위로 센다. 매 프레임에 작은 예산을 주면 계획이 렌더 루프를 오래 막지 않는다.
+     * @param workBudget 이번 호출에서 허용하는 최대 작업 단위 수다. 0이면 진행하지 않는다.
+     * @return 계획 중, 완료, 실패 또는 취소 상태다.
+     */
+    LinearPathPlanningState Advance(std::size_t workBudget);
+    void Cancel() noexcept;
+    [[nodiscard]] LinearPathPlanningState GetState() const noexcept;
+    [[nodiscard]] const Result& GetResult() const noexcept;
+    [[nodiscard]] const LinearPathPlan& GetPlan() const noexcept;
+    [[nodiscard]] std::optional<LinearPathPlan> TakePlan();
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
 };
 
 /** @brief 허용 관절 범위 안에서 기준 자세에 가장 가까운 2π 등가 목표각을 선택한다. */

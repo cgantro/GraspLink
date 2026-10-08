@@ -48,6 +48,7 @@ const char* ErrorCodeName(grasplink::robotics::ErrorCode code)
     case ErrorCode::NotConnected: return "Not connected";
     case ErrorCode::InvalidCommand: return "Invalid command";
     case ErrorCode::Busy: return "Busy";
+    case ErrorCode::Cancelled: return "Cancelled";
     case ErrorCode::Fault: return "Fault";
     case ErrorCode::Unsupported: return "Unsupported";
     case ErrorCode::TransportError: return "Transport error";
@@ -70,7 +71,8 @@ void GripperPanel::Draw(grasplink::robotics::IGripperController& gripper, const 
     ImGui::End();
 }
 
-void GripperPanel::DrawContents(grasplink::robotics::IGripperController& gripper, const grasplink::simulation::GripperGraspState* graspState)
+void GripperPanel::DrawContents(grasplink::robotics::IGripperController& gripper,
+    const grasplink::simulation::GripperGraspState* graspState, bool commandsEnabled)
 {
     using grasplink::robotics::GripperCommand;
     ImGui::SeparatorText("Gripper");
@@ -83,6 +85,7 @@ void GripperPanel::DrawContents(grasplink::robotics::IGripperController& gripper
     };
     ImGui::Text("Connection: %s", gripper.IsConnected() ? "Connected" : "Disconnected");
 
+    ImGui::BeginDisabled(!commandsEnabled);
     if (ImGui::Button("Open"))
     {
         submitClosure(0);
@@ -98,6 +101,7 @@ void GripperPanel::DrawContents(grasplink::robotics::IGripperController& gripper
         lastGripperResult = gripper.Stop();
         hasGripperResult = true;
     }
+    ImGui::EndDisabled();
 
     const grasplink::robotics::GripperState state = gripper.GetState();
     if (state.valid)

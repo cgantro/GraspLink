@@ -4,6 +4,7 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -54,6 +55,8 @@ struct IkResult
     explicit operator bool() const noexcept { return Ok(); }
 };
 
+enum class IkSessionState { Running, Completed, Cancelled };
+
 /**
  * @brief TCP 목표 위치·방향과 현재 관절각에서 목표 관절각을 찾는다.
  * @details IK(역기구학)는 공구 끝의 원하는 위치·방향을 만드는 관절각을 찾는 계산이고 FK는 관절각에서 그 자세를 구하는 계산이다.
@@ -66,6 +69,8 @@ struct IkResult
 class DampedLeastSquaresIk final
 {
 public:
+    using SessionId = std::uint64_t;
+
     /** @brief 사양과 ToolFrame 기준 TCP 고정 변환 [m], quaternion [w,x,y,z]를 검사해 계산기를 만든다. 잘못된 사양이나 변환에는 std::invalid_argument를 던진다. */
     explicit DampedLeastSquaresIk(const models::RobotSpecification& specification, models::Pose3 tcpInToolFrame = {});
 
@@ -86,6 +91,27 @@ public:
         const JointVector& seed, const IkOptions& options = {});
 
     /**
+     * @brief 한 관절각 시작점의 IK 계산을 시작하고 식별자를 반환한다.
+     * @details 한 번에 반복을 모두 수행하지 않으므로 호출자는 각 프레임에서 StepSingleSeed를 제한된 횟수만큼 호출할 수 있다.
+     * 같은 계산기에서 새 세션을 시작하면 이전 세션은 취소되며, 이 계산기는 기존처럼 동시에 여러 스레드에서 사용할 수 없다.
+     */
+    [[nodiscard]] SessionId BeginSingleSeed(const CartesianPose& targetInBase,
+        const JointVector& seed, const IkOptions& options = {});
+
+    /**
+     * @brief 지정한 반복 횟수만큼 이어서 계산하고 현재 세션 상태를 반환한다.
+     * @param session 세션 식별자다. 새 세션을 시작한 뒤에는 이전 식별자를 사용할 수 없다.
+     * @param iterationBudget 이번 호출에서 수행할 DLS 갱신 반복의 최대 횟수다. 0이면 상태만 반환한다.
+     */
+    [[nodiscard]] IkSessionState StepSingleSeed(SessionId session, std::size_t iterationBudget);
+
+    /** @brief 계산 중인 세션을 중단한다. 이미 끝난 세션은 결과를 바꾸지 않는다. */
+    void CancelSingleSeed(SessionId session);
+
+    /** @brief 진행 중이거나 끝난 세션의 현재 결과를 읽는다. 새 세션을 시작하면 이전 결과는 더 이상 유효하지 않다. */
+    [[nodiscard]] const IkResult& GetSingleSeedResult(SessionId session) const;
+
+    /**
      * @brief 관절각의 FK에 TCP offset을 적용해 Robot base 기준 TCP 자세를 계산한다.
      * @param jointPositionRadians 사양 순서의 관절각 [rad]다. FK와 같이 이 함수 자체는 관절 한계를 검사하지 않는다.
      * @return 모델로 계산한 TCP 위치 [m]와 quaternion [x,y,z,w]다. 물리 장치에서 측정한 feedback은 아니다.
@@ -102,5 +128,14 @@ private:
     JointVector candidateScratch_;
     std::vector<std::array<double, 6>> jacobianColumnsScratch_;
     double maximumReachMeters_ = 0.0;
+    models::Pose3 sessionTarget_;
+    IkOptions sessionOptions_;
+    IkResult sessionResult_;
+    SessionId nextSessionId_ = 0;
+    SessionId activeSessionId_ = 0;
+    std::size_t sessionIteration_ = 0;
+    double sessionDamping_ = 0.0;
+    bool sessionBoundaryBlocked_ = false;
+    IkSessionState sessionState_ = IkSessionState::Cancelled;
 };
 }
