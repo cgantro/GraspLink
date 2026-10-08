@@ -49,7 +49,7 @@ IRobotController
 
 `RobotKinematics` is the shared source of robot pose. It derives parent-relative offsets from consecutive base-frame bind pivots and accumulates joint rotations for the serial chain. Viewer and Physics consume the same result instead of separately interpreting joint axes and angles. Robotics model data uses plain scalar/vector/quaternion types and does not depend on GLM, Flecs, or Jolt.
 
-FK는 모델에 ToolFrame이 있으면 `toolFrameInBaseFrame`을 제공한다. `DampedLeastSquaresIk`는 ToolFrame에 고정 공구 변환을 더해 TCP 목표를 만드는 관절각을 계산한다. `SimRobotController::MovePose`는 이를 `MoveJoint`로 연결하고 `MoveLinear`은 TCP의 직선 위치와 최단 회전 경로를 따라간다. `tcpPoseValid=true`인 시뮬레이션 상태는 Robot base 기준 모델 FK 결과이며 실제 장치 측정값이 아니다. 가속도 제한, Hardware Gripper backend와 관절 동역학은 구현하지 않았다. 상세 계약은 [로봇 이동과 파지](ROBOT_MOTION_AND_GRASP.md)를 참고한다.
+FK는 모델에 ToolFrame이 있으면 `toolFrameInBaseFrame`을 제공한다. `DampedLeastSquaresIk`는 ToolFrame에 고정 공구 변환을 더해 TCP 목표를 만드는 관절각을 계산한다. `SimRobotController::MovePose`는 이를 `MoveJoint`로 연결하고 `MoveLinear`은 TCP의 직선 위치와 최단 회전 경로를 따라간다. `tcpPoseValid=true`인 시뮬레이션 상태는 Robot base 기준 모델 FK 결과이며 실제 장치 측정값이 아니다. 관절과 TCP의 속도·가속도는 시뮬레이션 궤적 정책으로 제한하지만, 로봇 토크·질량·관성 기반 동역학은 구현하지 않았다. Hardware Gripper backend도 구현하지 않았다. 상세 계약은 [로봇 이동과 파지](ROBOT_MOTION_AND_GRASP.md)를 참고한다.
 
 `RobotTransformAdapter`는 계산한 자세를 GLB 관절 계층에 적용한다. `RobotPhysicsAdapter`는 연결된 GLB 메시에서 각 링크의 Convex Hull을 만들고, 그리퍼 형상은 별도 설정 함수가 처리한다. Robot base에도 고정 Environment 충돌 형상을 둔다. `ConfigureTwoF85Colliders`는 GLB 메시를 축약한 hull로 Gripper-layer Kinematic proxy 7개를 만들며, 각 proxy의 위치는 소유 body 또는 joint를 기준으로 둔다. Robot과 Gripper의 충돌 프록시는 Kinematic이며 관절 동역학은 계산하지 않는다.
 

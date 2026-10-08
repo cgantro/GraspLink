@@ -4,8 +4,10 @@
 #include "scene/Scene.h"
 #include "physics/PhysicsWorld.h"
 #include "simulation/components/PhysicsComponents.h"
+#include "simulation/components/RobotCollisionProxy.h"
 #include "simulation/robotics/RobotPhysicsAdapter.h"
 #include "simulation/robotics/RobotCollisionGeometryBuilder.h"
+#include "simulation/robotics/RobotSelfCollisionPolicy.h"
 #include "simulation/systems/PhysicsSystemModule.h"
 #include "scene/TransformSystemModule.h"
 #include "TestSupport.h"
@@ -15,6 +17,8 @@
 #include <iostream>
 #include <filesystem>
 #include <memory>
+#include <utility>
+#include <vector>
 
 namespace
 {
@@ -134,6 +138,42 @@ TEST(RobotCollisionGeometry, SyntheticModelBuildsIndependentFkProxies)
     CheckSyntheticGeometry();
 }
 
+TEST(RobotCollisionGeometry, AllowedCollisionMatrixExcludesOnlyConnectedPairs)
+{
+    using namespace grasplink::simulation::robotics;
+    EXPECT_TRUE(IsAllowedSelfCollision(
+        {SelfCollisionPart::Link, 2}, {SelfCollisionPart::Link, 3}));
+    EXPECT_FALSE(IsAllowedSelfCollision(
+        {SelfCollisionPart::Link, 1}, {SelfCollisionPart::Link, 3}));
+    EXPECT_TRUE(IsAllowedSelfCollision(
+        {SelfCollisionPart::Base, 0}, {SelfCollisionPart::Link, 0}));
+    EXPECT_FALSE(IsAllowedSelfCollision(
+        {SelfCollisionPart::Base, 0}, {SelfCollisionPart::Link, 1}));
+    EXPECT_TRUE(IsAllowedSelfCollision(
+        {SelfCollisionPart::Link, 5}, {SelfCollisionPart::GripperBody, 0}));
+    EXPECT_FALSE(IsAllowedSelfCollision(
+        {SelfCollisionPart::Link, 4}, {SelfCollisionPart::GripperBody, 0}));
+    EXPECT_FALSE(IsAllowedSelfCollision(
+        {SelfCollisionPart::Link, static_cast<std::size_t>(-1)},
+        {SelfCollisionPart::Link, static_cast<std::size_t>(-1)}));
+
+    grasplink::physics::PhysicsWorld physics;
+    grasplink::physics::BodyDescription first;
+    first.motionType = grasplink::physics::BodyMotionType::Kinematic;
+    first.collisionLayer = grasplink::physics::CollisionLayer::Robot;
+    first.shapes.push_back(grasplink::physics::CollisionShapeDescription{});
+    const auto firstBody = physics.CreateBody(first);
+    const auto secondBody = physics.CreateBody(first);
+    EXPECT_TRUE(IsAllowedSelfCollision(
+        {SelfCollisionPart::Link, 1}, {SelfCollisionPart::Link, 2}))
+        << "adjacent robot links are excluded from self-collision rejection";
+    EXPECT_FALSE(IsAllowedSelfCollision(
+        {SelfCollisionPart::Link, 1}, {SelfCollisionPart::Link, 3}));
+    EXPECT_TRUE(physics.OverlapsBodiesAt(
+        firstBody, first.transform, secondBody, first.transform))
+        << "an overlapping non-adjacent pair remains detectable by the narrow-phase query";
+}
+
 TEST(RobotCollisionGeometry, Hcr12aBaseAndArmProxiesPassOverlapValidation)
 {
     using namespace grasplink::robotics;
@@ -183,6 +223,46 @@ TEST(RobotCollisionGeometry, Hcr12aBaseAndArmProxiesPassOverlapValidation)
         "home Link1 intersects Base at their modeled bearing");
     ASSERT_TRUE_MESSAGE(!physics.OverlapsEnvironmentAt(link1Body, link1Pose, baseBody),
         "home Link1 passes validation when only its exact adjacent Base body is excluded");
+
+    std::vector<std::pair<grasplink::simulation::robotics::SelfCollisionIdentity,
+        std::pair<Entity, grasplink::physics::PhysicsBodyHandle>>> selfCollisionProxies;
+    for (Entity proxy : actualRoot.GetChildren())
+    {
+        if (proxy == baseProxy)
+        {
+            selfCollisionProxies.push_back({
+                {grasplink::simulation::robotics::SelfCollisionPart::Base, 0},
+                {proxy, baseBody}});
+            continue;
+        }
+        if (!proxy.Has<RobotCollisionProxy>())
+            continue;
+        const auto handle = physicsSystem.GetBodyHandle(proxy.GetHandle());
+        ASSERT_TRUE_MESSAGE(physics.IsBodyValid(handle), "each HCR link has a body for self-collision validation");
+        selfCollisionProxies.push_back({
+            {grasplink::simulation::robotics::SelfCollisionPart::Link,
+                proxy.Get<RobotCollisionProxy>().linkIndex},
+            {proxy, handle}});
+    }
+    for (std::size_t first = 0; first < selfCollisionProxies.size(); ++first)
+    {
+        for (std::size_t second = first + 1; second < selfCollisionProxies.size(); ++second)
+        {
+            const auto& left = selfCollisionProxies[first];
+            const auto& right = selfCollisionProxies[second];
+            if (grasplink::simulation::robotics::IsAllowedSelfCollision(left.first, right.first))
+                continue;
+            const glm::mat4 leftMatrix = left.second.first.GetWorldMatrix();
+            const glm::mat4 rightMatrix = right.second.first.GetWorldMatrix();
+            const grasplink::physics::Transform leftPose{
+                glm::vec3(leftMatrix[3]), glm::normalize(glm::quat_cast(glm::mat3(leftMatrix)))};
+            const grasplink::physics::Transform rightPose{
+                glm::vec3(rightMatrix[3]), glm::normalize(glm::quat_cast(glm::mat3(rightMatrix)))};
+            ASSERT_FALSE(physics.OverlapsBodiesAt(
+                left.second.second, leftPose, right.second.second, rightPose))
+                << "known HCR home posture has no overlap between non-allowed link pairs";
+        }
+    }
 
     for (const auto& proxy : actualRoot.GetChildren())
     {

@@ -141,6 +141,7 @@ void RuntimeLinearPathStress(benchmark::State& state)
     std::uint64_t runtimeIkFaults = 0;
     std::uint64_t timeouts = 0;
     std::uint64_t completed = 0;
+    std::uint64_t validityCheckerCalls = 0;
     std::string lastPlannerRejection;
 
     for (auto _ : state)
@@ -154,6 +155,11 @@ void RuntimeLinearPathStress(benchmark::State& state)
                 state.SkipWithError("SimRobotController could not connect");
                 return;
             }
+            controller.SetJointStateValidityChecker([&validityCheckerCalls](const JointVector&)
+            {
+                ++validityCheckerCalls;
+                return JointStateInvalidity::None;
+            });
 
             LinearPathMoveCommand command;
             command.targetPoses.push_back(testCase.targetPose);
@@ -228,6 +234,9 @@ void RuntimeLinearPathStress(benchmark::State& state)
     state.counters["runtime_ik_faults"] = static_cast<double>(runtimeIkFaults);
     state.counters["timeouts"] = static_cast<double>(timeouts);
     state.counters["completed"] = static_cast<double>(completed);
+    state.counters["validity_checker_calls"] = static_cast<double>(validityCheckerCalls);
+    state.counters["validity_checks_per_case"] = totalCases > 0.0 ?
+        static_cast<double>(validityCheckerCalls) / totalCases : 0.0;
     if (!lastPlannerRejection.empty())
         state.SetLabel(lastPlannerRejection);
     state.SetItemsProcessed(static_cast<std::int64_t>(totalCases));

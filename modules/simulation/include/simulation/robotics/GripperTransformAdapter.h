@@ -5,6 +5,7 @@
 #include "robotics/models/GripperSpecification.h"
 
 #include <vector>
+#include <glm/glm.hpp>
 
 namespace grasplink::simulation::robotics
 {
@@ -40,6 +41,16 @@ public:
      */
     void Apply(const ::grasplink::robotics::kinematics::GripperKinematicState& state);
 
+    /**
+     * @brief 그리퍼 관절 상태와 후보 Gripper 월드 변환으로 프록시들의 월드 변환을 계산한다.
+     * @details 결과는 입력 Entity 순서와 같으며, 장면의 관절이나 월드 변환은 변경하지 않는다.
+     */
+    void BuildCandidateWorldTransforms(
+        const ::grasplink::robotics::kinematics::GripperKinematicState& state,
+        const glm::mat4& gripperRootWorldTransform,
+        const std::vector<grasplink::scene::Entity>& targets,
+        std::vector<glm::mat4>& output);
+
 private:
     struct JointBinding
     {
@@ -53,6 +64,8 @@ private:
     std::vector<JointBinding> joints_;
     // 입력 확인과 계산이 끝날 때까지 새 관절 방향을 임시 저장한다. 매 4 ms 갱신에서 메모리를 다시 할당하지 않는다.
     std::vector<glm::quat> preparedRotations_;
+
+    void PrepareRotations(const ::grasplink::robotics::kinematics::GripperKinematicState& state);
 };
 
 } // namespace grasplink::simulation::robotics

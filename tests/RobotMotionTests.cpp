@@ -16,6 +16,18 @@ using namespace grasplink::robotics::planning;
 using grasplink::robotics::backends::simulation::SimRobotController;
 using grasplink::robotics::kinematics::DampedLeastSquaresIk;
 
+namespace grasplink::robotics::backends::simulation
+{
+struct SimRobotControllerTestAccess
+{
+    static bool ReorientForLinear(SimRobotController& controller, double availableSeconds)
+    {
+        return controller.ReorientForLinear(
+            controller.linearPath_[controller.linearSegment_].joints, availableSeconds);
+    }
+};
+} // namespace grasplink::robotics::backends::simulation
+
 namespace
 {
 double PositionDistance(const CartesianPose& left, const CartesianPose& right)
@@ -274,6 +286,189 @@ void CheckMoveJointRejectsInvalidPath()
         << "MoveJoint checks an intermediate state before the target";
     ASSERT_TRUE((controller.GetState().mode == RobotMode::Idle)) << "rejected path leaves the controller idle";
     ASSERT_NEAR(controller.GetState().jointPositionRadians[0], 0.0, 1e-12) << "rejected path leaves the current joints unchanged";
+}
+
+void CheckMoveJointExecutesTheValidatedJointPath()
+{
+    SimRobotController controller(models::hanwha::kHcr12a);
+    ASSERT_TRUE(static_cast<bool>(controller.Connect())) << "controller connects before synchronized joint motion";
+    std::size_t pathChecks = 0;
+    controller.SetJointStateValidityChecker([&](const JointVector& joints)
+    {
+        ++pathChecks;
+        return std::abs(joints[2] - 2.0 * joints[0]) <= 1e-9 ?
+            JointStateInvalidity::None : JointStateInvalidity::EnvironmentCollision;
+    });
+    JointVector target = controller.GetStateView().jointPositionRadians;
+    target[0] = 0.4;
+    target[2] = 0.8;
+    ASSERT_TRUE(static_cast<bool>(controller.MoveJoint({target, 1.0, 1.0}))) << "controller accepts a collision-free joint path";
+    ASSERT_GT(pathChecks, 0u) << "registered validity checker accepts points on the joint-space line";
+
+    bool sawIntermediateState = false;
+    for (int tick = 0; tick < 10000 && controller.GetStateView().mode == RobotMode::Moving; ++tick)
+    {
+        controller.Update(0.004);
+        const RobotState state = controller.GetStateView();
+        ASSERT_NEAR(state.jointPositionRadians[2], 2.0 * state.jointPositionRadians[0], 1e-10)
+            << "all joints use the same normalized progress as the validated joint-space line";
+        for (std::size_t joint = 0; joint < state.jointVelocityRadiansPerSecond.size(); ++joint)
+            ASSERT_LE(std::abs(state.jointVelocityRadiansPerSecond[joint]),
+                models::hanwha::kHcr12a.joints[joint].maxVelocityRadiansPerSecond + 1e-9)
+                << "synchronized joint motion respects each joint speed limit";
+        sawIntermediateState = sawIntermediateState || state.jointPositionRadians[0] > 0.0;
+    }
+
+    ASSERT_TRUE(sawIntermediateState) << "joint motion exposes intermediate synchronized states";
+    ASSERT_EQ(controller.GetStateView().mode, RobotMode::Idle) << "synchronized joint motion reaches its endpoint";
+    ASSERT_NEAR(controller.GetStateView().jointPositionRadians[0], target[0], 1e-12)
+        << "synchronized motion reaches the requested J1 target";
+    ASSERT_NEAR(controller.GetStateView().jointPositionRadians[2], target[2], 1e-12)
+        << "synchronized motion reaches the requested J3 target";
+}
+
+void CheckMoveJointAccelerationAndRetargetContinuity()
+{
+    using grasplink::robotics::backends::simulation::SimRobotController;
+    SimRobotController controller(models::hanwha::kHcr12a);
+    ASSERT_TRUE(static_cast<bool>(controller.Connect())) << "acceleration fixture connects";
+
+    JointVector target(6, 0.0);
+    target[0] = 1.0;
+    constexpr double accelerationScale = 0.5;
+    ASSERT_TRUE(static_cast<bool>(controller.MoveJoint({target, 1.0, accelerationScale})))
+        << "joint trajectory accepts its velocity and acceleration scales";
+
+    constexpr double dt = 0.004;
+    const double accelerationLimit = models::hanwha::kHcr12a.joints[0].maxVelocityRadiansPerSecond /
+        0.20 * accelerationScale;
+    double previousVelocity = 0.0;
+    for (int tick = 0; tick < 1000 && controller.GetStateView().mode == RobotMode::Moving; ++tick)
+    {
+        controller.Update(dt);
+        const double velocity = controller.GetStateView().jointVelocityRadiansPerSecond[0];
+        ASSERT_LE(std::abs(velocity), models::hanwha::kHcr12a.joints[0].maxVelocityRadiansPerSecond + 1e-9)
+            << "joint trajectory respects its maximum speed";
+        ASSERT_LE(std::abs(velocity - previousVelocity), accelerationLimit * dt + 1e-8)
+            << "joint trajectory applies the simulation acceleration policy";
+        previousVelocity = velocity;
+    }
+    ASSERT_EQ(controller.GetStateView().mode, RobotMode::Idle) << "accelerated move reaches its endpoint";
+    ASSERT_NEAR(controller.GetStateView().jointPositionRadians[0], target[0], 1e-12)
+        << "accelerated move reaches the exact requested angle";
+
+    target[0] = -0.5;
+    ASSERT_TRUE(static_cast<bool>(controller.MoveJoint({target, 1.0, accelerationScale})))
+        << "second move starts before retarget continuity is checked";
+    for (int tick = 0; tick < 20; ++tick)
+        controller.Update(dt);
+    const double velocityBeforeRetarget = controller.GetStateView().jointVelocityRadiansPerSecond[0];
+    target[0] = 0.4;
+    ASSERT_TRUE(static_cast<bool>(controller.MoveJoint({target, 1.0, accelerationScale})))
+        << "retarget is accepted after its post-braking path validates";
+    ASSERT_NEAR(controller.GetStateView().jointVelocityRadiansPerSecond[0], velocityBeforeRetarget, 1e-12)
+        << "accepting a retarget does not instantaneously change velocity";
+    previousVelocity = velocityBeforeRetarget;
+    for (int tick = 0; tick < 2000 && controller.GetStateView().mode == RobotMode::Moving; ++tick)
+    {
+        controller.Update(dt);
+        const double velocity = controller.GetStateView().jointVelocityRadiansPerSecond[0];
+        ASSERT_LE(std::abs(velocity - previousVelocity), accelerationLimit * dt + 1e-8)
+            << "braking and the replacement trajectory preserve the acceleration bound";
+        previousVelocity = velocity;
+    }
+    ASSERT_EQ(controller.GetStateView().mode, RobotMode::Idle) << "retargeted trajectory reaches its endpoint";
+    ASSERT_NEAR(controller.GetStateView().jointPositionRadians[0], target[0], 1e-12)
+        << "retargeted trajectory reaches the replacement angle";
+}
+
+void CheckShortJointMoveAndRejectedRetarget()
+{
+    SimRobotController controller(models::hanwha::kHcr12a);
+    ASSERT_TRUE(static_cast<bool>(controller.Connect())) << "short-move fixture connects";
+    JointVector target(6, 0.0);
+    target[0] = 0.005;
+    const double velocityLimit = models::hanwha::kHcr12a.joints[0].maxVelocityRadiansPerSecond;
+    ASSERT_TRUE(static_cast<bool>(controller.MoveJoint({target, 0.1, 0.5})))
+        << "short triangular move is accepted with a reduced speed cap";
+    double maximumObservedVelocity = 0.0;
+    for (int tick = 0; tick < 1000 && controller.GetStateView().mode == RobotMode::Moving; ++tick)
+    {
+        controller.Update(0.004);
+        maximumObservedVelocity = std::max(maximumObservedVelocity,
+            std::abs(controller.GetStateView().jointVelocityRadiansPerSecond[0]));
+    }
+    const double accelerationLimit = velocityLimit / 0.20 * 0.5;
+    ASSERT_LT(maximumObservedVelocity, velocityLimit * 0.1)
+        << "short travel uses a triangular profile and does not reach its speed ceiling";
+    ASSERT_NEAR(maximumObservedVelocity, std::sqrt(accelerationLimit * target[0]),
+        accelerationLimit * 0.004 + 1e-8)
+        << "peak speed follows the distance and acceleration limit, independent of velocityScale";
+    ASSERT_EQ(controller.GetStateView().mode, RobotMode::Idle) << "short triangular move completes";
+
+    controller.SetJointStateValidityChecker([](const JointVector& joints)
+    {
+        return joints[0] < -1e-9 ? JointStateInvalidity::EnvironmentCollision :
+            JointStateInvalidity::None;
+    });
+    target[0] = 0.8;
+    ASSERT_TRUE(static_cast<bool>(controller.MoveJoint({target, 1.0, 0.5})))
+        << "validated positive joint path starts";
+    controller.Update(0.08);
+    const RobotState beforeRejectedRetarget = controller.GetState();
+    JointVector rejectedTarget(6, 0.0);
+    rejectedTarget[0] = -0.5;
+    const Result rejected = controller.MoveJoint({rejectedTarget, 1.0, 0.5});
+    ASSERT_EQ(rejected.code, ErrorCode::EnvironmentContact)
+        << "retarget whose post-braking path crosses an invalid state is rejected";
+    const RobotState afterRejectedRetarget = controller.GetState();
+    ASSERT_EQ(afterRejectedRetarget.mode, beforeRejectedRetarget.mode)
+        << "rejected retarget preserves the active motion";
+    ASSERT_EQ(afterRejectedRetarget.jointPositionRadians, beforeRejectedRetarget.jointPositionRadians)
+        << "rejected retarget does not alter the current position";
+    ASSERT_EQ(afterRejectedRetarget.jointVelocityRadiansPerSecond,
+        beforeRejectedRetarget.jointVelocityRadiansPerSecond)
+        << "rejected retarget does not alter the current velocity";
+}
+
+void CheckLinearReorientationRejectsInvalidJointPath()
+{
+    const models::Pose3 tcpOffset{{0.04, 0.0, 0.0}, {}};
+    DampedLeastSquaresIk inverse(models::hanwha::kHcr12a, tcpOffset);
+    SimRobotController controller(models::hanwha::kHcr12a, tcpOffset);
+    ASSERT_TRUE(static_cast<bool>(controller.Connect())) << "reorientation fixture connects";
+    bool rejectRuntimeCandidate = false;
+    std::size_t checkerCalls = 0;
+    controller.SetJointStateValidityChecker([&](const JointVector&)
+    {
+        ++checkerCalls;
+        return rejectRuntimeCandidate ? JointStateInvalidity::EnvironmentCollision : JointStateInvalidity::None;
+    });
+    const JointVector targetJoints{0.15, -0.4, 0.25, 0.1, -0.2, 0.1};
+    LinearMoveCommand command;
+    command.targetPose = inverse.EvaluateTcp(targetJoints);
+    command.maxLinearVelocityMetersPerSecond = 0.1;
+    command.maxAngularVelocityRadiansPerSecond = 0.5;
+    ASSERT_TRUE(static_cast<bool>(controller.MoveLinear(command))) << "reorientation fixture plans with a permissive checker";
+    ASSERT_GT(checkerCalls, 0u) << "planner validates the accepted line path";
+    const CartesianPose pathStart = inverse.EvaluateTcp(controller.GetStateView().jointPositionRadians);
+    const std::size_t checksAfterPlanning = checkerCalls;
+    const bool validReorientation = grasplink::robotics::backends::simulation::SimRobotControllerTestAccess::ReorientForLinear(
+        controller, 10.0);
+    ASSERT_TRUE(validReorientation) << "runtime reorientation accepts a valid joint path that preserves the current TCP line pose";
+    ASSERT_GT(checkerCalls, checksAfterPlanning) << "runtime reorientation checks its candidate joint path";
+    ASSERT_LT(PositionDistance(controller.GetStateView().tcpPose, pathStart), 1e-6)
+        << "accepted reorientation remains at the current Cartesian path pose";
+    const JointVector originalJoints = controller.GetStateView().jointPositionRadians;
+    rejectRuntimeCandidate = true;
+
+    const bool accepted = grasplink::robotics::backends::simulation::SimRobotControllerTestAccess::ReorientForLinear(
+        controller, 10.0);
+
+    ASSERT_FALSE(accepted) << "runtime reorientation rejects candidates blocked by the registered checker";
+    ASSERT_GT(checkerCalls, 1u) << "runtime reorientation checks candidate paths with the registered checker";
+    ASSERT_EQ(controller.GetStateView().jointPositionRadians, originalJoints)
+        << "rejected reorientation leaves the current joint state unchanged";
 }
 
 void CheckEnvironmentCollisionCanBeRetried()
@@ -681,7 +876,32 @@ void CheckLinearPathKeepsJ1BranchContinuous()
     ASSERT_TRUE((OrientationDistance(finalState.tcpPose, target) < 2e-4)) << "continuous J1 branch still reaches the target TCP orientation";
 }
 
-void CheckLinearPathRestartsAfterLocalIkStall()
+void CheckLinearPathExecutesRefinedTcpLine()
+{
+    const JointVector targetJoints{0.55, -0.8, 0.7, 0.45, -0.6, 0.3};
+    DampedLeastSquaresIk inverse(models::hanwha::kHcr12a);
+    SimRobotController controller(models::hanwha::kHcr12a);
+    ASSERT_TRUE((static_cast<bool>(controller.Connect()))) << "seed-restart line-path fixture connects at home";
+
+    LinearPathMoveCommand command;
+    command.targetPoses.push_back(inverse.EvaluateTcp(targetJoints));
+    command.maxLinearVelocityMetersPerSecond = 2.0;
+    command.maxAngularVelocityRadiansPerSecond = 8.0;
+    command.maxLinearAccelerationMetersPerSecondSquared = 30.0;
+    command.maxAngularAccelerationRadiansPerSecondSquared = 120.0;
+    const Result accepted = controller.MoveLinearPath(command);
+    ASSERT_TRUE((static_cast<bool>(accepted))) << "the planner accepts a reachable TCP line with refined joint samples: " + accepted.message;
+    ASSERT_TRUE(AdvanceUntilIdle(controller, 0.004)) << "the refined full path finishes without a runtime fault";
+    const RobotState finalState = controller.GetState();
+    ASSERT_TRUE(finalState.tcpPoseValid) << "completed line path reports a valid TCP pose";
+    ASSERT_LT(PositionDistance(finalState.tcpPose, command.targetPoses.back()), 2e-5)
+        << "the refined full path reaches its target position";
+    ASSERT_LT(OrientationDistance(finalState.tcpPose, command.targetPoses.back()), 2e-4)
+        << "the refined full path reaches its target orientation";
+
+}
+
+void CheckLinearPathRejectsJointPathThatCannotMaintainTcpStraightness()
 {
     constexpr double radiansPerDegree = 3.14159265358979323846 / 180.0;
     const JointVector targetJoints{
@@ -697,16 +917,18 @@ void CheckLinearPathRestartsAfterLocalIkStall()
     command.maxAngularVelocityRadiansPerSecond = 8.0;
     command.maxLinearAccelerationMetersPerSecondSquared = 30.0;
     command.maxAngularAccelerationRadiansPerSecondSquared = 120.0;
+    const RobotState before = controller.GetState();
     const Result accepted = controller.MoveLinearPath(command);
-    ASSERT_TRUE((static_cast<bool>(accepted))) << "deterministic restart seeds recover a reachable line-path sample: " + accepted.message;
-    ASSERT_TRUE(AdvanceUntilIdle(controller, 0.004)) << "restarted IK plan finishes without a runtime fault";
-    const RobotState finalState = controller.GetState();
-    ASSERT_TRUE(finalState.tcpPoseValid) << "completed line path reports a valid TCP pose";
-    ASSERT_LT(PositionDistance(finalState.tcpPose, command.targetPoses.back()), 2e-5)
-        << "restarted IK plan reaches its target position";
-    ASSERT_LT(OrientationDistance(finalState.tcpPose, command.targetPoses.back()), 2e-4)
-        << "restarted IK plan reaches its target orientation";
-
+    ASSERT_FALSE(static_cast<bool>(accepted))
+        << "the planner must reject a joint interpolation that cannot meet the TCP straightness contract";
+    ASSERT_EQ(accepted.code, ErrorCode::IkDidNotConverge)
+        << "bounded refinement reports the failed Cartesian path contract";
+    ASSERT_NE(accepted.message.find("TCP straightness error"), std::string::npos)
+        << "failure identifies the path error instead of accepting an invalid MoveLinear trajectory";
+    const RobotState after = controller.GetState();
+    ASSERT_EQ(after.mode, before.mode) << "failed full-path planning leaves controller mode unchanged";
+    ASSERT_EQ(after.jointPositionRadians, before.jointPositionRadians)
+        << "failed full-path planning leaves the robot posture unchanged";
 }
 
 void CheckLinearPathAvoidsJ1ZeroDetourNearLimit()
@@ -843,6 +1065,10 @@ TEST(RobotMotion, ExplicitWristUnwindPreservesZeroRepresentation) { CheckExplici
 TEST(RobotMotion, HomeSeedReachesFoldedValidPosture) { CheckHomeSeedCanReachFoldedButValidPosture(); }
 TEST(RobotMotion, JointStateValidityReasons) { CheckJointStateValidityReasons(); }
 TEST(RobotMotion, MoveJointRejectsInvalidPath) { CheckMoveJointRejectsInvalidPath(); }
+TEST(RobotMotion, MoveJointExecutesTheValidatedJointPath) { CheckMoveJointExecutesTheValidatedJointPath(); }
+TEST(RobotMotion, MoveJointAccelerationAndRetargetContinuity) { CheckMoveJointAccelerationAndRetargetContinuity(); }
+TEST(RobotMotion, ShortJointMoveAndRejectedRetarget) { CheckShortJointMoveAndRejectedRetarget(); }
+TEST(RobotMotion, LinearReorientationRejectsInvalidJointPath) { CheckLinearReorientationRejectsInvalidJointPath(); }
 TEST(RobotMotion, EnvironmentCollisionCanBeRetried) { CheckEnvironmentCollisionCanBeRetried(); }
 TEST(RobotMotion, CollisionAwareIkSelectsAnotherBranch) { CheckCollisionAwareIkSelectsAnotherBranch(); }
 TEST(RobotMotion, LinearPathAndVelocityBoundsAtFourMilliseconds) { CheckLinearPathAndVelocityBounds(0.004); }
@@ -851,7 +1077,11 @@ TEST(RobotMotion, MultiWaypointUsesOneMotionProfile) { CheckMultiWaypointUsesOne
 TEST(RobotMotion, JointLimitsSetLinearPathSpeed) { CheckJointLimitsSetLinearPathSpeed(); }
 TEST(RobotMotion, LinearPathFromHomeNearWristSingularity) { CheckLinearPathFromHomeNearWristSingularity(); }
 TEST(RobotMotion, LinearPathKeepsJ1BranchContinuous) { CheckLinearPathKeepsJ1BranchContinuous(); }
-TEST(RobotMotion, LinearPathRestartsAfterLocalIkStall) { CheckLinearPathRestartsAfterLocalIkStall(); }
+TEST(RobotMotion, LinearPathExecutesRefinedTcpLine) { CheckLinearPathExecutesRefinedTcpLine(); }
+TEST(RobotMotion, LinearPathRejectsJointPathThatCannotMaintainTcpStraightness)
+{
+    CheckLinearPathRejectsJointPathThatCannotMaintainTcpStraightness();
+}
 TEST(RobotMotion, LinearPathAvoidsJ1ZeroDetourNearLimit) { CheckLinearPathAvoidsJ1ZeroDetourNearLimit(); }
 TEST(RobotMotion, StopRetargetAndDisconnect) { CheckStopRetargetAndDisconnect(); }
 TEST(RobotMotion, ModelWithoutToolFrame) { CheckModelWithoutToolFrame(); }

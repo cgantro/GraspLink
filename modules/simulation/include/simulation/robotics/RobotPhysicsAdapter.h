@@ -3,6 +3,7 @@
 #include "scene/Entity.h"
 #include "model/ModelResource.h"
 #include "robotics/models/RobotSpecification.h"
+#include "physics/PhysicsTypes.h"
 
 #include <vector>
 
@@ -32,6 +33,12 @@ namespace grasplink::simulation
 class RobotPhysicsAdapter final
 {
 public:
+    struct CandidateWorldTransform
+    {
+        grasplink::scene::Entity entity;
+        glm::mat4 worldTransform{1.0F};
+    };
+
     /**
      * @brief 로봇 모델의 Link와 메시 연결을 확인한 뒤 Link별 충돌용 Entity를 Scene에 만든다.
      * @param scene 새 프록시 Entity를 소유하는 Scene.
@@ -55,6 +62,15 @@ public:
      * @throws std::runtime_error Scene이 없어 저장한 Entity 핸들을 찾지 못할 때 발생한다.
      */
     void Apply(const grasplink::robotics::kinematics::RobotKinematicState& state);
+
+    /**
+     * @brief FK 결과와 로봇 기준 Entity의 월드 변환으로 충돌 프록시의 후보 월드 변환을 계산한다.
+     * @details 이 함수는 Scene Entity를 변경하거나 TransformSystemModule을 실행하지 않는다.
+     */
+    void BuildCandidateWorldTransforms(
+        const grasplink::robotics::kinematics::RobotKinematicState& state,
+        const glm::mat4& robotRootWorldTransform,
+        std::vector<CandidateWorldTransform>& output) const;
 
 private:
     struct LinkBinding

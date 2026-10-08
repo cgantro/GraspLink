@@ -12,4 +12,8 @@ build-ninja-release/grasplink_robotics_benchmarks.exe --benchmark_filter=Runtime
 
 각 케이스의 TCP 목표는 관절 한계 안에 있는 관절값에서 FK로 만든다. `/64`와 `/256`은 한 번의 벤치마크 반복에서 생성하는 목표 수다. 결과에는 경로 계획 거절, 실행 중 Fault, 제한 시간 초과, 완료 수가 나온다. 각 결과의 label에는 마지막으로 거절된 경로의 TCP 샘플 번호와 IK 실패 이유가 표시된다. `planner_ik_limit_stalls`는 IK가 관절 경계에서 더 나아가지 못해 멈춘 횟수다. 이 값만으로 목표나 전체 경로가 도달 불가능하다거나, 시뮬레이션 중인 로봇 관절이 한계에 닿았다고 결론 내릴 수 없다. `planner_verified_joint_limit_violations`는 경로 관절값 검사에서 실제 범위 초과를 확인한 횟수다. `rejections_with_known_reachable_endpoints`는 실패한 경로 중 끝점이 합법 관절값에서 만들어져 도달 가능하다고 확인된 수다. 끝점에 도달할 수 있어도 그곳까지의 직선 TCP 경로 전체가 가능한지는 별도로 확인해야 한다.
 
+벤치마크 Controller에는 매 검증 호출을 세는 결정적 validity checker를 등록한다. `validity_checker_calls`는 이 callback이 호출된 총 횟수이며, `validity_checks_per_case`는 전체 케이스당 평균 호출 수다. Callback은 모든 상태를 유효하다고 반환하므로 실제 환경 충돌이나 Jolt collision query는 수행하지 않는다. 따라서 이 값은 상태 유효성 검사 경계의 호출량만 보여 주며 충돌 쿼리 횟수나 그 소요 시간을 뜻하지 않는다.
+
+실제 Viewer에서 Tracy 캡처를 시작하면 충돌 검증 구간은 `CollisionCandidateFK`, `CollisionCheck`, `SelfCollisionCheck`, `JoltEnvironmentOverlap`, `JoltPairShapeOverlap`으로 나뉘어 표시된다. `CollisionCandidateFK`는 Scene을 수정하지 않고 FK에서 Jolt 입력 변환까지 만드는 시간이며, 두 Jolt 구간은 각각 환경 형상과 로봇 형상 쌍을 실제 검사한 시간이다. `SelfCollisionCheck`에는 허용 충돌 행렬과 각 쌍 반복 비용도 포함된다.
+
 이 벤치마크는 경로 계획과 Controller 실행을 분리해 검사한다. Jolt 환경 충돌, 그리퍼 파지 조건, 전체 Pick-and-Place 임무는 포함하지 않으므로 벤치마크 완료율을 임무 성공률로 해석하면 안 된다.

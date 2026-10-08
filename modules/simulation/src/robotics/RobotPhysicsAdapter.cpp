@@ -3,10 +3,12 @@
 
 #include "robotics/kinematics/RobotKinematics.h"
 #include "scene/Scene.h"
+#include "scene/TransformSystemModule.h"
 #include "simulation/components/PhysicsComponents.h"
 #include "simulation/components/RobotCollisionProxy.h"
 
 #include <glm/gtx/quaternion.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
 #include <stdexcept>
 #include <string>
@@ -46,7 +48,7 @@ RobotPhysicsAdapter::RobotPhysicsAdapter(
         Entity entity = scene.CreateEntity(std::string(link.name) + "_CollisionProxy");
         // FK에서 나온 위치와 회전은 Robot base 기준이다. proxy를 robotRoot의 자식으로 두어 Scene에서 로봇에 설정한 배치 변환이 부모 계층을 통해 추가된다.
         entity.SetParent(robotRoot);
-        entity.Add<RobotCollisionProxy>()
+        entity.set<RobotCollisionProxy>(RobotCollisionProxy{i, link.jointIndex})
             .set<RigidBody>(RigidBody{
                 grasplink::physics::BodyMotionType::Kinematic,
                 grasplink::physics::CollisionLayer::Robot})
@@ -72,6 +74,42 @@ void RobotPhysicsAdapter::Apply(
         // base 기준 FK quaternion을 double 정밀도로 정규화한 뒤 Entity의 float quaternion에 저장한다.
         link.entity.SetLocalRotation(glm::quat{glm::normalize(glm::dquat{
             pose.rotation.w, pose.rotation.x, pose.rotation.y, pose.rotation.z})});
+    }
+}
+
+void RobotPhysicsAdapter::BuildCandidateWorldTransforms(
+    const grasplink::robotics::kinematics::RobotKinematicState& state,
+    const glm::mat4& robotRootWorldTransform,
+    std::vector<CandidateWorldTransform>& output) const
+{
+    output.clear();
+    output.reserve(links_.size() + (base_ ? 1U : 0U));
+    if (base_)
+    {
+        const glm::mat4 local = grasplink::scene::TransformSystemModule::ComposeLocalMatrix(
+            base_.GetLocalPosition(), base_.GetLocalRotation(), base_.GetLocalScale());
+        output.push_back({base_, robotRootWorldTransform * local});
+    }
+
+    for (const LinkBinding& link : links_)
+    {
+        if (!link.entity)
+            throw std::runtime_error("RobotPhysicsAdapter: robot Scene has been removed");
+        if (link.jointIndex >= state.linkPosesInBaseFrame.size())
+            throw std::invalid_argument("RobotPhysicsAdapter: LinkPose count mismatch");
+        const auto& pose = state.linkPosesInBaseFrame[link.jointIndex];
+        const glm::vec3 position{
+            static_cast<float>(pose.positionMeters.x),
+            static_cast<float>(pose.positionMeters.y),
+            static_cast<float>(pose.positionMeters.z)};
+        const glm::quat rotation = glm::normalize(glm::quat{
+            static_cast<float>(pose.rotation.w),
+            static_cast<float>(pose.rotation.x),
+            static_cast<float>(pose.rotation.y),
+            static_cast<float>(pose.rotation.z)});
+        const glm::mat4 local = glm::translate(glm::mat4{1.0F}, position) *
+            glm::mat4_cast(rotation);
+        output.push_back({link.entity, robotRootWorldTransform * local});
     }
 }
 }

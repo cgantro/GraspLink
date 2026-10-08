@@ -1,6 +1,7 @@
 #include "simulation/robotics/GripperTransformAdapter.h"
 
 #include "scene/TransformComponents.h"
+#include "scene/TransformSystemModule.h"
 
 #include <glm/gtx/quaternion.hpp>
 
@@ -158,6 +159,58 @@ GripperTransformAdapter::GripperTransformAdapter(
 void GripperTransformAdapter::Apply(
     const ::grasplink::robotics::kinematics::GripperKinematicState& state)
 {
+    PrepareRotations(state);
+    for (std::size_t i = 0; i < joints_.size(); ++i)
+        joints_[i].entity.SetLocalRotation(preparedRotations_[i]);
+}
+
+void GripperTransformAdapter::BuildCandidateWorldTransforms(
+    const ::grasplink::robotics::kinematics::GripperKinematicState& state,
+    const glm::mat4& gripperRootWorldTransform,
+    const std::vector<Entity>& targets,
+    std::vector<glm::mat4>& output)
+{
+    PrepareRotations(state);
+    output.clear();
+    output.reserve(targets.size());
+    std::vector<Entity> ancestry;
+    ancestry.reserve(16);
+    for (const Entity& target : targets)
+    {
+        ancestry.clear();
+        Entity current = target;
+        while (current && current != gripperRoot_)
+        {
+            ancestry.push_back(current);
+            current = current.GetParent();
+        }
+        if (!current)
+            throw std::runtime_error("GripperTransformAdapter: target is outside the Gripper hierarchy");
+
+        glm::mat4 worldTransform = gripperRootWorldTransform;
+        for (auto iterator = ancestry.rbegin(); iterator != ancestry.rend(); ++iterator)
+        {
+            const Entity& entity = *iterator;
+            ValidateLocalTransform(entity);
+            glm::quat localRotation = entity.GetLocalRotation();
+            for (std::size_t jointIndex = 0; jointIndex < joints_.size(); ++jointIndex)
+            {
+                if (joints_[jointIndex].entity == entity)
+                {
+                    localRotation = preparedRotations_[jointIndex];
+                    break;
+                }
+            }
+            worldTransform *= grasplink::scene::TransformSystemModule::ComposeLocalMatrix(
+                entity.GetLocalPosition(), localRotation, entity.GetLocalScale());
+        }
+        output.push_back(worldTransform);
+    }
+}
+
+void GripperTransformAdapter::PrepareRotations(
+    const ::grasplink::robotics::kinematics::GripperKinematicState& state)
+{
     if (!std::isfinite(state.masterAngleRadians) ||
         state.jointAnglesRadians.size() != joints_.size() ||
         state.jointLocalRotations.size() != joints_.size())
@@ -165,7 +218,6 @@ void GripperTransformAdapter::Apply(
     if (!gripperRoot_.IsValid())
         throw std::runtime_error("GripperTransformAdapter: Gripper Scene has been removed");
 
-    // 먼저 모든 관절 handle과 생성 시 저장한 부모 경로가 유지되는지 확인한다. 하나라도 재부모화되었으면 일부 관절에만 새 자세를 쓰지 않고 전체 적용을 중단한다.
     for (const JointBinding& binding : joints_)
         if (!IsSameHierarchy(binding.entity, binding.ancestry))
             throw std::runtime_error("GripperTransformAdapter: Gripper hierarchy changed or was removed");
@@ -180,16 +232,9 @@ void GripperTransformAdapter::Apply(
         if (!std::isfinite(rawDeltaLengthSquared) || rawDeltaLengthSquared <= 0.0)
             throw std::invalid_argument("GripperTransformAdapter: zero or invalid delta rotation");
         const glm::dquat delta = glm::normalize(rawDelta);
-
-        // 최종 Local 회전은 GLB에 저장된 bind 회전에 관절 Local delta를 오른쪽으로 곱한 값이다. 이 순서는 delta 축을 bind 기준으로 해석한다.
         const glm::dquat bind = glm::normalize(ToDoubleQuaternion(joints_[i].bindRotation));
         const glm::dquat result = glm::normalize(bind * delta);
         preparedRotations_[i] = Rotation{glm::quat{result}};
     }
-
-    // 모든 quaternion을 먼저 검증하고 정규화한 뒤에야 관절 Local 회전을 쓴다. Euler 각으로 바꾸지 않아 중간 변환에서 생길 수 있는 특이점도 피한다.
-    for (std::size_t i = 0; i < joints_.size(); ++i)
-        joints_[i].entity.SetLocalRotation(preparedRotations_[i]);
 }
-
 } // namespace grasplink::simulation::robotics

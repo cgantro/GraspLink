@@ -4,6 +4,7 @@
 #include "model/GltfLoader.h"
 #include "scene/TransformComponents.h"
 #include "robotics/backends/simulation/SimGripperController.h"
+#include "robotics/backends/simulation/SimRobotController.h"
 #include "robotics/kinematics/GripperKinematics.h"
 #include "robotics/kinematics/RobotKinematics.h"
 #include "robotics/models/hanwha/Hcr12a.h"
@@ -14,6 +15,8 @@
 #include "simulation/systems/PhysicsSystemModule.h"
 #include "scene/TransformSystemModule.h"
 #include "simulation/robotics/GripperTransformAdapter.h"
+#include "simulation/robotics/RobotEnvironmentCollisionGuard.h"
+#include "simulation/robotics/RobotPhysicsAdapter.h"
 #include "simulation/robotics/RobotTransformAdapter.h"
 
 #include <gtest/gtest.h>
@@ -411,6 +414,56 @@ void CheckPhysicalFollowing()
     }
     ASSERT_TRUE_MESSAGE(ghostCheck.GetLocalPosition().y < openSurfaceY - 0.2F, "scene cleanup leaves no stale gripper collision body");
 }
+
+void CheckCandidateValidationDoesNotChangeScene()
+{
+    Fixture fixture;
+    grasplink::simulation::RobotPhysicsAdapter armColliders(
+        *fixture.scene, fixture.robotRoot, models::hanwha::kHcr12a, fixture.model);
+    TransformSystemModule::UpdateWorldTransforms(fixture.world);
+    fixture.integration->Step(0.004);
+
+    backends::simulation::SimRobotController armController{models::hanwha::kHcr12a};
+    ASSERT_TRUE_MESSAGE(armController.Connect().Ok(), "arm controller connects before collision validation");
+    grasplink::simulation::robotics::RobotEnvironmentCollisionGuard collisionGuard{
+        armController, fixture.controller, fixture.armMath, *fixture.armAdapter,
+        armColliders, fixture.gripperMath, *fixture.gripperAdapter,
+        fixture.world, fixture.physics, *fixture.integration, fixture.robotRoot};
+
+    struct ScenePose
+    {
+        Entity entity;
+        glm::mat4 local;
+        glm::mat4 world;
+    };
+    std::vector<ScenePose> before;
+    std::vector<Entity> pending{Entity{fixture.scene->GetSceneRoot()}};
+    while (!pending.empty())
+    {
+        Entity entity = pending.back();
+        pending.pop_back();
+        before.push_back({entity,
+            TransformSystemModule::ComposeLocalMatrix(
+                entity.GetLocalPosition(), entity.GetLocalRotation(), entity.GetLocalScale()),
+            entity.GetWorldMatrix()});
+        const auto children = entity.GetChildren();
+        pending.insert(pending.end(), children.begin(), children.end());
+    }
+
+    JointMoveCommand command;
+    command.targetPositionRadians = armController.GetStateView().jointPositionRadians;
+    command.targetPositionRadians[0] = 0.1;
+    ASSERT_TRUE_MESSAGE(armController.MoveJoint(command).Ok(),
+        "a nearby collision-free command reaches the candidate state checker");
+    for (const ScenePose& pose : before)
+    {
+        RequireMatrix(TransformSystemModule::ComposeLocalMatrix(
+                pose.entity.GetLocalPosition(), pose.entity.GetLocalRotation(), pose.entity.GetLocalScale()),
+            pose.local, "candidate validation leaves every Scene local transform unchanged");
+        RequireMatrix(pose.entity.GetWorldMatrix(), pose.world,
+            "candidate validation leaves every Scene world transform unchanged");
+    }
+}
 }
 
 /** @brief 실제 GLB의 갈라진 관절 계층에서 연속 개폐가 화면 Entity와 Jolt 충돌 형상에 같은 자세로 반영되는지 확인한다. */
@@ -427,4 +480,9 @@ TEST(GripperPoseIntegration, MotionHierarchyAndAtomicPoseApplication)
 TEST(GripperPoseIntegration, ColliderFollowsGripperAndSceneCleanup)
 {
     CheckPhysicalFollowing();
+}
+
+TEST(GripperPoseIntegration, CandidateCollisionValidationLeavesSceneUnchanged)
+{
+    CheckCandidateValidationDoesNotChangeScene();
 }

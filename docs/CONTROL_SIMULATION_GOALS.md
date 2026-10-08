@@ -35,9 +35,9 @@ Kinematics / Physics / Viewer
    - model별 최대 속도 사용
    - 목표 각도를 즉시 적용하지 않고 시간에 따라 상태를 변화
    - `velocityScale`은 model 최대 속도에 대한 비율로 사용
-   - 현재 `accelerationScale`은 저장·검증만 하며 실제 가속도 제한이나 ramp는 적용하지 않는다.
-   - 제조사 최대 가속도 값이 확인되기 전에는 임의 상수를 실제 사양으로 취급하지 않음
-   - Simulation용 가속도 값이 필요하면 제조사 사양과 분리해서 관리
+   - `MoveJoint`는 모델 최대 관절 속도에서 유도한 Simulation 가속도 제한을 사용한다.
+   - `accelerationScale=1.0`일 때 최대 속도까지 걸리는 기본 시간은 0.20초이며 제조사 사양이 아니라 조정 가능한 시뮬레이터 정책이다.
+   - 목표를 다시 지정하면 기존 검증 관절 경로에서 감속한 뒤 새 경로를 시작한다.
 
 4. **Fixed Control Loop**
    - Rendering FPS와 제어 주기를 분리

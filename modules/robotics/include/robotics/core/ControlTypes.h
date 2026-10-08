@@ -82,7 +82,7 @@ struct JointMoveCommand
     /// 비율을 허용하는 범위와 적용 방식은 제어 구현마다 다르다. Simulation은 (0,1] 값에 모델 최대 각속도를 곱해 상한을 낮춘다.
     double velocityScale = 1.0;
 
-    /// 제어 구현별 해석이 다를 수 있다. Simulation은 값을 저장하지만 가속도 제한 계산에는 사용하지 않는다.
+    /// 제어 구현별 해석이 다를 수 있다. Simulation은 관절 최대 속도까지 도달하는 가속도 ramp 비율로 해석한다.
     double accelerationScale = 1.0;
 
     /// true이면 요청한 관절각에 2π를 더하거나 빼 현재 자세에 가까운 등가각으로 바꾸지 않는다. J6을 중앙 0 rad로 풀 때 사용한다.

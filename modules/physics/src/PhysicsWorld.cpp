@@ -14,12 +14,19 @@
 #include <Jolt/Physics/Collision/ContactListener.h>
 #include <Jolt/Physics/Collision/CollideShape.h>
 #include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
+#include <Jolt/Physics/Collision/TransformedShape.h>
 #include <Jolt/Physics/Constraints/FixedConstraint.h>
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayer.h>
 #include <Jolt/Physics/Collision/ObjectLayer.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
 #include <Jolt/Physics/Collision/Shape/MutableCompoundShape.h>
+
+#if GRASPLINK_ENABLE_TRACY
+#include <tracy/Tracy.hpp>
+#else
+#define ZoneScopedN(name) ((void)0)
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -768,6 +775,7 @@ bool PhysicsWorld::OverlapsEnvironmentAtImpl(
     const Transform& targetTransform,
     const PhysicsBodyHandle* ignoredEnvironmentBody) const
 {
+    ZoneScopedN("JoltEnvironmentOverlap");
     const JPH::BodyID bodyID = impl_->RequireBodyID(handle);
     ValidateTransform(targetTransform);
 
@@ -800,6 +808,53 @@ bool PhysicsWorld::OverlapsEnvironmentAtImpl(
         {},
         environmentOnly,
         bodyFilter);
+    return collector.HadHit();
+}
+
+bool PhysicsWorld::OverlapsBodiesAt(
+    PhysicsBodyHandle first,
+    const Transform& firstTransform,
+    PhysicsBodyHandle second,
+    const Transform& secondTransform) const
+{
+    ZoneScopedN("JoltPairShapeOverlap");
+    const JPH::BodyID firstId = impl_->RequireBodyID(first);
+    const JPH::BodyID secondId = impl_->RequireBodyID(second);
+    if (firstId == secondId)
+        return false;
+    ValidateTransform(firstTransform);
+    ValidateTransform(secondTransform);
+
+    const JPH::BodyID bodyIds[]{firstId, secondId};
+    JPH::BodyLockMultiRead lock(impl_->physicsSystem.GetBodyLockInterface(), bodyIds, 2);
+    const JPH::Body* firstBody = lock.GetBody(0);
+    const JPH::Body* secondBody = lock.GetBody(1);
+    if (firstBody == nullptr || secondBody == nullptr)
+        return false;
+
+    const JPH::Shape* firstShape = firstBody->GetShape();
+    const JPH::Shape* secondShape = secondBody->GetShape();
+    const JPH::Quat firstRotation = ToJoltRotation(glm::normalize(firstTransform.rotation));
+    const JPH::Quat secondRotation = ToJoltRotation(glm::normalize(secondTransform.rotation));
+    const JPH::RVec3 firstPosition = ToJoltPosition(firstTransform.position);
+    const JPH::RVec3 secondPosition = ToJoltPosition(secondTransform.position);
+    const JPH::RVec3 firstCenterOfMass = firstPosition + firstRotation * firstShape->GetCenterOfMass();
+    const JPH::RVec3 secondCenterOfMass = secondPosition + secondRotation * secondShape->GetCenterOfMass();
+
+    // Jolt의 기하 검사는 Body 쌍 필터를 거치지 않고 두 shape만 직접 비교하므로, 일반 물리 접촉에서 제외한 로봇 링크도 후보 자세 기준으로 검사할 수 있다.
+    const JPH::TransformedShape firstAtTarget{
+        firstCenterOfMass, firstRotation, firstShape, firstId};
+    const JPH::RMat44 secondAtTarget = JPH::RMat44::sRotationTranslation(
+        secondRotation, secondCenterOfMass);
+    JPH::CollideShapeSettings settings;
+    JPH::AnyHitCollisionCollector<JPH::CollideShapeCollector> collector;
+    firstAtTarget.CollideShape(
+        secondShape,
+        JPH::Vec3::sOne(),
+        secondAtTarget,
+        settings,
+        firstCenterOfMass,
+        collector);
     return collector.HadHit();
 }
 

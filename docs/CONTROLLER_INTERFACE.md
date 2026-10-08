@@ -106,9 +106,9 @@ Time            s
 ## Simulation backend
 
 `SimRobotController`는 `RobotSpecification`을 생성자에서 받고 모델의 joint count/limit/max velocity를 그대로 사용한다.
-Controller는 관절 목표를 검증하고, 관절 속도 제한과 TCP 목표 IK, 표본 기반 직선 경로 실행, Stop, 모델 기반 상태 제공을 담당한다. 관절 명령의 `accelerationScale`은 저장·검증하지만 관절 가속도 제한에는 적용하지 않는다.
+Controller는 관절 목표를 검증하고, 관절 속도·Simulation 가속 제한과 TCP 목표 IK, 표본 기반 직선 경로 실행, Stop, 모델 기반 상태 제공을 담당한다. `MoveJoint` 가속도는 모델 사양에 없는 제조사 한계를 가정하지 않도록 최대 관절 속도에서 유도한 Simulation 정책으로 제한한다. 기본 `accelerationScale=1.0`은 최대 속도까지 0.20초 동안 가속하는 설정이다.
 
-`MovePose`는 현재 관절각에서 DLS IK를 풀고 결과를 `MoveJoint`에 전달한다. `MoveLinear`은 목표 하나를 `MoveLinearPath`로 감싼다. Controller는 실행 전에 경로 표본의 IK를 계산하고, 고정 갱신에서는 저장한 관절 표본을 보간한다. TCP의 직선·회전 속도와 가속도 제한은 전체 경로 프로파일에 적용한다. 표본 추종이 속도 제한을 넘는 특이 자세에서만 TCP를 거의 고정하는 재정렬 IK를 시도한다. 목표는 Robot base 좌표 기준이다. 실패와 waypoint 처리 계약은 [로봇 이동과 파지](ROBOT_MOTION_AND_GRASP.md)를 참고한다.
+`MovePose`는 현재 관절각에서 DLS IK를 풀고 결과를 `MoveJoint`에 전달한다. `MoveLinear`은 목표 하나를 `MoveLinearPath`로 감싼다. Controller는 실행 전에 경로 표본의 IK 후보와 연결성을 계산하고, 표본 사이 관절 보간 중에도 FK TCP가 직선 경로 허용 오차를 지키는지 확인한다. 고정 갱신에서는 검증한 관절 표본을 보간한다. TCP의 직선·회전 속도와 가속도 제한은 전체 경로 프로파일에 적용한다. 표본 추종이 속도 제한을 넘는 특이 자세에서만 TCP를 거의 고정하는 재정렬 IK를 시도하며, 이 이동도 관절 경로와 TCP 오차를 검사한다. 목표는 Robot base 좌표 기준이다. 실패와 waypoint 처리 계약은 [로봇 이동과 파지](ROBOT_MOTION_AND_GRASP.md)를 참고한다.
 확인되지 않은 최대 가속도 값은 제조사 사양처럼 임의로 넣지 않는다.
 
 `SimGripperController`는 `GripperSpecification`을 빌리고 `SimGripperMotionSettings`를 값으로 보관한다. 연결 시 열린 위치로 초기화하며 활성화 뒤 유효한 raw 위치·속도·힘 요청을 수락한다. `GripperState.closureFraction`은 0=열림, 1=nominal closed인 연속 위치다. `valid`와 `closureFractionValid`를 함께 확인하며 `actualPosition` raw feedback은 표시용으로 반올림한다. `GripperMode`는 연결·활성화·이동·정지를 구분하고 `objectStatus`는 이동/목표 도달 분류를 제공한다.

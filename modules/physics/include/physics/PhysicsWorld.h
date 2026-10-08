@@ -127,6 +127,16 @@ public:
         PhysicsBodyHandle ignoredEnvironmentBody) const;
 
     /**
+     * @brief 두 Collider를 지정한 자세에 배치했을 때 서로 겹치는지 검사한다.
+     * @details 두 Body의 현재 Jolt 자세 대신 전달한 자세를 모두 사용하므로 FK 후보 자세의 자가 충돌을 검사할 수 있다.
+     */
+    [[nodiscard]] bool OverlapsBodiesAt(
+        PhysicsBodyHandle first,
+        const Transform& firstTransform,
+        PhysicsBodyHandle second,
+        const Transform& secondTransform) const;
+
+    /**
      * @brief Body를 지정한 World 위치와 회전에 즉시 배치한다. 이동 경로를 따라가지는 않는다.
      * @param handle 이 World에서 생성한 유효한 Body 핸들.
      * @param transform 목표 위치 [m]와 회전.

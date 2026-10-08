@@ -10,13 +10,16 @@
 namespace grasplink::robotics::backends::simulation
 {
 
+struct SimRobotControllerTestAccess;
+
 /**
  * @brief 목표 관절각을 향해 관절 위치와 속도를 계산하는 로봇 Simulation Controller다.
  * @details Controller는 관절 상태만 갱신하며 화면 메시, Scene Entity, 물리 Body는 직접 움직이지 않는다.
  * 앱은 RobotState를 RobotKinematics에 보내 FK를 계산한다.
  * FK는 관절각에서 Link 위치와 방향을 구하며 어댑터가 이 결과를 화면 계층에 적용한다.
- * 한 번의 Update에서 관절은 모델 최대 각속도에 velocityScale을 곱한 한계 안에서 목표를 향한다.
- * MoveJoint는 관절 가속도 제한을 적용하지 않는다.
+ * MoveJoint는 검증한 관절 공간 직선을 하나의 진행률로 따라가며, 가장 느린 관절에 맞춰 모든 관절을 동기화한다.
+ * 각 관절은 모델 최대 각속도에 velocityScale을 곱한 한계를 넘지 않는다.
+ * MoveJoint 가속도는 모델 사양에 없는 값을 장비 한계로 간주하지 않고, 최대 속도에 0.20초 동안 도달하는 Simulation 정책으로 제한한다.
  * 역기구학(IK)은 목표 TCP 위치에서 이를 만드는 관절각을 찾는 계산이다.
  * MovePose는 IK 결과를 MoveJoint에 보내며, 충돌 검사 함수를 등록하면 다른 시작각도 시험해 안전한 관절 해를 고른다.
  * MoveLinear은 TCP 직선 위치와 최단 회전 경로의 IK를 계산하고 각 경로 표본에서 안전한 해를 찾는다.
@@ -64,9 +67,10 @@ public:
      * @param command 사양과 같은 순서의 목표각 [rad]와 속도·가속도 비율이다.
      * @return 연결되지 않았거나 관절 수, 값, 비율, 범위가 잘못되면 오류를 반환한다.
      * @details 두 비율은 유한한 (0,1] 값이어야 한다.
-     * velocityScale은 모델 최대 각속도에 곱해 속도 상한을 정한다.
-     * accelerationScale은 보관만 하며 이 Simulation은 가속도 제한에 사용하지 않는다.
-     * 새 명령은 현재 목표를 교체한다.
+     * velocityScale은 모델 최대 각속도에 곱해 각 관절의 속도 상한을 정한다.
+     * 모든 관절은 같은 0..1 진행률을 공유하므로 충돌 검증 때 확인한 직선 관절 경로를 따라간다.
+     * accelerationScale은 최대 속도에 도달하는 Simulation ramp 시간을 조절한다. 기본값 1.0은 최대 속도까지 0.20초를 사용한다.
+     * 움직이는 중 새 목표를 받으면 검증된 기존 관절 경로에서 감속한 뒤 새 경로를 시작한다.
      * 성공은 목표를 받았다는 뜻이며 도달 여부는 GetState에서 확인한다.
      */
     Result MoveJoint(const JointMoveCommand& command) override;
@@ -75,7 +79,7 @@ public:
      * @brief Robot base 기준 TCP 목표를 IK로 관절각으로 바꾼 뒤 MoveJoint로 실행한다.
      * @param targetInBase TCP 위치 [m]와 quaternion [x,y,z,w]다. World 배치를 포함하지 않는다.
      * @param velocityScale 모델 최대 관절 각속도에 곱하는 유한한 (0,1] 비율이다.
-     * @param accelerationScale 유한한 (0,1] 비율이며 기존 MoveJoint와 같이 보관만 하고 가속도 제한에 쓰지 않는다.
+     * @param accelerationScale 유한한 (0,1] 비율이며 최대 속도까지의 Simulation ramp 시간을 조절한다.
      * @return IK와 명령 수락 결과다. 실패하면 기존 진행 목표와 현재 상태를 바꾸지 않는다.
      * @details 현재 자세를 먼저 IK 시작각으로 사용하고, 해나 관절 이동 경로가 충돌하면 다른 시작각을 시험한다.
      * 검사에 통과한 첫 해를 사용하며 모든 가능한 IK 해를 열거하지는 않는다.
@@ -124,10 +128,10 @@ public:
     /**
      * @brief 경과 시간 [s]만큼 각 관절을 목표각 쪽으로 움직인다.
      * @details 연결되고 Moving 상태이며 시간이 유한한 양수일 때만 적용한다.
-     * MoveJoint는 모델 최대 각속도 × velocityScale × dtSeconds 안에서 각 관절을 목표각으로 진행시킨다.
+     * MoveJoint는 검증한 관절 공간 직선을 따라 공유 진행률을 올리며, 각 관절 속도를 모델 최대 각속도 × velocityScale 이하로 유지한다.
      * MoveLinear은 계획한 TCP 직선 자세에 IK를 적용하고 관절 또는 TCP 속도 상한을 넘으면 경로 진행을 줄인다.
-     * 이번 각도 변화량을 시간으로 나눈 값을 관절 속도 [rad/s]로 기록한다.
-     * 가속도 제한이 없어 새 명령을 받으면 속도가 즉시 바뀔 수 있다.
+     * 궤적의 순간 속도 [rad/s]를 상태에 기록하며 관절 위치는 가속도 프로파일을 적분해 갱신한다.
+     * MoveJoint는 최대 속도까지의 0.20초 기본 ramp를 accelerationScale로 조절해 가속과 감속을 제한한다.
      * MoveJoint의 마지막 각도는 목표각에 맞추고 MoveLinear의 마지막 TCP는 IK 오차 허용 범위 안에 맞춘다.
      * 동작을 완료하면 속도를 0으로 만든 뒤 Idle로 바꾼다.
      * 잘못된 시간은 오류 없이 무시한다.
@@ -150,9 +154,12 @@ public:
     bool RestoreCollisionSafeState(const JointVector& safePositionRadians);
 
 private:
+    friend struct SimRobotControllerTestAccess;
+
     using LinearPathPoint = planning::LinearPathPoint;
 
     Result MoveJointImpl(const JointMoveCommand& command, bool validatePath);
+    void ConfigureJointMove(JointVector target, double velocityScale, double accelerationScale);
     void RefreshTcp();
     void UpdateLinear(double dtSeconds);
     bool ReorientForLinear(const JointVector& plannedJoints, double availableSeconds);
@@ -166,14 +173,26 @@ private:
     // MoveJoint가 마지막으로 수락한 J1..Jn 절대 목표각 [rad]. 새 명령은 이 값을 교체한다.
     JointVector targetPositionRadians_;
 
+    // 관절 명령은 검증한 선형 경로를 따라 하나의 진행률로 동기화해 실행한다.
+    JointVector jointMoveStartPositionRadians_;
+    double jointMoveProgress_ = 0.0;
+    double jointMoveProgressVelocity_ = 0.0;
+    double jointMoveProgressAcceleration_ = 0.0;
+    double jointMoveProgressRate_ = 0.0;
+    double jointMoveElapsedSeconds_ = 0.0;
+    double jointMoveAccelerationTimeSeconds_ = 0.0;
+    double jointMoveCruiseTimeSeconds_ = 0.0;
+    double jointMoveProfileDurationSeconds_ = 0.0;
+    double jointMovePeakProgressVelocity_ = 0.0;
+    double jointMoveStopProgress_ = 1.0;
+    bool jointMoveBraking_ = false;
+    JointVector pendingJointTargetRadians_;
+    double pendingVelocityScale_ = 1.0;
+    double pendingAccelerationScale_ = 1.0;
+    bool hasPendingJointTarget_ = false;
+
     // MoveLinear tick에서 사용할 관절 보간 공간이다. Connect 때 크기를 정해 실행 중 vector 할당을 피한다.
     JointVector linearInterpolationBuffer_;
-
-    // 모델 max velocity에 곱하는 현재 속도 비율. 1.0이면 모델 최대속도.
-    double velocityScale_ = 1.0;
-
-    // Command 계약에 보존한다. Simulation은 가속도 제한을 적용하지 않는다.
-    double accelerationScale_ = 1.0;
 
     // Simulation backend가 Connect되어 사용 가능한 상태인지 나타낸다.
     bool connected_ = false;

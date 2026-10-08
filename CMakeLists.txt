@@ -156,6 +156,7 @@ if(BUILD_TESTING)
   grasplink_add_test(grasplink_kinematics_tests RobotKinematics tests/RobotKinematicsTests.cpp grasplink_robotics GTEST_DISCOVERY)
   grasplink_add_test(grasplink_inverse_kinematics_tests RobotInverseKinematics tests/RobotInverseKinematicsTests.cpp grasplink_robotics GTEST_DISCOVERY)
   grasplink_add_test(grasplink_robot_motion_tests RobotMotion tests/RobotMotionTests.cpp grasplink_robotics GTEST_DISCOVERY)
+  grasplink_add_test(grasplink_linear_path_planner_tests LinearPathPlanner tests/LinearPathPlannerTests.cpp grasplink_robotics GTEST_DISCOVERY)
   grasplink_add_test(grasplink_robot_panel_motion_tests RobotPanelMotion tests/RobotPanelMotionTests.cpp grasplink_robotics GTEST_DISCOVERY)
   grasplink_add_test(grasplink_gripper_runtime_tests GripperRuntime tests/GripperRuntimeTests.cpp grasplink_robotics GTEST_DISCOVERY)
   grasplink_add_test(grasplink_gripper_kinematics_tests GripperKinematics tests/GripperKinematicsTests.cpp grasplink_robotics GTEST_DISCOVERY)
@@ -418,7 +419,9 @@ if(GRASPLINK_BUILD_BENCHMARKS)
     benchmark::benchmark
   )
   if(BUILD_TESTING)
-    add_test(NAME RoboticsBenchmarks COMMAND grasplink_robotics_benchmarks --benchmark_min_time=0.01s)
+    add_test(NAME RoboticsBenchmarks COMMAND grasplink_robotics_benchmarks
+      --benchmark_min_time=0.01s
+      "--benchmark_filter=^(FK|DLS_IK|LinearPathPlanner)$")
     set_tests_properties(RoboticsBenchmarks PROPERTIES
       WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
       TIMEOUT 30

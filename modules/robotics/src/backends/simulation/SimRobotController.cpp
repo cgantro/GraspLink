@@ -3,6 +3,7 @@
 #include "robotics/kinematics/detail/PoseMath.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <stdexcept>
@@ -15,6 +16,7 @@ namespace planning = grasplink::robotics::planning;
 namespace
 {
 constexpr double kPositionEpsilon = 1e-8;
+constexpr double kJointVelocityRampSeconds = 0.20;
 Result Failure(ErrorCode code, std::string message)
 {
     // 잘못된 명령 입력은 예외로 던지지 않고 다른 Controller 구현과 같은 Result 오류 값으로 반환한다.
@@ -42,6 +44,32 @@ Result ValidateJointPositionLimits(
         }
     }
     return Result::Success();
+}
+
+bool JointInterpolationFollowsTcpLine(
+    const JointVector& start,
+    const JointVector& end,
+    const kinematics::detail::Pose3& startTcp,
+    const kinematics::detail::Pose3& endTcp,
+    kinematics::DampedLeastSquaresIk& inverse)
+{
+    constexpr std::array<double, 3> kCheckFractions{0.25, 0.5, 0.75};
+    JointVector sample(start.size());
+    for (const double fraction : kCheckFractions)
+    {
+        for (std::size_t joint = 0; joint < sample.size(); ++joint)
+            sample[joint] = start[joint] + (end[joint] - start[joint]) * fraction;
+        const auto actual = kinematics::detail::FromCartesian(inverse.EvaluateTcp(sample));
+        const auto expected = kinematics::detail::Interpolate(startTcp, endTcp, fraction);
+        if (kinematics::detail::Length(kinematics::detail::Subtract(
+                actual.positionMeters, expected.positionMeters)) >
+                planning::kDefaultPlanningPolicy.maximumLinearTcpErrorMeters ||
+            kinematics::detail::Length(kinematics::detail::RotationError(
+                actual.rotation, expected.rotation)) >
+                planning::kDefaultPlanningPolicy.maximumAngularTcpErrorRadians)
+            return false;
+    }
+    return true;
 }
 
 kinematics::IkOptions RuntimeLinearIkOptions()
@@ -108,9 +136,19 @@ Result SimRobotController::Connect()
     RefreshTcp();
 
     targetPositionRadians_ = state_.jointPositionRadians;
+    jointMoveStartPositionRadians_ = state_.jointPositionRadians;
+    jointMoveProgress_ = 0.0;
+    jointMoveProgressVelocity_ = 0.0;
+    jointMoveProgressAcceleration_ = 0.0;
+    jointMoveProgressRate_ = 0.0;
+    jointMoveElapsedSeconds_ = 0.0;
+    jointMoveAccelerationTimeSeconds_ = 0.0;
+    jointMoveCruiseTimeSeconds_ = 0.0;
+    jointMoveProfileDurationSeconds_ = 0.0;
+    jointMovePeakProgressVelocity_ = 0.0;
+    jointMoveBraking_ = false;
+    hasPendingJointTarget_ = false;
     linearInterpolationBuffer_.resize(specification_->jointCount);
-    velocityScale_ = 1.0;
-    accelerationScale_ = 1.0;
     connected_ = true;
     linearPath_.clear();
     return Result::Success();
@@ -162,34 +200,113 @@ Result SimRobotController::MoveJointImpl(const JointMoveCommand& command, bool v
     if (!command.preserveJointTurns)
         planning::AlignEquivalentJointAngles(targetPositionRadians, state_.jointPositionRadians, *specification_);
 
-    if (validatePath && jointStateValidityChecker_)
+    const bool canBrakeJointPath = state_.mode == RobotMode::Moving && linearPath_.empty() &&
+        jointMoveProgressVelocity_ > kPositionEpsilon && jointMoveProgressAcceleration_ > 0.0;
+    const double stoppingProgress = canBrakeJointPath ? std::min(1.0, jointMoveProgress_ +
+        jointMoveProgressVelocity_ * jointMoveProgressVelocity_ /
+            (2.0 * jointMoveProgressAcceleration_)) : jointMoveProgress_;
+    const JointVector* nextPathStart = &state_.jointPositionRadians;
+    JointVector brakingStart;
+    if (canBrakeJointPath)
     {
-        const auto invalidity = planning::ValidateJointPath(state_.jointPositionRadians, targetPositionRadians,
+        brakingStart = state_.jointPositionRadians;
+        for (std::size_t joint = 0; joint < specification_->jointCount; ++joint)
+            brakingStart[joint] = jointMoveStartPositionRadians_[joint] +
+                (targetPositionRadians_[joint] - jointMoveStartPositionRadians_[joint]) * stoppingProgress;
+        nextPathStart = &brakingStart;
+    }
+
+    if ((validatePath || canBrakeJointPath) && jointStateValidityChecker_)
+    {
+        const auto invalidity = planning::ValidateJointPath(*nextPathStart, targetPositionRadians,
             *specification_, jointStateValidityChecker_);
         if (invalidity != planning::JointStateInvalidity::None)
             return planning::MapJointStateInvalidity(invalidity);
     }
-    targetPositionRadians_ = std::move(targetPositionRadians);
-    velocityScale_ = command.velocityScale;
-    accelerationScale_ = command.accelerationScale;
-    linearPath_.clear();
-    state_.errorCode = ErrorCode::None;
 
-    bool needsMotion = false;
-    for (std::size_t i = 0; i < specification_->jointCount; ++i)
+    if (canBrakeJointPath)
     {
-        if (std::abs(targetPositionRadians_[i] - state_.jointPositionRadians[i]) > kPositionEpsilon)
-        {
-            needsMotion = true;
-            break;
-        }
+        pendingJointTargetRadians_ = std::move(targetPositionRadians);
+        pendingVelocityScale_ = command.velocityScale;
+        pendingAccelerationScale_ = command.accelerationScale;
+        hasPendingJointTarget_ = true;
+        jointMoveBraking_ = true;
+        jointMoveStopProgress_ = stoppingProgress;
+        state_.errorCode = ErrorCode::None;
+        return Result::Success();
     }
 
-    // 이미 현재 자세를 목표로 받은 경우에도 수락은 성공이며 mode만 Idle로 둔다.
+    ConfigureJointMove(std::move(targetPositionRadians), command.velocityScale, command.accelerationScale);
+    state_.errorCode = ErrorCode::None;
+    return Result::Success();
+}
+
+void SimRobotController::ConfigureJointMove(
+    JointVector targetPositionRadians, double velocityScale, double accelerationScale)
+{
+    targetPositionRadians_ = std::move(targetPositionRadians);
+    jointMoveStartPositionRadians_ = state_.jointPositionRadians;
+    jointMoveProgress_ = 0.0;
+    jointMoveProgressVelocity_ = 0.0;
+    jointMoveProgressAcceleration_ = 0.0;
+    jointMoveElapsedSeconds_ = 0.0;
+    jointMoveAccelerationTimeSeconds_ = 0.0;
+    jointMoveCruiseTimeSeconds_ = 0.0;
+    jointMoveProfileDurationSeconds_ = 0.0;
+    jointMovePeakProgressVelocity_ = 0.0;
+    jointMoveBraking_ = false;
+    hasPendingJointTarget_ = false;
+    linearPath_.clear();
+
+    jointMoveProgressRate_ = std::numeric_limits<double>::infinity();
+    bool needsMotion = false;
+    for (std::size_t joint = 0; joint < specification_->jointCount; ++joint)
+    {
+        const double distance = std::abs(targetPositionRadians_[joint] - jointMoveStartPositionRadians_[joint]);
+        if (distance <= kPositionEpsilon)
+            continue;
+        needsMotion = true;
+        const auto& limits = specification_->joints[joint];
+        jointMoveProgressRate_ = std::min(jointMoveProgressRate_,
+            limits.maxVelocityRadiansPerSecond * velocityScale / distance);
+        const double acceleration = limits.maxVelocityRadiansPerSecond /
+            kJointVelocityRampSeconds * accelerationScale;
+        jointMoveProgressAcceleration_ = std::min(jointMoveProgressAcceleration_ == 0.0 ?
+            std::numeric_limits<double>::infinity() : jointMoveProgressAcceleration_, acceleration / distance);
+    }
+
     state_.mode = needsMotion ? RobotMode::Moving : RobotMode::Idle;
     if (!needsMotion)
+    {
+        jointMoveProgressRate_ = 0.0;
+        jointMoveProgressAcceleration_ = 0.0;
+        state_.jointPositionRadians = targetPositionRadians_;
         std::fill(state_.jointVelocityRadiansPerSecond.begin(), state_.jointVelocityRadiansPerSecond.end(), 0.0);
-    return Result::Success();
+        RefreshTcp();
+    }
+    else
+    {
+        const double accelerationTimeToMaximum = jointMoveProgressRate_ /
+            jointMoveProgressAcceleration_;
+        const double accelerationDistanceToMaximum = 0.5 * jointMoveProgressAcceleration_ *
+            accelerationTimeToMaximum * accelerationTimeToMaximum;
+        if (2.0 * accelerationDistanceToMaximum >= 1.0)
+        {
+            jointMoveAccelerationTimeSeconds_ = std::sqrt(1.0 / jointMoveProgressAcceleration_);
+            jointMovePeakProgressVelocity_ = jointMoveProgressAcceleration_ *
+                jointMoveAccelerationTimeSeconds_;
+            jointMoveCruiseTimeSeconds_ = 0.0;
+        }
+        else
+        {
+            jointMoveAccelerationTimeSeconds_ = accelerationTimeToMaximum;
+            jointMovePeakProgressVelocity_ = jointMoveProgressRate_;
+            jointMoveCruiseTimeSeconds_ = (1.0 - 2.0 * accelerationDistanceToMaximum) /
+                jointMovePeakProgressVelocity_;
+        }
+        jointMoveProfileDurationSeconds_ = 2.0 * jointMoveAccelerationTimeSeconds_ +
+            jointMoveCruiseTimeSeconds_;
+    }
 }
 
 Result SimRobotController::MovePose(const CartesianPose& targetInBase, double velocityScale, double accelerationScale)
@@ -267,8 +384,6 @@ Result SimRobotController::MoveLinearPath(const LinearPathMoveCommand& command)
     linearPath_ = std::move(candidate);
     linearSegment_ = 1;
     linearSegmentFraction_ = 0.0;
-    velocityScale_ = 1.0;
-    accelerationScale_ = 1.0;
     state_.errorCode = ErrorCode::None;
     state_.mode = RobotMode::Moving;
     return Result::Success();
@@ -288,6 +403,13 @@ Result SimRobotController::Stop()
 
     // 현재 q를 새 목표로 고정해 이후 Update가 남은 동작을 재개하지 않게 한다.
     targetPositionRadians_ = state_.jointPositionRadians;
+    jointMoveStartPositionRadians_ = state_.jointPositionRadians;
+    jointMoveProgress_ = 0.0;
+    jointMoveProgressVelocity_ = 0.0;
+    jointMoveProgressAcceleration_ = 0.0;
+    jointMoveProgressRate_ = 0.0;
+    jointMoveBraking_ = false;
+    hasPendingJointTarget_ = false;
     linearPath_.clear();
     linearProfileElapsedSeconds_ = 0.0;
     std::fill(
@@ -324,49 +446,77 @@ void SimRobotController::Update(double dtSeconds)
         return;
     }
 
-    bool allReached = true;
-
-    for (std::size_t i = 0; i < specification_->jointCount; ++i)
+    double nextProgress = jointMoveProgress_;
+    double nextVelocity = 0.0;
+    if (jointMoveBraking_)
     {
-        const auto& joint = specification_->joints[i];
-        const double delta = targetPositionRadians_[i] - state_.jointPositionRadians[i];
-
-        if (std::abs(delta) <= kPositionEpsilon)
+        nextVelocity = std::max(0.0,
+            jointMoveProgressVelocity_ - jointMoveProgressAcceleration_ * dtSeconds);
+        nextProgress += (jointMoveProgressVelocity_ * jointMoveProgressVelocity_ -
+            nextVelocity * nextVelocity) / (2.0 * jointMoveProgressAcceleration_);
+        if (nextProgress >= jointMoveStopProgress_ || nextVelocity == 0.0)
         {
-            state_.jointPositionRadians[i] = targetPositionRadians_[i];
-            state_.jointVelocityRadiansPerSecond[i] = 0.0;
-            continue;
+            nextProgress = jointMoveStopProgress_;
+            nextVelocity = 0.0;
         }
-
-        // 각 관절은 지정된 최대 각속도를 넘지 않게 목표를 향해 움직인다. 속도 변화에 대한 가속도 제한이나 부드러운 ramp는 적용하지 않는다.
-        // maxStep은 이번 간격에 허용되는 각도 [rad]. clamp로 큰 dt에서도 목표를 지나치지 않는다.
-        const double maxStep = joint.maxVelocityRadiansPerSecond * velocityScale_ * dtSeconds;
-        if (maxStep <= 0.0)
+    }
+    else
+    {
+        jointMoveElapsedSeconds_ = std::min(jointMoveProfileDurationSeconds_,
+            jointMoveElapsedSeconds_ + dtSeconds);
+        const double elapsed = jointMoveElapsedSeconds_;
+        const double accelerationDistance = 0.5 * jointMoveProgressAcceleration_ *
+            jointMoveAccelerationTimeSeconds_ * jointMoveAccelerationTimeSeconds_;
+        if (elapsed < jointMoveAccelerationTimeSeconds_)
         {
-            state_.jointVelocityRadiansPerSecond[i] = 0.0;
-            allReached = false;
-            continue;
+            nextProgress = 0.5 * jointMoveProgressAcceleration_ * elapsed * elapsed;
+            nextVelocity = jointMoveProgressAcceleration_ * elapsed;
         }
-
-        const double step = std::clamp(delta, -maxStep, maxStep);
-        state_.jointPositionRadians[i] += step;
-        state_.jointVelocityRadiansPerSecond[i] = step / dtSeconds;
-
-        if (std::abs(targetPositionRadians_[i] - state_.jointPositionRadians[i]) > kPositionEpsilon)
+        else if (elapsed < jointMoveAccelerationTimeSeconds_ + jointMoveCruiseTimeSeconds_)
         {
-            allReached = false;
+            nextProgress = accelerationDistance + jointMovePeakProgressVelocity_ *
+                (elapsed - jointMoveAccelerationTimeSeconds_);
+            nextVelocity = jointMovePeakProgressVelocity_;
         }
         else
         {
-            state_.jointPositionRadians[i] = targetPositionRadians_[i];
+            const double decelerationTime = jointMoveProfileDurationSeconds_ - elapsed;
+            nextProgress = 1.0 - 0.5 * jointMoveProgressAcceleration_ *
+                decelerationTime * decelerationTime;
+            nextVelocity = jointMoveProgressAcceleration_ * decelerationTime;
         }
     }
-
-    // MoveJoint 명령의 accelerationScale은 아직 쓰지 않고, 각 관절에 모델의 최대 각속도를 즉시 적용한다.
-    (void)accelerationScale_;
-
-    if (allReached)
+    nextProgress = std::clamp(nextProgress, jointMoveProgress_, jointMoveBraking_ ?
+        jointMoveStopProgress_ : 1.0);
+    for (std::size_t i = 0; i < specification_->jointCount; ++i)
     {
+        const double start = jointMoveStartPositionRadians_[i];
+        const double delta = targetPositionRadians_[i] - start;
+        state_.jointPositionRadians[i] = start + delta * nextProgress;
+        state_.jointVelocityRadiansPerSecond[i] = delta * nextVelocity;
+    }
+    jointMoveProgress_ = nextProgress;
+    jointMoveProgressVelocity_ = nextVelocity;
+    if (jointMoveBraking_ && jointMoveProgress_ >= jointMoveStopProgress_ - kPositionEpsilon)
+    {
+        jointMoveProgressVelocity_ = 0.0;
+        std::fill(state_.jointVelocityRadiansPerSecond.begin(),
+            state_.jointVelocityRadiansPerSecond.end(), 0.0);
+        for (std::size_t i = 0; i < specification_->jointCount; ++i)
+            state_.jointPositionRadians[i] = jointMoveStartPositionRadians_[i] +
+                (targetPositionRadians_[i] - jointMoveStartPositionRadians_[i]) * jointMoveStopProgress_;
+        if (hasPendingJointTarget_)
+        {
+            JointVector pendingTarget = std::move(pendingJointTargetRadians_);
+            const double pendingVelocity = pendingVelocityScale_;
+            const double pendingAcceleration = pendingAccelerationScale_;
+            ConfigureJointMove(std::move(pendingTarget), pendingVelocity, pendingAcceleration);
+        }
+    }
+    else if (jointMoveProgress_ >= 1.0)
+    {
+        state_.jointPositionRadians = targetPositionRadians_;
+        jointMoveProgressVelocity_ = 0.0;
         std::fill(
             state_.jointVelocityRadiansPerSecond.begin(),
             state_.jointVelocityRadiansPerSecond.end(),
@@ -514,7 +664,7 @@ bool SimRobotController::ReorientForLinear(const JointVector& plannedJoints, dou
         if (std::abs(delta) > 0.0)
             attraction = std::min(attraction, specification_->joints[i].maxVelocityRadiansPerSecond * availableSeconds / std::abs(delta));
     }
-    // 후보 시작각을 다음 표본 방향으로 작은 비율만 옮기고 현재 TCP 자세의 IK를 다시 푼다.
+    // 후보 시작각을 다음 표본 방향으로 작은 비율만 옮기고 현재 경로상의 TCP 자세 IK를 다시 푼다.
     // IK가 위치·방향을 되돌리는 동안 남는 관절 변화는 TCP를 거의 바꾸지 않는 여유 방향이며 nullspace라고 부른다.
     // 일반 모델에서 단순 관절 보간이 TCP를 고정한다고 가정하지 않으므로 후보마다 FK/속도 검사를 거친다.
     for (std::size_t attempt = 0;
@@ -540,11 +690,24 @@ bool SimRobotController::ReorientForLinear(const JointVector& plannedJoints, dou
                 nextDistanceSquared += residual * residual;
             }
             const Pose3 nextTcp = FromCartesian(inverse_.EvaluateTcp(solution.jointPositionRadians));
+            const double pathPositionError = Length(Subtract(nextTcp.positionMeters, pathTcp.positionMeters));
+            const double pathOrientationError = Length(RotationError(nextTcp.rotation, pathTcp.rotation));
             ratio = std::max(ratio, planning::VelocityRatio(
                 Length(Subtract(nextTcp.positionMeters, currentTcp.positionMeters)), availableSeconds, linearVelocityLimit_));
             ratio = std::max(ratio, planning::VelocityRatio(
                 Length(RotationError(nextTcp.rotation, currentTcp.rotation)), availableSeconds, angularVelocityLimit_));
-            if (ratio <= 1.0 + 1e-8 && movement > 1e-12 && nextDistanceSquared < previousDistanceSquared)
+            const bool pathValid = planning::ValidateJointPath(
+                current, solution.jointPositionRadians, *specification_, jointStateValidityChecker_) ==
+                planning::JointStateInvalidity::None;
+            const bool reorientationFollowsTcp = JointInterpolationFollowsTcpLine(
+                current, solution.jointPositionRadians, pathTcp, pathTcp, inverse_);
+            const Pose3 plannedEndTcp = FromCartesian(end.tcpPose);
+            const bool remainingLineFollowsTcp = JointInterpolationFollowsTcpLine(
+                solution.jointPositionRadians, end.joints, pathTcp, plannedEndTcp, inverse_);
+            if (ratio <= 1.0 + 1e-8 && movement > 1e-12 && nextDistanceSquared < previousDistanceSquared &&
+                pathPositionError <= options.positionToleranceMeters &&
+                pathOrientationError <= options.orientationToleranceRadians && pathValid &&
+                reorientationFollowsTcp && remainingLineFollowsTcp)
             {
                 state_.jointPositionRadians = solution.jointPositionRadians;
                 return true;
@@ -570,6 +733,13 @@ bool SimRobotController::RestoreCollisionSafeState(const JointVector& safePositi
     state_.jointPositionRadians = safePositionRadians;
     std::fill(state_.jointVelocityRadiansPerSecond.begin(), state_.jointVelocityRadiansPerSecond.end(), 0.0);
     targetPositionRadians_ = safePositionRadians;
+    jointMoveStartPositionRadians_ = safePositionRadians;
+    jointMoveProgress_ = 0.0;
+    jointMoveProgressVelocity_ = 0.0;
+    jointMoveProgressAcceleration_ = 0.0;
+    jointMoveProgressRate_ = 0.0;
+    jointMoveBraking_ = false;
+    hasPendingJointTarget_ = false;
     linearPath_.clear();
     // unsafe tick은 직전 안전 자세로 되돌린 뒤 멈춘다. Fault로 고정하면 호출자가 위쪽 안전 자세로 물러나는 명령도 보낼 수 없다.
     state_.mode = RobotMode::Idle;

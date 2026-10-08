@@ -83,6 +83,35 @@ TEST(PhysicsWorld, BodyOriginAndEnvironmentOverlap)
     world.DestroyBody(secondEnvironmentHandle);
 }
 
+TEST(PhysicsWorld, PairOverlapUsesBothCandidateTransforms)
+{
+    PhysicsWorld world;
+    BodyDescription first;
+    first.motionType = BodyMotionType::Kinematic;
+    first.collisionLayer = CollisionLayer::Robot;
+    first.transform.position = {-2.0F, 0.0F, 0.0F};
+    first.shapes.push_back(CollisionShapeDescription{});
+    const auto firstHandle = world.CreateBody(first);
+
+    BodyDescription second = first;
+    second.transform.position = {2.0F, 0.0F, 0.0F};
+    const auto secondHandle = world.CreateBody(second);
+    ASSERT_FALSE(world.OverlapsBodiesAt(firstHandle, first.transform, secondHandle, second.transform))
+        << "separated link candidates do not collide";
+
+    Transform candidateFirst;
+    Transform candidateSecond;
+    candidateFirst.position = {-0.05F, 0.0F, 0.0F};
+    candidateSecond.position = {0.05F, 0.0F, 0.0F};
+    ASSERT_TRUE(world.OverlapsBodiesAt(firstHandle, candidateFirst, secondHandle, candidateSecond))
+        << "pair query uses proposed FK transforms rather than the stale Jolt body transforms";
+    candidateSecond.position.x = 1.0F;
+    ASSERT_FALSE(world.OverlapsBodiesAt(firstHandle, candidateFirst, secondHandle, candidateSecond))
+        << "a candidate pose that separates both bodies is clear";
+    ASSERT_FALSE(world.OverlapsBodiesAt(firstHandle, candidateFirst, firstHandle, candidateFirst))
+        << "a proxy is not tested against itself";
+}
+
 TEST(PhysicsWorld, OffsetPlatformContactAndTeleport)
 {
     PhysicsWorld world;

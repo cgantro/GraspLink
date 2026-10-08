@@ -41,17 +41,26 @@ TEST(ControlRuntimeTests, FixedLoopAndControllerContracts)
     command.targetPositionRadians.assign(6, 0.0);
     command.targetPositionRadians[0] = 0.5;
     ASSERT_TRUE(static_cast<bool>(controller.MoveJoint(command))) << "move";
-    controller.Update(0.004);
-    // 목표 회전은 rad, 최대 회전 속도는 rad/s로 지정한다. 짧은 한 번의 업데이트에서 속도 한도를 넘지 않는 만큼만 각도가 변하는지 확인한다.
-    EXPECT_NEAR(controller.GetState().jointPositionRadians[0], 2.268928 * 0.004, 1e-12) << "model velocity limit";
+    constexpr double fixedDeltaSeconds = 0.004;
+    const double maximumVelocity = models::hanwha::kHcr12a.joints[0].maxVelocityRadiansPerSecond;
+    const double accelerationLimit = maximumVelocity / 0.20;
+    controller.Update(fixedDeltaSeconds);
+    // 관절 가속도는 최대 속도에 0.20초 동안 도달하는 시뮬레이션 정책으로 계산한다.
+    EXPECT_NEAR(controller.GetState().jointPositionRadians[0],
+        0.5 * accelerationLimit * fixedDeltaSeconds * fixedDeltaSeconds, 1e-12)
+        << "the simulation ramp accelerates from rest under its configured acceleration limit";
     const auto unchanged = controller.GetState().jointPositionRadians;
     command.targetPositionRadians[0] = 10.0;
     EXPECT_EQ(controller.MoveJoint(command).code, ErrorCode::InvalidCommand) << "out-of-range command";
     EXPECT_EQ(controller.GetState().jointPositionRadians, unchanged);
     command.targetPositionRadians[0] = -0.5;
     ASSERT_TRUE(static_cast<bool>(controller.MoveJoint(command))) << "re-target while moving";
-    controller.Update(0.004);
-    EXPECT_LT(controller.GetState().jointPositionRadians[0], unchanged[0]);
+    controller.Update(fixedDeltaSeconds);
+    const double brakingPosition = controller.GetState().jointPositionRadians[0];
+    EXPECT_GT(brakingPosition, unchanged[0]) << "retarget first brakes along the already validated path";
+    controller.Update(fixedDeltaSeconds);
+    EXPECT_LT(controller.GetState().jointPositionRadians[0], brakingPosition)
+        << "replacement trajectory reverses only after the old path reaches its stop pose";
     ASSERT_TRUE(static_cast<bool>(controller.Stop())) << "stop";
     const auto stopped = controller.GetState().jointPositionRadians;
     controller.Update(1.0);
