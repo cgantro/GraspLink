@@ -90,9 +90,10 @@ SimRobotController::SimRobotController(const models::RobotSpecification& specifi
     }
 }
 
-void SimRobotController::SetJointPoseCollisionValidator(std::function<bool(const JointVector&)> validator)
+void SimRobotController::SetJointStateValidityChecker(
+    std::function<JointStateInvalidity(const JointVector&)> checker)
 {
-    collisionValidator_ = std::move(validator);
+    jointStateValidityChecker_ = std::move(checker);
 }
 
 Result SimRobotController::Connect()
@@ -182,15 +183,19 @@ Result SimRobotController::MovePose(const CartesianPose& targetInBase, double ve
         return Failure(ErrorCode::NotConnected, "SimRobotController: not connected");
     if (!IsScaleValid(velocityScale) || !IsScaleValid(accelerationScale))
         return Failure(ErrorCode::InvalidCommand, "SimRobotController: scale must be in (0, 1]");
-    bool collisionBlocked = false;
+    JointStateInvalidity invalidity = JointStateInvalidity::None;
     kinematics::IkResult ikFailure;
-    auto solution = detail::SolveCollisionFreeIk(inverse_, *specification_, collisionValidator_,
+    auto solution = detail::SolveCollisionFreeIk(inverse_, *specification_, jointStateValidityChecker_,
         targetInBase, state_.jointPositionRadians, {}, detail::kDefaultSimulationMotionPolicy,
-        collisionBlocked, ikFailure);
+        invalidity, ikFailure);
     if (!solution)
-        return collisionBlocked ?
-            Failure(ErrorCode::EnvironmentContact, "SimRobotController: no collision-free IK solution or joint path") :
-            detail::MapIkFailure(ikFailure);
+    {
+        if (invalidity == JointStateInvalidity::EnvironmentCollision)
+            return Failure(ErrorCode::EnvironmentContact, "SimRobotController: no collision-free IK solution or joint path");
+        if (invalidity != JointStateInvalidity::None)
+            return detail::MapJointStateInvalidity(invalidity);
+        return detail::MapIkFailure(ikFailure);
+    }
     return MoveJoint({solution->jointPositionRadians, velocityScale, accelerationScale});
 }
 
@@ -218,7 +223,7 @@ Result SimRobotController::MoveLinearPath(const LinearPathMoveCommand& command)
     detail::LinearPathPlan plan;
     const auto result = detail::BuildLinearPath(
         command, *specification_, state_.jointPositionRadians,
-        inverse_.EvaluateTcp(state_.jointPositionRadians), inverse_, collisionValidator_, plan);
+        inverse_.EvaluateTcp(state_.jointPositionRadians), inverse_, jointStateValidityChecker_, plan);
     if (!result)
         return result;
     if (!plan.hasMotion)

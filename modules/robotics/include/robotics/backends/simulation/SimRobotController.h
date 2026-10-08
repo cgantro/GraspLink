@@ -39,13 +39,13 @@ public:
     explicit SimRobotController(const models::RobotSpecification& specification, models::Pose3 tcpInToolFrame = {});
 
     /**
-     * @brief IK가 만든 관절 자세 후보가 Environment와 겹치는지 확인하는 함수를 등록한다.
-     * @param validator 충돌이 없으면 true를 반환하는 관절각 [rad] 검사 함수다.
-     * @details Viewer는 Robot과 Gripper의 실제 collision proxy를 Jolt Environment와 대조한다.
-     * 함수는 명령을 처리하는 스레드에서 동기 호출되며 후보 관절 수명 밖으로 참조를 보관하지 않는다.
-     * 설정하지 않으면 관절 충돌 검사를 생략한다.
+     * @brief IK가 만든 관절 자세 후보를 검사하는 함수를 등록한다.
+     * @param checker 자세를 허용하면 None을, Viewer의 고정 환경과 겹치면 EnvironmentCollision을 반환한다.
+     * @details 경로 계획기는 이 검사기를 부르기 전에 관절 수와 각도의 유한성, 각 관절의 허용 범위를 확인한다.
+     * 검사기는 명령을 처리하는 호출 흐름 안에서 실행되므로 등록한 객체가 검사기가 사용되는 동안 살아 있어야 한다.
+     * 빈 함수를 등록하면 환경 충돌 검사를 생략한다.
      */
-    void SetJointPoseCollisionValidator(std::function<bool(const JointVector&)> validator);
+    void SetJointStateValidityChecker(std::function<JointStateInvalidity(const JointVector&)> checker);
 
     /** @brief 관절각과 속도를 0으로 한 유효한 Simulation 상태로 연결한다.
      * @return 성공하며 ToolFrame이 있으면 설정된 TCP의 모델 FK feedback을 제공한다.
@@ -179,7 +179,7 @@ private:
 
     // IK 계산기는 같은 사양을 빌리며 모델 ToolFrame에 고정 공구 변환을 적용해 TCP를 계산한다.
     kinematics::DampedLeastSquaresIk inverse_;
-    std::function<bool(const JointVector&)> collisionValidator_;
+    std::function<JointStateInvalidity(const JointVector&)> jointStateValidityChecker_;
     std::vector<LinearPathPoint> linearPath_;
     std::size_t linearSegment_ = 1;
     double linearSegmentFraction_ = 0.0;

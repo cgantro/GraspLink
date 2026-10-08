@@ -15,16 +15,21 @@ namespace
 {
 constexpr double kFullTurnRadians = 2.0 * 3.14159265358979323846;
 
-bool IsJointPathCollisionFree(
+JointStateInvalidity ValidateJointPath(
     const JointVector& start,
     const JointVector& end,
-    const std::function<bool(const JointVector&)>& collisionValidator,
+    const models::RobotSpecification& specification,
+    const std::function<JointStateInvalidity(const JointVector&)>& stateValidityChecker,
     const SimulationMotionPolicy& policy)
 {
-    if (!collisionValidator)
-        return true;
-
     // 관절 하나의 변화량이 설정한 간격보다 크면 그 사이 자세도 나눠 검사한다. 시작 자세는 이미 검증됐다고 보고 끝 자세까지 확인한다.
+    const auto startInvalidity = ValidateJointState(specification, start, {});
+    if (startInvalidity != JointStateInvalidity::None)
+        return startInvalidity;
+    const auto endInvalidity = ValidateJointState(specification, end, {});
+    if (endInvalidity != JointStateInvalidity::None)
+        return endInvalidity;
+
     double maximumJointChange = 0.0;
     for (std::size_t joint = 0; joint < start.size(); ++joint)
         maximumJointChange = std::max(maximumJointChange, std::abs(end[joint] - start[joint]));
@@ -36,11 +41,50 @@ bool IsJointPathCollisionFree(
         const double fraction = static_cast<double>(step) / static_cast<double>(intervals);
         for (std::size_t joint = 0; joint < start.size(); ++joint)
             sample[joint] = start[joint] + (end[joint] - start[joint]) * fraction;
-        if (!collisionValidator(sample))
-            return false;
+        const auto invalidity = ValidateJointState(specification, sample, stateValidityChecker);
+        if (invalidity != JointStateInvalidity::None)
+            return invalidity;
     }
-    return true;
+    return JointStateInvalidity::None;
 }
+}
+
+JointStateInvalidity ValidateJointState(
+    const models::RobotSpecification& specification,
+    const JointVector& joints,
+    const std::function<JointStateInvalidity(const JointVector&)>& stateValidityChecker)
+{
+    if (specification.joints == nullptr || joints.size() != specification.jointCount)
+        return JointStateInvalidity::JointCountMismatch;
+    for (std::size_t joint = 0; joint < specification.jointCount; ++joint)
+    {
+        if (!std::isfinite(joints[joint]))
+            return JointStateInvalidity::NonFinitePosition;
+        const auto& limits = specification.joints[joint];
+        if (joints[joint] < limits.minPositionRadians || joints[joint] > limits.maxPositionRadians)
+            return JointStateInvalidity::JointLimitViolation;
+    }
+    return stateValidityChecker ? stateValidityChecker(joints) : JointStateInvalidity::None;
+}
+
+Result MapJointStateInvalidity(JointStateInvalidity invalidity)
+{
+    switch (invalidity)
+    {
+    case JointStateInvalidity::None: return Result::Success();
+    case JointStateInvalidity::JointCountMismatch:
+    case JointStateInvalidity::NonFinitePosition:
+        return {ErrorCode::InvalidCommand, "SimRobotController: invalid joint state in planned path"};
+    case JointStateInvalidity::JointLimitViolation:
+        return {ErrorCode::JointLimitReached, "SimRobotController: planned state exceeds a joint limit"};
+    case JointStateInvalidity::EnvironmentCollision:
+        return {ErrorCode::EnvironmentContact, "SimRobotController: planned state overlaps the environment"};
+    case JointStateInvalidity::SelfCollision:
+        return {ErrorCode::SelfCollision, "SimRobotController: planned robot links overlap"};
+    case JointStateInvalidity::AttachedObjectCollision:
+        return {ErrorCode::AttachedObjectCollision, "SimRobotController: attached object overlaps the scene"};
+    }
+    return {ErrorCode::Fault, "SimRobotController: unknown joint-state invalidity"};
 }
 
 void AlignEquivalentJointAngles(
@@ -66,30 +110,36 @@ void AlignEquivalentJointAngles(
 std::optional<kinematics::IkResult> SolveCollisionFreeIk(
     kinematics::DampedLeastSquaresIk& inverse,
     const models::RobotSpecification& specification,
-    const std::function<bool(const JointVector&)>& collisionValidator,
+    const std::function<JointStateInvalidity(const JointVector&)>& stateValidityChecker,
     const CartesianPose& target,
     const JointVector& start,
     const kinematics::IkOptions& options,
     const SimulationMotionPolicy& policy,
-    bool& collisionBlocked,
+    JointStateInvalidity& invalidity,
     kinematics::IkResult& ikFailure)
 {
-    collisionBlocked = false;
+    invalidity = JointStateInvalidity::None;
+    const auto startInvalidity = ValidateJointState(specification, start, {});
+    if (startInvalidity != JointStateInvalidity::None)
+    {
+        invalidity = startInvalidity;
+        return std::nullopt;
+    }
     // 먼저 직전 자세를 seed로 풀어 연속성을 유지한다. 이 해가 없거나 경로가 충돌하면 대체 seed도 검사해 가장 적게 움직이는 안전한 해를 고른다.
     auto preferred = inverse.SolveSingleSeed(target, start, options);
     if (preferred)
     {
         AlignEquivalentJointAngles(preferred.jointPositionRadians, start, specification);
-        if (!collisionValidator || IsJointPathCollisionFree(
-            start, preferred.jointPositionRadians, collisionValidator, policy))
+        const auto pathInvalidity = ValidateJointPath(
+            start, preferred.jointPositionRadians, specification, stateValidityChecker, policy);
+        if (pathInvalidity == JointStateInvalidity::None)
             return preferred;
-        collisionBlocked = true;
+        invalidity = pathInvalidity;
     }
     else
         ikFailure = preferred;
 
     // 해는 있지만 모든 해의 경로가 막힌 경우와 목표 자체에 IK 해가 없는 경우를 구분한다.
-    bool foundAnyIkSolution = false;
     std::optional<kinematics::IkResult> bestSolution;
     double bestNormalizedDistance = std::numeric_limits<double>::infinity();
     for (const auto& seed : kinematics::detail::BuildAlternativeIkSeeds(start, specification))
@@ -102,10 +152,14 @@ std::optional<kinematics::IkResult> SolveCollisionFreeIk(
         }
 
         AlignEquivalentJointAngles(solution.jointPositionRadians, start, specification);
-        foundAnyIkSolution = true;
-        if (collisionValidator && !IsJointPathCollisionFree(
-            start, solution.jointPositionRadians, collisionValidator, policy))
+        const auto pathInvalidity = ValidateJointPath(
+            start, solution.jointPositionRadians, specification, stateValidityChecker, policy);
+        if (pathInvalidity != JointStateInvalidity::None)
+        {
+            if (invalidity == JointStateInvalidity::None)
+                invalidity = pathInvalidity;
             continue;
+        }
 
         double normalizedDistance = 0.0;
         for (std::size_t joint = 0; joint < start.size(); ++joint)
@@ -124,7 +178,6 @@ std::optional<kinematics::IkResult> SolveCollisionFreeIk(
 
     if (bestSolution)
         return bestSolution;
-    collisionBlocked = collisionBlocked || foundAnyIkSolution;
     return std::nullopt;
 }
 
@@ -134,7 +187,7 @@ Result BuildLinearPath(
     const JointVector& startJoints,
     const CartesianPose& startTcp,
     kinematics::DampedLeastSquaresIk& inverse,
-    const std::function<bool(const JointVector&)>& collisionValidator,
+    const std::function<JointStateInvalidity(const JointVector&)>& stateValidityChecker,
     LinearPathPlan& plan,
     const SimulationMotionPolicy& policy)
 {
@@ -201,15 +254,19 @@ Result BuildLinearPath(
         {
             const double fraction = static_cast<double>(i) / static_cast<double>(count);
             const Pose3 targetPose = Interpolate(segmentStart, end, fraction);
-            bool collisionBlocked = false;
+            JointStateInvalidity invalidity = JointStateInvalidity::None;
             kinematics::IkResult ikFailure;
-            auto solution = SolveCollisionFreeIk(inverse, specification, collisionValidator,
+            auto solution = SolveCollisionFreeIk(inverse, specification, stateValidityChecker,
                 ToCartesian(targetPose), candidatePlan.points.back().joints, options, policy,
-                collisionBlocked, ikFailure);
+                invalidity, ikFailure);
             if (!solution)
-                return collisionBlocked ?
-                    Result{ErrorCode::EnvironmentContact, "SimRobotController: no collision-free IK solution for the TCP path"} :
-                    MapIkFailure(ikFailure);
+            {
+                if (invalidity == JointStateInvalidity::EnvironmentCollision)
+                    return {ErrorCode::EnvironmentContact, "SimRobotController: no collision-free IK solution for the TCP path"};
+                if (invalidity != JointStateInvalidity::None)
+                    return MapJointStateInvalidity(invalidity);
+                return MapIkFailure(ikFailure);
+            }
 
             double duration = std::max(
                 RequiredTimeForVelocity(positionStep, command.maxLinearVelocityMetersPerSecond),

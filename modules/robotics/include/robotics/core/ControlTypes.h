@@ -26,6 +26,7 @@ using JointVector = std::vector<double>;
  * Unsupported는 이 구현이 기능을 제공하지 않음, TransportError는 통신 실패를 뜻한다.
  * Unreachable은 IK의 보수적 도달 거리 밖이고 JointLimitReached는 관절 경계에 막힌 국소 계산이며 IkDidNotConverge는 반복 한도나 정체다.
  * 국소 IK 실패만으로 다른 시작 관절각에서도 해가 없다고 단정하지 않는다.
+ * SelfCollision과 AttachedObjectCollision은 계획한 자세가 각각 로봇 링크끼리 또는 로봇에 붙은 물체와 충돌할 때 사용한다.
  * Fault code만으로 장비 보호 정지 여부를 판단할 수 없다.
  */
 enum class ErrorCode
@@ -40,7 +41,27 @@ enum class ErrorCode
     Unreachable,    // IK가 링크 길이의 보수적 거리 상한 밖인 목표를 확인했다.
     JointLimitReached, // IK가 관절 한계 때문에 국소 오차를 더 줄이지 못했다.
     IkDidNotConverge, // IK가 반복 한도나 수치 정체로 해를 찾지 못했다. 다른 시작각에서 해가 없다는 뜻은 아니다.
-    EnvironmentContact // 다음 Robot 또는 Gripper 목표 자세가 Environment와 겹쳐 물리 반영 전에 직전 관절 자세로 돌아갔다.
+    EnvironmentContact, // 다음 Robot 또는 Gripper 목표 자세가 Environment와 겹쳐 물리 반영 전에 직전 관절 자세로 돌아갔다.
+    SelfCollision, // 계획한 관절 자세에서 로봇 링크끼리 충돌한다.
+    AttachedObjectCollision // 계획한 관절 자세에서 로봇에 붙은 물체가 충돌한다.
+};
+
+/**
+ * @brief 관절 자세가 상태 유효성 검사를 통과하지 못한 이유를 나타낸다.
+ * @details None은 관절 수, 유한한 각도, 관절 한계를 통과했고, 충돌 검사기가 등록된 경우 그 검사기도 자세를 허용했음을 뜻한다.
+ * EnvironmentCollision은 현재 Viewer가 검사하는 바닥이나 작업대 같은 고정 환경과 겹쳤음을 뜻한다.
+ * SelfCollision은 로봇 링크끼리 겹친 경우이고 AttachedObjectCollision은 로봇에 붙은 물체가 다른 물체와 겹친 경우다. 이 두 충돌 검사는 아직 구현되지 않았다.
+ * 각 실패 사유는 원인과 해결 방법이 다르므로 EnvironmentCollision으로 합치지 않는다.
+ */
+enum class JointStateInvalidity : std::uint8_t
+{
+    None,
+    JointCountMismatch,
+    NonFinitePosition,
+    JointLimitViolation,
+    EnvironmentCollision,
+    SelfCollision, // 로봇 링크끼리 충돌했다.
+    AttachedObjectCollision // 로봇에 붙은 물체가 충돌했다.
 };
 
 /**

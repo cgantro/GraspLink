@@ -1,4 +1,5 @@
 #include "robotics/backends/simulation/SimRobotController.h"
+#include "robotics/backends/simulation/detail/LinearPathPlanner.h"
 #include "robotics/kinematics/RobotInverseKinematics.h"
 #include "robotics/models/hanwha/Hcr12a.h"
 #include "TestSupport.h"
@@ -7,6 +8,7 @@
 #include <array>
 #include <cmath>
 #include <iostream>
+#include <limits>
 #include <string>
 
 using namespace grasplink::robotics;
@@ -219,6 +221,45 @@ void CheckExplicitWristUnwindPreservesZeroRepresentation()
         "J6 returns to the central zero degree representation instead of the nearby negative 360 degree turn");
 }
 
+void CheckJointStateValidityReasons()
+{
+    using grasplink::robotics::backends::simulation::detail::MapJointStateInvalidity;
+    using grasplink::robotics::backends::simulation::detail::ValidateJointState;
+
+    const auto& specification = models::hanwha::kHcr12a;
+    JointVector joints(specification.jointCount, 0.0);
+    std::size_t collisionChecks = 0;
+    const auto environmentChecker = [&](const JointVector&)
+    {
+        ++collisionChecks;
+        return JointStateInvalidity::EnvironmentCollision;
+    };
+
+    Require(ValidateJointState(specification, joints, environmentChecker) ==
+        JointStateInvalidity::EnvironmentCollision, "valid joint values propagate the environment collision reason");
+    Require(collisionChecks == 1, "the environment checker runs after valid joint values");
+
+    JointVector outsideLimit = joints;
+    outsideLimit[0] = specification.joints[0].maxPositionRadians + 0.01;
+    Require(ValidateJointState(specification, outsideLimit, environmentChecker) ==
+        JointStateInvalidity::JointLimitViolation, "joint limits have a reason distinct from environment collision");
+    Require(collisionChecks == 1, "invalid joint limits prevent the collision checker from running");
+
+    JointVector nonFinite = joints;
+    nonFinite[0] = std::numeric_limits<double>::infinity();
+    Require(ValidateJointState(specification, nonFinite, environmentChecker) ==
+        JointStateInvalidity::NonFinitePosition, "non-finite joint values are rejected before collision checks");
+    Require(ValidateJointState(specification, JointVector{}, environmentChecker) ==
+        JointStateInvalidity::JointCountMismatch, "joint count mismatch has its own invalidity reason");
+
+    Require(MapJointStateInvalidity(JointStateInvalidity::EnvironmentCollision).code == ErrorCode::EnvironmentContact,
+        "environment collision retains its existing controller error code");
+    Require(MapJointStateInvalidity(JointStateInvalidity::SelfCollision).code == ErrorCode::SelfCollision,
+        "self collision is not reported as environment contact");
+    Require(MapJointStateInvalidity(JointStateInvalidity::AttachedObjectCollision).code == ErrorCode::AttachedObjectCollision,
+        "attached-object collision is not reported as environment contact");
+}
+
 void CheckEnvironmentCollisionCanBeRetried()
 {
     SimRobotController controller(models::hanwha::kHcr12a, models::Pose3{{0.04, 0.0, 0.0}, {}});
@@ -253,7 +294,7 @@ void CheckCollisionAwareIkSelectsAnotherBranch()
     Require(static_cast<bool>(constrained.Connect()), "collision-aware controller connects");
     Require(static_cast<bool>(constrained.MoveJoint({start, 1.0, 1.0})), "collision-aware controller reaches same seed");
     AdvanceUntilIdle(constrained, 0.004);
-    constrained.SetJointPoseCollisionValidator([&](const JointVector& candidate)
+    constrained.SetJointStateValidityChecker([&](const JointVector& candidate)
     {
         double squaredDistance = 0.0;
         for (std::size_t joint = 0; joint < candidate.size(); ++joint)
@@ -261,7 +302,8 @@ void CheckCollisionAwareIkSelectsAnotherBranch()
             const double difference = candidate[joint] - blockedBranch[joint];
             squaredDistance += difference * difference;
         }
-        return squaredDistance > 0.02 * 0.02;
+        return squaredDistance > 0.02 * 0.02 ? JointStateInvalidity::None :
+            JointStateInvalidity::EnvironmentCollision;
     });
 
     Require(static_cast<bool>(constrained.MovePose(target)), "IK selects a different collision-free branch");
@@ -276,6 +318,22 @@ void CheckCollisionAwareIkSelectsAnotherBranch()
         branchDifferenceSquared += difference * difference;
     }
     Require(branchDifferenceSquared > 0.02 * 0.02, "selected IK solution avoids the rejected joint-space region");
+
+    SimRobotController blocked(models::hanwha::kHcr12a, tcpOffset);
+    Require(static_cast<bool>(blocked.Connect()), "environment-blocked controller connects");
+    blocked.SetJointStateValidityChecker([](const JointVector&)
+    {
+        return JointStateInvalidity::EnvironmentCollision;
+    });
+    const Result blockedPose = blocked.MovePose(target);
+    Require(blockedPose.code == ErrorCode::EnvironmentContact,
+        "MovePose preserves the environment collision reason from sampled joint states");
+
+    LinearPathMoveCommand blockedPath;
+    blockedPath.targetPoses.push_back(target);
+    const Result blockedLinearPath = blocked.MoveLinearPath(blockedPath);
+    Require(blockedLinearPath.code == ErrorCode::EnvironmentContact,
+        "MoveLinearPath preserves the environment collision reason from path samples");
 }
 
 void CheckLinearPathAndVelocityBounds(double dtSeconds)
@@ -721,6 +779,7 @@ int main()
         CheckEquivalentJointTargetUsesNearestLegalTurn();
         CheckExplicitWristUnwindPreservesZeroRepresentation();
         CheckHomeSeedCanReachFoldedButValidPosture();
+        CheckJointStateValidityReasons();
         CheckEnvironmentCollisionCanBeRetried();
         CheckCollisionAwareIkSelectsAnotherBranch();
         CheckLinearPathAndVelocityBounds(0.004);

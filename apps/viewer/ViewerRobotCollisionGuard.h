@@ -67,7 +67,8 @@ public:
     void RestoreSafePoseIfOverlapping();
 
 private:
-    [[nodiscard]] bool ValidateCandidatePose(const grasplink::robotics::JointVector& candidateJoints);
+    [[nodiscard]] grasplink::robotics::JointStateInvalidity ValidateCandidatePose(
+        const grasplink::robotics::JointVector& candidateJoints);
     void ApplyJointPose(const grasplink::robotics::RobotState& state);
     [[nodiscard]] bool RobotAssemblyOverlapsEnvironment() const;
 

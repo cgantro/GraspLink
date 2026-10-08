@@ -70,7 +70,7 @@ ViewerRobotCollisionGuard::ViewerRobotCollisionGuard(
         pending.insert(pending.end(), children.begin(), children.end());
     }
 
-    m_RobotController.SetJointPoseCollisionValidator([this](const grasplink::robotics::JointVector& candidateJoints)
+    m_RobotController.SetJointStateValidityChecker([this](const grasplink::robotics::JointVector& candidateJoints)
     {
         return ValidateCandidatePose(candidateJoints);
     });
@@ -78,7 +78,7 @@ ViewerRobotCollisionGuard::ViewerRobotCollisionGuard(
 
 ViewerRobotCollisionGuard::~ViewerRobotCollisionGuard()
 {
-    m_RobotController.SetJointPoseCollisionValidator({});
+    m_RobotController.SetJointStateValidityChecker({});
 }
 
 void ViewerRobotCollisionGuard::CaptureSafeJointPose()
@@ -100,7 +100,7 @@ void ViewerRobotCollisionGuard::RestoreSafePoseIfOverlapping()
     ApplyJointPose(m_RobotController.GetStateView());
 }
 
-bool ViewerRobotCollisionGuard::ValidateCandidatePose(
+grasplink::robotics::JointStateInvalidity ViewerRobotCollisionGuard::ValidateCandidatePose(
     const grasplink::robotics::JointVector& candidateJoints)
 {
     const auto& previousState = m_RobotController.GetStateView();
@@ -108,7 +108,8 @@ bool ViewerRobotCollisionGuard::ValidateCandidatePose(
     ApplyJointPose(m_CandidateState);
     const bool collisionFree = !RobotAssemblyOverlapsEnvironment();
     ApplyJointPose(previousState);
-    return collisionFree;
+    return collisionFree ? grasplink::robotics::JointStateInvalidity::None :
+        grasplink::robotics::JointStateInvalidity::EnvironmentCollision;
 }
 
 void ViewerRobotCollisionGuard::ApplyJointPose(const grasplink::robotics::RobotState& state)

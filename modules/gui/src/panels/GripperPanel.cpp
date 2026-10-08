@@ -55,6 +55,8 @@ const char* ErrorCodeName(grasplink::robotics::ErrorCode code)
     case ErrorCode::JointLimitReached: return "Joint limit reached";
     case ErrorCode::IkDidNotConverge: return "IK did not converge";
     case ErrorCode::EnvironmentContact: return "Robot stopped at environment collision";
+    case ErrorCode::SelfCollision: return "Robot self collision";
+    case ErrorCode::AttachedObjectCollision: return "Attached object collision";
     }
     return "Unknown";
 }
