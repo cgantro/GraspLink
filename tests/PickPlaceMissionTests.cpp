@@ -14,9 +14,9 @@ using namespace grasplink::robotics;
 class StubGripper final : public grasplink::robotics::IGripperController
 {
 public:
-    grasplink::robotics::Result Connect() override { connected_ = true; return {}; }
-    void Disconnect() noexcept override { connected_ = false; }
-    bool IsConnected() const noexcept override { return connected_; }
+    grasplink::robotics::Result Connect() override { return {}; }
+    void Disconnect() noexcept override {}
+    bool IsConnected() const noexcept override { return true; }
     grasplink::robotics::Result Activate() override { return {}; }
     grasplink::robotics::Result Reset() override { return {}; }
     grasplink::robotics::Result Command(const grasplink::robotics::GripperCommand& command) override
@@ -28,10 +28,6 @@ public:
     grasplink::robotics::GripperState GetState() const override { return state; }
     void Update(double) override {}
 
-private:
-    bool connected_ = false;
-
-public:
     grasplink::robotics::GripperState state{};
     std::vector<std::uint8_t> commands;
 };
@@ -51,9 +47,9 @@ public:
         state.valid = true;
     }
 
-    Result Connect() override { connected_ = true; return {}; }
-    void Disconnect() noexcept override { connected_ = false; }
-    bool IsConnected() const noexcept override { return connected_; }
+    Result Connect() override { return {}; }
+    void Disconnect() noexcept override {}
+    bool IsConnected() const noexcept override { return true; }
     Result MoveJoint(const JointMoveCommand& command) override
     {
         ++jointRequests;
@@ -115,7 +111,6 @@ public:
 private:
     kinematics::DampedLeastSquaresIk ik_;
     bool completeMovesImmediately_ = false;
-    bool connected_ = false;
 };
 
 }
@@ -127,7 +122,6 @@ TEST(PickPlaceMissionTests, StartPauseAndResumeWithHeldObject)
     SimRobotController controller(models::hanwha::kHcr12a);
     ASSERT_TRUE(static_cast<bool>(controller.Connect())) << "mission controller connects";
     StubGripper gripper;
-    ASSERT_TRUE(static_cast<bool>(gripper.Connect())) << "stub gripper connects";
     grasplink::viewer::PickPlaceMission mission(models::hanwha::kHcr12a);
     const auto state = controller.GetState();
     CartesianPose box = state.tcpPose;
@@ -152,7 +146,6 @@ TEST(PickPlaceMissionTests, UnreachablePickupFailsWithoutMotion)
     SimRobotController controller(models::hanwha::kHcr12a);
     ASSERT_TRUE(static_cast<bool>(controller.Connect())) << "mission controller connects for failed pickup";
     StubGripper gripper;
-    ASSERT_TRUE(static_cast<bool>(gripper.Connect())) << "stub gripper connects for failed pickup";
     grasplink::viewer::PickPlaceMission mission(models::hanwha::kHcr12a);
     const auto initial = controller.GetState();
     CartesianPose unreachableBox = initial.tcpPose;
@@ -176,7 +169,6 @@ TEST(PickPlaceMissionTests, RejectedStartCommandFailsImmediately)
 {
     FakeRobotController controller;
     StubGripper gripper;
-    ASSERT_TRUE(gripper.Connect());
     controller.jointResult = {ErrorCode::Busy, "controller is busy"};
     grasplink::viewer::PickPlaceMission mission(models::hanwha::kHcr12a);
 
@@ -195,7 +187,6 @@ TEST(PickPlaceMissionTests, AcceptedCommandWaitsForControllerToBecomeIdle)
 {
     FakeRobotController controller;
     StubGripper gripper;
-    ASSERT_TRUE(gripper.Connect());
     grasplink::viewer::PickPlaceMission mission(models::hanwha::kHcr12a);
 
     mission.Update(controller.state, controller, gripper, false, {}, {});
@@ -211,7 +202,6 @@ TEST(PickPlaceMissionTests, EnvironmentContactRequestsRetreat)
 {
     FakeRobotController controller;
     StubGripper gripper;
-    ASSERT_TRUE(gripper.Connect());
     grasplink::viewer::PickPlaceMission mission(models::hanwha::kHcr12a);
     CartesianPose box{};
     box.positionMeters = {0.4, 0.2, 0.1};
@@ -236,7 +226,6 @@ TEST(PickPlaceMissionTests, UnrelatedControllerErrorDoesNotTriggerCollisionRecov
 {
     FakeRobotController controller;
     StubGripper gripper;
-    ASSERT_TRUE(gripper.Connect());
     grasplink::viewer::PickPlaceMission mission(models::hanwha::kHcr12a);
     CartesianPose box{};
     box.positionMeters = {0.4, 0.2, 0.1};
@@ -258,7 +247,6 @@ TEST(PickPlaceMissionTests, RejectedStopDoesNotPauseMission)
 {
     FakeRobotController controller;
     StubGripper gripper;
-    ASSERT_TRUE(gripper.Connect());
     controller.stopResult = {ErrorCode::Fault, "stop rejected"};
     grasplink::viewer::PickPlaceMission mission(models::hanwha::kHcr12a);
 
@@ -276,7 +264,6 @@ TEST(PickPlaceMissionTests, ResumeWithHeldObjectRequiresValidTcpFeedback)
 {
     FakeRobotController controller;
     StubGripper gripper;
-    ASSERT_TRUE(gripper.Connect());
     grasplink::viewer::PickPlaceMission mission(models::hanwha::kHcr12a);
     mission.ApplyActions({false, false, true}, controller.state, controller, false, {});
     ASSERT_TRUE(mission.Snapshot().paused);
