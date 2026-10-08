@@ -10,6 +10,6 @@
 build-ninja-release/grasplink_robotics_benchmarks.exe --benchmark_filter=RuntimeLinearPathStress
 ```
 
-각 케이스의 TCP 목표는 관절 한계 안에 있는 관절값에서 FK로 만든다. `/64`와 `/256`은 한 번의 벤치마크 반복에서 생성하는 목표 수다. 결과에는 경로 계획 거절, 실행 중 Fault, 제한 시간 초과, 완료 수가 나온다. `planner_ik_limit_stalls`는 IK가 관절 경계에서 더 나아가지 못해 멈춘 횟수다. 이 값만으로 목표나 전체 경로가 도달 불가능하다거나, 시뮬레이션 중인 로봇 관절이 한계에 닿았다고 결론 내릴 수 없다. `planner_verified_joint_limit_violations`는 경로 관절값 검사에서 실제 범위 초과를 확인한 횟수다. `rejections_with_known_reachable_endpoints`는 실패한 경로 중 끝점이 합법 관절값에서 만들어져 도달 가능하다고 확인된 수다. 끝점에 도달할 수 있어도 그곳까지의 직선 TCP 경로 전체가 가능한지는 별도로 확인해야 한다.
+각 케이스의 TCP 목표는 관절 한계 안에 있는 관절값에서 FK로 만든다. `/64`와 `/256`은 한 번의 벤치마크 반복에서 생성하는 목표 수다. 결과에는 경로 계획 거절, 실행 중 Fault, 제한 시간 초과, 완료 수가 나온다. 각 결과의 label에는 마지막으로 거절된 경로의 TCP 샘플 번호와 IK 실패 이유가 표시된다. `planner_ik_limit_stalls`는 IK가 관절 경계에서 더 나아가지 못해 멈춘 횟수다. 이 값만으로 목표나 전체 경로가 도달 불가능하다거나, 시뮬레이션 중인 로봇 관절이 한계에 닿았다고 결론 내릴 수 없다. `planner_verified_joint_limit_violations`는 경로 관절값 검사에서 실제 범위 초과를 확인한 횟수다. `rejections_with_known_reachable_endpoints`는 실패한 경로 중 끝점이 합법 관절값에서 만들어져 도달 가능하다고 확인된 수다. 끝점에 도달할 수 있어도 그곳까지의 직선 TCP 경로 전체가 가능한지는 별도로 확인해야 한다.
 
 이 벤치마크는 경로 계획과 Controller 실행을 분리해 검사한다. Jolt 환경 충돌, 그리퍼 파지 조건, 전체 Pick-and-Place 임무는 포함하지 않으므로 벤치마크 완료율을 임무 성공률로 해석하면 안 된다.

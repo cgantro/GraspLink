@@ -139,6 +139,7 @@ void RuntimeLinearPathStress(benchmark::State& state)
     std::uint64_t runtimeIkFaults = 0;
     std::uint64_t timeouts = 0;
     std::uint64_t completed = 0;
+    std::string lastPlannerRejection;
 
     for (auto _ : state)
     {
@@ -160,16 +161,17 @@ void RuntimeLinearPathStress(benchmark::State& state)
             const auto accepted = controller.MoveLinearPath(command);
             if (!accepted)
             {
+                lastPlannerRejection = accepted.message;
                 ++plannerRejections;
                 if (accepted.code == ErrorCode::IkDidNotConverge)
                     ++plannerIkRejections;
                 else if (accepted.code == ErrorCode::JointLimitReached)
                 {
                     ++plannerJointLimitStatuses;
-                    if (accepted.message == "IK: joint limits block local improvement" ||
-                        accepted.message == "IK: iteration limit while constrained by joint limits")
+                    if (accepted.message.find("IK: joint limits block local improvement") != std::string::npos ||
+                        accepted.message.find("IK: iteration limit while constrained by joint limits") != std::string::npos)
                         ++plannerIkLimitStalls;
-                    else if (accepted.message == "SimRobotController: planned state exceeds a joint limit")
+                    else if (accepted.message.find("SimRobotController: planned state exceeds a joint limit") != std::string::npos)
                         ++plannerVerifiedJointLimitViolations;
                 }
                 if (ValidateJointState(kHcr12a, testCase.reachableTargetJoints, {}) == JointStateInvalidity::None)
@@ -213,6 +215,8 @@ void RuntimeLinearPathStress(benchmark::State& state)
     state.counters["runtime_ik_faults"] = static_cast<double>(runtimeIkFaults);
     state.counters["timeouts"] = static_cast<double>(timeouts);
     state.counters["completed"] = static_cast<double>(completed);
+    if (!lastPlannerRejection.empty())
+        state.SetLabel(lastPlannerRejection);
     state.SetItemsProcessed(static_cast<std::int64_t>(totalCases));
 }
 

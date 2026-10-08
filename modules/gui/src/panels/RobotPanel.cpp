@@ -87,6 +87,21 @@ RobotPanelActions RobotPanel::DrawContents(const RobotPanelView& view)
     }
     ImGui::Text("Task: %s", view.mission.paused ? "Paused" : view.mission.stageLabel.data());
     ImGui::Text("Controller: %s", RobotModeName(state.mode));
+    std::size_t fastestJoint = 0;
+    double maximumJointSpeed = 0.0;
+    for (std::size_t joint = 0; joint < state.jointVelocityRadiansPerSecond.size() &&
+        joint < specification.jointCount; ++joint)
+    {
+        const double speed = std::abs(state.jointVelocityRadiansPerSecond[joint]);
+        if (speed > maximumJointSpeed)
+        {
+            fastestJoint = joint;
+            maximumJointSpeed = speed;
+        }
+    }
+    if (specification.jointCount > 0 && !state.jointVelocityRadiansPerSecond.empty())
+        ImGui::Text("Joint speed: %s %.1f deg/s", specification.joints[fastestJoint].name,
+            glm::degrees(maximumJointSpeed));
     if (view.mission.paused)
         ImGui::Text("Paused at: %s", view.mission.stageLabel.data());
     ImGui::Text("Mission success: %s", view.mission.missionSucceeded ? "YES" : "NO");
