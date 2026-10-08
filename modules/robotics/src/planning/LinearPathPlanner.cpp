@@ -16,6 +16,9 @@ namespace
 {
 constexpr double kFullTurnRadians = 2.0 * 3.14159265358979323846;
 constexpr std::size_t kIkRestartSeedCount = 16;
+constexpr double kJointLimitSearchMarginFraction = 0.1;
+constexpr double kJointLimitSearchTriggerFraction = 0.05;
+constexpr double kJointLimitPenaltyWeight = 0.1;
 constexpr std::array<std::size_t, 6> kRestartPrimeBases{2, 3, 5, 7, 11, 13};
 
 double HaltonValue(std::size_t index, std::size_t base)
@@ -50,6 +53,20 @@ void BuildRestartSeed(std::size_t sample, const JointVector& start,
         seed[joint] = limits.minPositionRadians +
             fraction * range;
     }
+}
+
+bool IsApproachingJ1Limit(const JointVector& start, const JointVector& target,
+    const models::RobotSpecification& specification)
+{
+    const auto& limits = specification.joints[0];
+    const double range = limits.maxPositionRadians - limits.minPositionRadians;
+    if (range <= 1e-12)
+        return false;
+    const double startMargin = std::min(start.front() - limits.minPositionRadians,
+        limits.maxPositionRadians - start.front()) / range;
+    const double targetMargin = std::min(target.front() - limits.minPositionRadians,
+        limits.maxPositionRadians - target.front()) / range;
+    return targetMargin < kJointLimitSearchTriggerFraction && targetMargin + 1e-9 < startMargin;
 }
 
 Result AddPathSampleContext(Result failure, std::size_t sample, std::size_t sampleCount,
@@ -202,14 +219,17 @@ std::optional<kinematics::IkResult> SolveCollisionFreeIk(
     }
     // 먼저 직전 자세를 seed로 풀어 연속성을 유지한다. 다른 seed가 필요하면 시작 자세에서 관절 범위로 정규화한 변화량이 가장 작은 안전한 해를 고른다.
     auto preferred = inverse.SolveSingleSeed(target, start, options);
+    bool preferredPathValid = false;
     if (preferred)
     {
         AlignEquivalentJointAngles(preferred.jointPositionRadians, start, specification);
         const auto pathInvalidity = ValidateJointPath(
             start, preferred.jointPositionRadians, specification, stateValidityChecker, policy);
-        if (pathInvalidity == JointStateInvalidity::None)
+        preferredPathValid = pathInvalidity == JointStateInvalidity::None;
+        if (!preferredPathValid)
+            invalidity = pathInvalidity;
+        else if (!IsApproachingJ1Limit(start, preferred.jointPositionRadians, specification))
             return preferred;
-        invalidity = pathInvalidity;
     }
     else
     {
@@ -221,7 +241,7 @@ std::optional<kinematics::IkResult> SolveCollisionFreeIk(
 
     // 해는 있지만 모든 해의 경로가 막힌 경우와 목표 자체에 IK 해가 없는 경우를 구분한다.
     std::optional<kinematics::IkResult> bestSolution;
-    double bestNormalizedDistance = std::numeric_limits<double>::infinity();
+    double bestCandidateScore = std::numeric_limits<double>::infinity();
     const auto residual = [&](const kinematics::IkResult& result)
     {
         return result.positionErrorMeters + options.orientationWeightMetersPerRadian *
@@ -253,28 +273,49 @@ std::optional<kinematics::IkResult> SolveCollisionFreeIk(
             return;
         }
 
-        double normalizedDistance = 0.0;
+        double score = 0.0;
         for (std::size_t joint = 0; joint < start.size(); ++joint)
         {
-            const double range = std::max(1e-12, specification.joints[joint].maxPositionRadians -
-                specification.joints[joint].minPositionRadians);
+            const auto& limits = specification.joints[joint];
+            const double range = std::max(1e-12,
+                limits.maxPositionRadians - limits.minPositionRadians);
             const double delta = (solution.jointPositionRadians[joint] - start[joint]) / range;
-            normalizedDistance += delta * delta;
+            score += delta * delta;
+            const double marginFraction = std::min(
+                solution.jointPositionRadians[joint] - limits.minPositionRadians,
+                limits.maxPositionRadians - solution.jointPositionRadians[joint]) / range;
+            const double marginDeficit = std::max(0.0,
+                kJointLimitSearchMarginFraction - marginFraction) / kJointLimitSearchMarginFraction;
+            // 한계 가까이에서는 다음 TCP 표본으로 이어갈 관절 방향이 줄어든다. 지금 작은 우회를 허용해 뒤 표본에서 분기를 급히 바꾸는 상황을 줄인다.
+            score += kJointLimitPenaltyWeight * marginDeficit * marginDeficit;
         }
-        if (normalizedDistance < bestNormalizedDistance)
+        if (score < bestCandidateScore)
         {
-            bestNormalizedDistance = normalizedDistance;
+            bestCandidateScore = score;
             bestSolution = std::move(solution);
         }
     };
 
-    for (const auto& seed : kinematics::detail::BuildAlternativeIkSeeds(start, specification))
-        considerSolution(inverse.SolveSingleSeed(target, seed, options));
+    if (preferredPathValid)
+    {
+        considerSolution(std::move(preferred));
+        JointVector alternateJ1Seed = start;
+        const auto& j1Limits = specification.joints[0];
+        alternateJ1Seed.front() = std::clamp(
+            j1Limits.minPositionRadians + j1Limits.maxPositionRadians - start.front(),
+            j1Limits.minPositionRadians, j1Limits.maxPositionRadians);
+        considerSolution(inverse.SolveSingleSeed(target, alternateJ1Seed, options));
+    }
+    else
+    {
+        for (const auto& seed : kinematics::detail::BuildAlternativeIkSeeds(start, specification))
+            considerSolution(inverse.SolveSingleSeed(target, seed, options));
+    }
 
     if (bestSolution)
         return bestSolution;
 
-    // 기존 자세 주변의 seed로 해를 찾지 못했을 때만 관절 범위 전체에 퍼진 재시작 자세를 시험한다.
+    // 기존 자세와 반사 분기에서 해를 찾지 못했을 때만 현재 자세를 기준으로 재시작 seed를 시험한다.
     JointVector restartSeed(start.size());
     for (std::size_t sample = 1; sample <= kIkRestartSeedCount; ++sample)
     {

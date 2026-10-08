@@ -689,7 +689,34 @@ void CheckLinearPathRestartsAfterLocalIkStall()
         16.5 * radiansPerDegree, 60.7 * radiansPerDegree, -9.6 * radiansPerDegree};
     DampedLeastSquaresIk inverse(models::hanwha::kHcr12a);
     SimRobotController controller(models::hanwha::kHcr12a);
-    ASSERT_TRUE((static_cast<bool>(controller.Connect()))) << "seed-restart line-path fixture connects";
+    ASSERT_TRUE((static_cast<bool>(controller.Connect()))) << "seed-restart line-path fixture connects at home";
+
+    LinearPathMoveCommand command;
+    command.targetPoses.push_back(inverse.EvaluateTcp(targetJoints));
+    command.maxLinearVelocityMetersPerSecond = 2.0;
+    command.maxAngularVelocityRadiansPerSecond = 8.0;
+    command.maxLinearAccelerationMetersPerSecondSquared = 30.0;
+    command.maxAngularAccelerationRadiansPerSecondSquared = 120.0;
+    const Result accepted = controller.MoveLinearPath(command);
+    ASSERT_TRUE((static_cast<bool>(accepted))) << "deterministic restart seeds recover a reachable line-path sample: " + accepted.message;
+    ASSERT_TRUE(AdvanceUntilIdle(controller, 0.004)) << "restarted IK plan finishes without a runtime fault";
+    const RobotState finalState = controller.GetState();
+    ASSERT_TRUE(finalState.tcpPoseValid) << "completed line path reports a valid TCP pose";
+    ASSERT_LT(PositionDistance(finalState.tcpPose, command.targetPoses.back()), 2e-5)
+        << "restarted IK plan reaches its target position";
+    ASSERT_LT(OrientationDistance(finalState.tcpPose, command.targetPoses.back()), 2e-4)
+        << "restarted IK plan reaches its target orientation";
+
+}
+
+void CheckLinearPathAvoidsJ1ZeroDetourNearLimit()
+{
+    constexpr double radiansPerDegree = 3.14159265358979323846 / 180.0;
+    const JointVector targetJoints{
+        175.0 * radiansPerDegree, -0.8, -0.1, 0.5, -0.4, 0.2};
+    DampedLeastSquaresIk inverse(models::hanwha::kHcr12a);
+    SimRobotController controller(models::hanwha::kHcr12a);
+    ASSERT_TRUE((static_cast<bool>(controller.Connect()))) << "near-limit line-path fixture connects";
     JointMoveCommand startCommand;
     startCommand.targetPositionRadians = {
         130.0 * radiansPerDegree, -0.8, -0.1, 0.5, -0.4, 0.2};
@@ -704,7 +731,7 @@ void CheckLinearPathRestartsAfterLocalIkStall()
     command.maxLinearAccelerationMetersPerSecondSquared = 30.0;
     command.maxAngularAccelerationRadiansPerSecondSquared = 120.0;
     const Result accepted = controller.MoveLinearPath(command);
-    ASSERT_TRUE((static_cast<bool>(accepted))) << "deterministic restart seeds recover a reachable line-path sample: " + accepted.message;
+    ASSERT_TRUE((static_cast<bool>(accepted))) << "near-limit line path is accepted: " + accepted.message;
     double previousJ1 = initialJ1;
     double totalJ1Travel = 0.0;
     for (int tick = 0; tick < 10000 && controller.GetStateView().mode == RobotMode::Moving; ++tick)
@@ -714,15 +741,14 @@ void CheckLinearPathRestartsAfterLocalIkStall()
         totalJ1Travel += std::abs(currentJ1 - previousJ1);
         previousJ1 = currentJ1;
     }
-    ASSERT_EQ(controller.GetStateView().mode, RobotMode::Idle) << "restarted IK plan finishes without a runtime fault";
+    ASSERT_EQ(controller.GetStateView().mode, RobotMode::Idle) << "near-limit line path completes";
     const RobotState finalState = controller.GetState();
-    ASSERT_TRUE(finalState.tcpPoseValid) << "completed line path reports a valid TCP pose";
     ASSERT_LT(PositionDistance(finalState.tcpPose, command.targetPoses.back()), 2e-5)
-        << "restarted IK plan reaches its target position";
+        << "near-limit branch selection reaches the target position";
     ASSERT_LT(OrientationDistance(finalState.tcpPose, command.targetPoses.back()), 2e-4)
-        << "restarted IK plan reaches its target orientation";
+        << "near-limit branch selection reaches the target orientation";
     ASSERT_LE(totalJ1Travel, std::abs(finalState.jointPositionRadians[0] - initialJ1) + 0.5)
-        << "fallback IK does not add a detour toward the J1 zero position";
+        << "branch selection near the J1 limit does not add a detour toward zero";
 }
 
 void CheckStopRetargetAndDisconnect()
@@ -826,6 +852,7 @@ TEST(RobotMotion, JointLimitsSetLinearPathSpeed) { CheckJointLimitsSetLinearPath
 TEST(RobotMotion, LinearPathFromHomeNearWristSingularity) { CheckLinearPathFromHomeNearWristSingularity(); }
 TEST(RobotMotion, LinearPathKeepsJ1BranchContinuous) { CheckLinearPathKeepsJ1BranchContinuous(); }
 TEST(RobotMotion, LinearPathRestartsAfterLocalIkStall) { CheckLinearPathRestartsAfterLocalIkStall(); }
+TEST(RobotMotion, LinearPathAvoidsJ1ZeroDetourNearLimit) { CheckLinearPathAvoidsJ1ZeroDetourNearLimit(); }
 TEST(RobotMotion, StopRetargetAndDisconnect) { CheckStopRetargetAndDisconnect(); }
 TEST(RobotMotion, ModelWithoutToolFrame) { CheckModelWithoutToolFrame(); }
 TEST(RobotMotion, UnreachableLineInteriorPreservesActiveJointMotion) { CheckUnreachableLineInteriorPreservesActiveJointMotion(); }
