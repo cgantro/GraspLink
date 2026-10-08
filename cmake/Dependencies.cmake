@@ -73,13 +73,13 @@ function(grasplink_add_graphics_library)
     modules/viewer/include
     modules/viewer/include/components
     modules/viewer/include/graphics
-    modules/viewer/include/scene
     modules/viewer/include/systems
   )
   target_link_libraries(grasplink_graphics PUBLIC
     grasplink_glad
     glfw
     glm::glm
+    grasplink_model_data
     OpenGL::GL
   )
   target_compile_definitions(grasplink_graphics PUBLIC GLFW_INCLUDE_NONE)
