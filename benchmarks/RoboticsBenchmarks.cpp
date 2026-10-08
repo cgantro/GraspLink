@@ -1,4 +1,5 @@
-#include "robotics/planning/LinearPathPlanner.h"
+﻿#include "robotics/planning/LinearPathPlanner.h"
+#include "robotics/backends/simulation/SimRobotController.h"
 #include "robotics/kinematics/RobotInverseKinematics.h"
 #include "robotics/kinematics/RobotKinematics.h"
 #include "robotics/models/hanwha/Hcr12a.h"
@@ -8,8 +9,10 @@
 #include <charconv>
 #include <cstdint>
 #include <iostream>
+#include <random>
 #include <optional>
 #include <string_view>
+#include <vector>
 
 namespace
 {
@@ -18,6 +21,7 @@ using namespace grasplink::robotics::kinematics;
 using namespace grasplink::robotics::models;
 using namespace grasplink::robotics::models::hanwha;
 using namespace grasplink::robotics::planning;
+using grasplink::robotics::backends::simulation::SimRobotController;
 
 const JointVector kSeed(6, 0.0);
 const JointVector kTargetJoints{0.04, -0.05, 0.03, 0.02, -0.03, 0.04};
@@ -94,6 +98,107 @@ void LinearPathPlanning(benchmark::State& state)
     state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(plan.points.size()));
 }
 
+struct RuntimePathCase
+{
+    CartesianPose targetPose;
+};
+
+std::vector<RuntimePathCase> RuntimePathCases(std::size_t caseCount)
+{
+    std::mt19937_64 random(0x47524153504C494EULL);
+    DampedLeastSquaresIk inverse(kHcr12a);
+    std::vector<RuntimePathCase> generated;
+    generated.reserve(caseCount);
+    for (std::size_t sample = 0; sample < caseCount; ++sample)
+    {
+        JointVector targetJoints(kHcr12a.jointCount);
+        for (std::size_t joint = 0; joint < kHcr12a.jointCount; ++joint)
+        {
+            const auto& limits = kHcr12a.joints[joint];
+            std::uniform_real_distribution<double> position(
+                limits.minPositionRadians * 0.8, limits.maxPositionRadians * 0.8);
+            targetJoints[joint] = position(random);
+        }
+        generated.push_back({inverse.EvaluateTcp(targetJoints)});
+    }
+    return generated;
+}
+
+void RuntimeLinearPathStress(benchmark::State& state)
+{
+    const auto cases = RuntimePathCases(static_cast<std::size_t>(state.range(0)));
+    std::uint64_t plannerRejections = 0;
+    std::uint64_t plannerIkRejections = 0;
+    std::uint64_t plannerJointLimitRejections = 0;
+    std::uint64_t runtimeFaults = 0;
+    std::uint64_t runtimeIkFaults = 0;
+    std::uint64_t timeouts = 0;
+    std::uint64_t completed = 0;
+
+    for (auto _ : state)
+    {
+        for (const auto& testCase : cases)
+        {
+            SimRobotController controller(kHcr12a);
+            if (!controller.Connect())
+            {
+                state.SkipWithError("SimRobotController could not connect");
+                return;
+            }
+
+            LinearPathMoveCommand command;
+            command.targetPoses.push_back(testCase.targetPose);
+            command.maxLinearVelocityMetersPerSecond = 2.0;
+            command.maxAngularVelocityRadiansPerSecond = 8.0;
+            command.maxLinearAccelerationMetersPerSecondSquared = 30.0;
+            command.maxAngularAccelerationRadiansPerSecondSquared = 120.0;
+            const auto accepted = controller.MoveLinearPath(command);
+            if (!accepted)
+            {
+                ++plannerRejections;
+                if (accepted.code == ErrorCode::IkDidNotConverge)
+                    ++plannerIkRejections;
+                else if (accepted.code == ErrorCode::JointLimitReached)
+                    ++plannerJointLimitRejections;
+                continue;
+            }
+
+            constexpr double fixedDeltaSeconds = 0.004;
+            constexpr std::size_t maxTicks = 5000;
+            std::size_t tick = 0;
+            for (; tick < maxTicks && controller.GetStateView().mode == RobotMode::Moving; ++tick)
+                controller.Update(fixedDeltaSeconds);
+
+            const auto& result = controller.GetStateView();
+            if (result.mode == RobotMode::Fault)
+            {
+                ++runtimeFaults;
+                if (result.errorCode == ErrorCode::IkDidNotConverge)
+                    ++runtimeIkFaults;
+            }
+            else if (result.mode == RobotMode::Idle)
+            {
+                ++completed;
+            }
+            else
+            {
+                ++timeouts;
+            }
+        }
+    }
+
+    const double totalCases = static_cast<double>(state.iterations() * cases.size());
+    state.counters["cases"] = totalCases;
+    state.counters["planner_rejections"] = static_cast<double>(plannerRejections);
+    state.counters["planner_ik_rejections"] = static_cast<double>(plannerIkRejections);
+    state.counters["planner_joint_limit_rejections"] = static_cast<double>(plannerJointLimitRejections);
+    state.counters["runtime_faults"] = static_cast<double>(runtimeFaults);
+    state.counters["runtime_ik_faults"] = static_cast<double>(runtimeIkFaults);
+    state.counters["timeouts"] = static_cast<double>(timeouts);
+    state.counters["completed"] = static_cast<double>(completed);
+    state.SetItemsProcessed(static_cast<std::int64_t>(totalCases));
+}
+
 bool ParseIterations(std::string_view value, std::int64_t& iterations)
 {
     const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), iterations);
@@ -131,6 +236,9 @@ int main(int argc, char** argv)
     auto* fk = benchmark::RegisterBenchmark("FK", Fk);
     auto* ik = benchmark::RegisterBenchmark("DLS_IK", BenchmarkDlsIk);
     auto* planner = benchmark::RegisterBenchmark("LinearPathPlanner", LinearPathPlanning);
+    benchmark::RegisterBenchmark("RuntimeLinearPathStress", RuntimeLinearPathStress)
+        ->Arg(64)
+        ->Arg(256);
     if (iterations > 0)
     {
         fk->Iterations(iterations);
