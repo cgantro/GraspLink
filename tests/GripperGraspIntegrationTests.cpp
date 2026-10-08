@@ -12,13 +12,13 @@
 #include "assets/GltfLoader.h"
 #include "robotics/kinematics/GripperKinematics.h"
 #include "simulation/robotics/GripperColliders.h"
-#include "viewer/robotics/GripperTransformAdapter.h"
+#include "simulation/robotics/GripperTransformAdapter.h"
 #include "robotics/backends/simulation/SimRobotController.h"
 #include "robotics/kinematics/RobotInverseKinematics.h"
 #include "robotics/kinematics/RobotKinematics.h"
 #include "robotics/models/hanwha/Hcr12a.h"
 #include "simulation/robotics/RobotPhysicsAdapter.h"
-#include "viewer/robotics/RobotTransformAdapter.h"
+#include "simulation/robotics/RobotTransformAdapter.h"
 
 #include <cmath>
 #include <algorithm>
@@ -377,7 +377,7 @@ void CheckAuthoredGripperContacts()
         "authored gripper closing command accepted");
     controller.Update(kTwoF85.nominalMasterClosedRadians * 0.5);
     grasplink::robotics::kinematics::GripperKinematics math{kTwoF85};
-    grasplink::viewer::robotics::GripperTransformAdapter transform{gripper, kTwoF85};
+    grasplink::simulation::robotics::GripperTransformAdapter transform{gripper, kTwoF85};
     transform.Apply(math.Update(controller.GetState()));
     grasplink::simulation::ConfigureTwoF85Colliders(scene, root, model);
     TransformSystemModule::UpdateWorldTransforms(world);
@@ -550,8 +550,8 @@ void CheckRobotControllerCarriesAuthoredGrasp()
     controller.Update(kTwoF85.nominalMasterClosedRadians * 0.5);
     kinematics::RobotKinematics robotMath{kHcr12a};
     kinematics::GripperKinematics gripperMath{kTwoF85};
-    grasplink::viewer::robotics::RobotTransformAdapter robotTransform{root, kHcr12a};
-    grasplink::viewer::robotics::GripperTransformAdapter gripperTransform{gripper, kTwoF85};
+    grasplink::simulation::robotics::RobotTransformAdapter robotTransform{root, kHcr12a};
+    grasplink::simulation::robotics::GripperTransformAdapter gripperTransform{gripper, kTwoF85};
     grasplink::simulation::RobotPhysicsAdapter robotColliders{scene, root, kHcr12a, model};
     auto applyPoses = [&]
     {

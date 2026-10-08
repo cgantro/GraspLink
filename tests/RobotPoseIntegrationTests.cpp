@@ -11,7 +11,7 @@
 #include "scene/Scene.h"
 #include "scene/Scene.h"
 #include "systems/TransformSystemModule.h"
-#include "viewer/robotics/RobotTransformAdapter.h"
+#include "simulation/robotics/RobotTransformAdapter.h"
 #include "TestSupport.h"
 
 #include <glm/gtc/quaternion.hpp>
@@ -86,7 +86,7 @@ void ApplyAndCompare(
     flecs::world& world,
     Entity& robotRoot,
     grasplink::robotics::kinematics::RobotKinematics& kinematics,
-    grasplink::viewer::robotics::RobotTransformAdapter& adapter,
+    grasplink::simulation::robotics::RobotTransformAdapter& adapter,
     const std::array<double, 6>& jointRadians,
     const glm::vec3& rootPosition,
     const glm::quat& rootRotation,
@@ -184,7 +184,7 @@ TEST(RobotPoseIntegration, MatchesKinematicsAndPreservesCachedMeshOwnership)
         robotRoot.SetLocalPosition({1.2F, -0.4F, 0.7F});
         robotRoot.SetLocalRotation(glm::quat{glm::vec3{0.3F, 0.7F, -0.4F}});
         const auto& specification = models::hanwha::kHcr12a;
-        grasplink::viewer::robotics::RobotTransformAdapter adapter(robotRoot, specification);
+        grasplink::simulation::robotics::RobotTransformAdapter adapter(robotRoot, specification);
         grasplink::robotics::kinematics::RobotKinematics kinematics(specification);
 
         ApplyAndCompare(world, robotRoot, kinematics, adapter,
@@ -208,16 +208,16 @@ TEST(RobotPoseIntegration, MatchesKinematicsAndPreservesCachedMeshOwnership)
         // 정상 기준 자세에서 시작해 관절 이름, 부모 계층과 기준 변환의 각 오류를 따로 만들어 연결 검사가 거부하는지 확인한다.
         ApplyAndCompare(world, robotRoot, kinematics, adapter,
             {0, 0, 0, 0, 0, 0}, {}, {1, 0, 0, 0}, "restore bind pose");
-        grasplink::viewer::robotics::RobotTransformAdapter validBind(robotRoot, specification);
+        grasplink::simulation::robotics::RobotTransformAdapter validBind(robotRoot, specification);
 
         Entity j1 = robotRoot.FindChildByNameRecursive("J1");
         // 항등 quaternion의 음수도 같은 항등 회전이다. 성분 부호만 반대라는 이유로 정상 GLB 기준 자세를 거부하면 안 된다.
         j1.SetLocalRotation(glm::quat{-1.0F, 0.0F, 0.0F, 0.0F});
-        grasplink::viewer::robotics::RobotTransformAdapter negativeIdentityBind(robotRoot, specification);
+        grasplink::simulation::robotics::RobotTransformAdapter negativeIdentityBind(robotRoot, specification);
         const glm::vec3 originalJ1Position = j1.GetLocalPosition();
         j1.SetLocalPosition(originalJ1Position + glm::vec3{0.01F, 0.0F, 0.0F});
         CheckThrows<std::invalid_argument>(
-            [&] { grasplink::viewer::robotics::RobotTransformAdapter bad(robotRoot, specification); },
+            [&] { grasplink::simulation::robotics::RobotTransformAdapter bad(robotRoot, specification); },
             "changed GLB bind pivot rejected");
         j1.SetLocalPosition(originalJ1Position);
 
@@ -225,7 +225,7 @@ TEST(RobotPoseIntegration, MatchesKinematicsAndPreservesCachedMeshOwnership)
         Entity originalJ2Parent = j2.GetParent();
         j2.SetParent(robotRoot);
         CheckThrows<std::invalid_argument>(
-            [&] { grasplink::viewer::robotics::RobotTransformAdapter bad(robotRoot, specification); },
+            [&] { grasplink::simulation::robotics::RobotTransformAdapter bad(robotRoot, specification); },
             "broken joint ancestor hierarchy rejected");
         j2.SetParent(originalJ2Parent);
 

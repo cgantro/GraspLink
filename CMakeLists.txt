@@ -14,10 +14,11 @@ include(cmake/Dependencies.cmake)
 grasplink_add_common_dependencies()
 include(CTest)
 
+option(GRASPLINK_BUILD_GRAPHICS "Build the OpenGL viewer" ON)
 option(GRASPLINK_ENABLE_TRACY "Enable Tracy runtime profiling" ON)
 option(GRASPLINK_BUILD_BENCHMARKS "Build FK, IK, and path-planning benchmarks" ${BUILD_TESTING})
 
-if(GRASPLINK_ENABLE_TRACY)
+if(GRASPLINK_BUILD_GRAPHICS AND GRASPLINK_ENABLE_TRACY)
   set(TRACY_ENABLE ON CACHE BOOL "Enable Tracy runtime profiling" FORCE)
   set(TRACY_ON_DEMAND ON CACHE BOOL "Capture Tracy data only when a profiler connects" FORCE)
   FetchContent_Declare(
@@ -41,7 +42,7 @@ if(BUILD_TESTING)
   FetchContent_MakeAvailable(googletest)
 endif()
 
-if(BUILD_TESTING AND GRASPLINK_BUILD_BENCHMARKS)
+if(GRASPLINK_BUILD_BENCHMARKS)
   set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "Disable Google Benchmark tests" FORCE)
   set(BENCHMARK_ENABLE_GTEST_TESTS OFF CACHE BOOL "Disable Google Benchmark GoogleTest tests" FORCE)
   set(BENCHMARK_ENABLE_INSTALL OFF CACHE BOOL "Disable Google Benchmark installation" FORCE)
@@ -164,26 +165,19 @@ endif()
 # Graphics / Viewer
 # ============================================================
 
-option(
-  GRASPLINK_BUILD_GRAPHICS
-  "Build the OpenGL viewer"
-  ON
-)
-
 grasplink_add_scene_dependencies()
+grasplink_add_model_dependencies()
 
 add_library(grasplink_scene STATIC
   modules/scene/src/Entity.cpp
   modules/scene/src/scene/Scene.cpp
   modules/scene/src/systems/TransformSystemModule.cpp
-  modules/scene/src/robotics/RobotTransformAdapter.cpp
-  modules/scene/src/robotics/GripperTransformAdapter.cpp
 )
 target_include_directories(grasplink_scene PUBLIC
   modules/scene/include
   modules/scene/include/systems
 )
-target_link_libraries(grasplink_scene PUBLIC flecs::flecs_static glm::glm grasplink_robotics)
+target_link_libraries(grasplink_scene PUBLIC flecs::flecs_static glm::glm)
 target_compile_definitions(grasplink_scene PRIVATE GLM_ENABLE_EXPERIMENTAL)
 
 add_library(grasplink_model_data STATIC modules/model/src/GltfLoader.cpp)
@@ -194,6 +188,8 @@ target_compile_definitions(grasplink_model_data PRIVATE GLM_ENABLE_EXPERIMENTAL)
 add_library(grasplink_simulation STATIC
   modules/simulation/src/RandomScenario.cpp
   modules/simulation/src/SimulationSceneBuilder.cpp
+  modules/simulation/src/robotics/RobotTransformAdapter.cpp
+  modules/simulation/src/robotics/GripperTransformAdapter.cpp
   modules/simulation/src/robotics/CollisionGeometry.cpp
   modules/simulation/src/robotics/GripperColliders.cpp
   modules/simulation/src/robotics/GripperGraspAdapter.cpp
@@ -241,11 +237,47 @@ if(GRASPLINK_BUILD_GRAPHICS)
   # Viewer가 사용하는 OpenGL, GLFW, Flecs, TinyGLTF 등의 외부 의존성을 구성한다.
   grasplink_add_graphics_dependencies()
 
-  # Viewer와 앱이 공유할 OpenGL 그래픽 라이브러리 target을 만든다.
-  grasplink_add_graphics_library()
+  add_library(grasplink_glad STATIC third_party/glad/src/glad.c)
+  target_include_directories(grasplink_glad PUBLIC third_party/glad/include)
+
+  add_library(grasplink_graphics STATIC
+    modules/viewer/src/graphics/Camera.cpp
+    modules/viewer/src/graphics/OrbitCameraController.cpp
+    modules/viewer/src/graphics/IndexBuffer.cpp
+    modules/viewer/src/graphics/Material.cpp
+    modules/viewer/src/graphics/Mesh.cpp
+    modules/viewer/src/graphics/Renderer.cpp
+    modules/viewer/src/graphics/Shader.cpp
+    modules/viewer/src/graphics/Texture.cpp
+    modules/viewer/src/graphics/VertexArray.cpp
+    modules/viewer/src/graphics/VertexBuffer.cpp
+    modules/viewer/src/graphics/Window.cpp
+    modules/viewer/src/graphics/MultisampleFramebuffer.cpp
+  )
+  target_include_directories(grasplink_graphics PUBLIC
+    modules/viewer/include
+    modules/viewer/include/components
+    modules/viewer/include/graphics
+    modules/viewer/include/systems
+  )
+  target_link_libraries(grasplink_graphics PUBLIC
+    grasplink_glad glfw glm::glm grasplink_model_data OpenGL::GL
+  )
+  target_compile_definitions(grasplink_graphics PUBLIC GLFW_INCLUDE_NONE)
 
   # ImGui UI backend는 공통 그래픽 코드와 분리해 GUI 모듈 의존성으로 구성한다.
   grasplink_add_gui_dependencies()
+  FetchContent_GetProperties(imgui SOURCE_DIR imgui_SOURCE_DIR)
+  add_library(grasplink_imgui_backend STATIC
+    ${imgui_SOURCE_DIR}/imgui.cpp
+    ${imgui_SOURCE_DIR}/imgui_draw.cpp
+    ${imgui_SOURCE_DIR}/imgui_tables.cpp
+    ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+    ${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
+    ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
+  )
+  target_include_directories(grasplink_imgui_backend PUBLIC ${imgui_SOURCE_DIR})
+  target_link_libraries(grasplink_imgui_backend PUBLIC glfw OpenGL::GL)
 
 
   # ----------------------------------------------------------
@@ -367,7 +399,7 @@ if(GRASPLINK_BUILD_GRAPHICS)
     grasplink_add_test(grasplink_quaternion_transform_tests QuaternionTransforms tests/QuaternionTransformTests.cpp grasplink_viewer GTEST_DISCOVERY)
     grasplink_add_test(grasplink_graphics_tests GraphicsResources tests/GraphicsResourceTests.cpp grasplink_graphics GTEST_DISCOVERY TIMEOUT 60)
 
-    grasplink_add_test(grasplink_robot_pose_integration_tests RobotPoseIntegration tests/RobotPoseIntegrationTests.cpp grasplink_viewer GTEST_DISCOVERY WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    grasplink_add_test(grasplink_robot_pose_integration_tests RobotPoseIntegration tests/RobotPoseIntegrationTests.cpp grasplink_simulation grasplink_viewer GTEST_DISCOVERY WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 
     add_test(NAME ViewerSmoke COMMAND grasplink_simulator --smoke-test)
     set_tests_properties(ViewerSmoke PROPERTIES
@@ -377,15 +409,17 @@ if(GRASPLINK_BUILD_GRAPHICS)
 
 endif()
 
-if(BUILD_TESTING AND GRASPLINK_BUILD_BENCHMARKS)
+if(GRASPLINK_BUILD_BENCHMARKS)
   add_executable(grasplink_robotics_benchmarks benchmarks/RoboticsBenchmarks.cpp)
   target_link_libraries(grasplink_robotics_benchmarks PRIVATE
     grasplink_robotics
     benchmark::benchmark
   )
-  add_test(NAME RoboticsBenchmarks COMMAND grasplink_robotics_benchmarks --benchmark_min_time=0.01s)
-  set_tests_properties(RoboticsBenchmarks PROPERTIES
-    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
-    TIMEOUT 30
-    FAIL_REGULAR_EXPRESSION "ERROR OCCURRED;inf/s;nan/s;NaN")
+  if(BUILD_TESTING)
+    add_test(NAME RoboticsBenchmarks COMMAND grasplink_robotics_benchmarks --benchmark_min_time=0.01s)
+    set_tests_properties(RoboticsBenchmarks PROPERTIES
+      WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+      TIMEOUT 30
+      FAIL_REGULAR_EXPRESSION "ERROR OCCURRED;inf/s;nan/s;NaN")
+  endif()
 endif()

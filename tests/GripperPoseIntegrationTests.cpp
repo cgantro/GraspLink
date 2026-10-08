@@ -13,8 +13,8 @@
 #include "simulation/robotics/GripperColliders.h"
 #include "simulation/systems/PhysicsSystemModule.h"
 #include "systems/TransformSystemModule.h"
-#include "viewer/robotics/GripperTransformAdapter.h"
-#include "viewer/robotics/RobotTransformAdapter.h"
+#include "simulation/robotics/GripperTransformAdapter.h"
+#include "simulation/robotics/RobotTransformAdapter.h"
 
 #include <gtest/gtest.h>
 
@@ -92,8 +92,8 @@ struct Fixture
     kinematics::GripperKinematics gripperMath{models::robotiq::kTwoF85};
     kinematics::RobotKinematics armMath{models::hanwha::kHcr12a};
     RobotState armState;
-    std::unique_ptr<grasplink::viewer::robotics::RobotTransformAdapter> armAdapter;
-    std::unique_ptr<grasplink::viewer::robotics::GripperTransformAdapter> gripperAdapter;
+    std::unique_ptr<grasplink::simulation::robotics::RobotTransformAdapter> armAdapter;
+    std::unique_ptr<grasplink::simulation::robotics::GripperTransformAdapter> gripperAdapter;
     std::unique_ptr<grasplink::simulation::PhysicsSystemModule> integration;
     std::unique_ptr<Scene> scene;
 
@@ -111,8 +111,8 @@ struct Fixture
         EXPECT_TRUE_MESSAGE(controller.Connect().Ok() && controller.Activate().Ok(), "controller activated");
         armState.valid = true;
         armState.jointPositionRadians.assign(6, 0.0);
-        armAdapter = std::make_unique<grasplink::viewer::robotics::RobotTransformAdapter>(robotRoot, models::hanwha::kHcr12a);
-        gripperAdapter = std::make_unique<grasplink::viewer::robotics::GripperTransformAdapter>(gripper, models::robotiq::kTwoF85);
+        armAdapter = std::make_unique<grasplink::simulation::robotics::RobotTransformAdapter>(robotRoot, models::hanwha::kHcr12a);
+        gripperAdapter = std::make_unique<grasplink::simulation::robotics::GripperTransformAdapter>(gripper, models::robotiq::kTwoF85);
         ApplyPoses();
         grasplink::simulation::ConfigureTwoF85Colliders(*scene, robotRoot, model);
         TransformSystemModule::UpdateWorldTransforms(world);
@@ -240,7 +240,7 @@ void CheckNonidentityBindRotation()
     joint.SetLocalRotation(glm::quat{bindEuler});
     auto specification = models::robotiq::kTwoF85;
     specification.jointCount = 1;
-    grasplink::viewer::robotics::GripperTransformAdapter adapter(root, specification);
+    grasplink::simulation::robotics::GripperTransformAdapter adapter(root, specification);
     kinematics::GripperKinematicState pose;
     pose.masterAngleRadians = 0.4;
     pose.jointAnglesRadians = {0.4};
@@ -256,7 +256,7 @@ void CheckNonidentityBindRotation()
     rootRotation.w = rootRotation.x = rootRotation.y = rootRotation.z = 0.0F;
     GTestExpectThrows<std::invalid_argument>([&]
     {
-        grasplink::viewer::robotics::GripperTransformAdapter invalid(root, specification);
+        grasplink::simulation::robotics::GripperTransformAdapter invalid(root, specification);
     }, "zero root bind quaternion rejected");
 }
 

@@ -122,7 +122,7 @@ TEST(PickPlaceMissionTests, StartPauseAndResumeWithHeldObject)
     SimRobotController controller(models::hanwha::kHcr12a);
     ASSERT_TRUE(static_cast<bool>(controller.Connect())) << "mission controller connects";
     StubGripper gripper;
-    grasplink::viewer::PickPlaceMission mission(models::hanwha::kHcr12a);
+    grasplink::application::PickPlaceMission mission(models::hanwha::kHcr12a);
     const auto state = controller.GetState();
     CartesianPose box = state.tcpPose;
     CartesianPose goal = state.tcpPose;
@@ -146,7 +146,7 @@ TEST(PickPlaceMissionTests, UnreachablePickupFailsWithoutMotion)
     SimRobotController controller(models::hanwha::kHcr12a);
     ASSERT_TRUE(static_cast<bool>(controller.Connect())) << "mission controller connects for failed pickup";
     StubGripper gripper;
-    grasplink::viewer::PickPlaceMission mission(models::hanwha::kHcr12a);
+    grasplink::application::PickPlaceMission mission(models::hanwha::kHcr12a);
     const auto initial = controller.GetState();
     CartesianPose unreachableBox = initial.tcpPose;
     unreachableBox.positionMeters[0] += 5.0;
@@ -170,7 +170,7 @@ TEST(PickPlaceMissionTests, RejectedStartCommandFailsImmediately)
     FakeRobotController controller;
     StubGripper gripper;
     controller.jointResult = {ErrorCode::Busy, "controller is busy"};
-    grasplink::viewer::PickPlaceMission mission(models::hanwha::kHcr12a);
+    grasplink::application::PickPlaceMission mission(models::hanwha::kHcr12a);
 
     mission.Update(controller.state, controller, gripper, false, {}, {});
     mission.ApplyActions({true, false, false}, controller.state, controller, false, {});
@@ -187,7 +187,7 @@ TEST(PickPlaceMissionTests, AcceptedCommandWaitsForControllerToBecomeIdle)
 {
     FakeRobotController controller;
     StubGripper gripper;
-    grasplink::viewer::PickPlaceMission mission(models::hanwha::kHcr12a);
+    grasplink::application::PickPlaceMission mission(models::hanwha::kHcr12a);
 
     mission.Update(controller.state, controller, gripper, false, {}, {});
     mission.ApplyActions({true, false, false}, controller.state, controller, false, {});
@@ -202,7 +202,7 @@ TEST(PickPlaceMissionTests, EnvironmentContactRequestsRetreat)
 {
     FakeRobotController controller;
     StubGripper gripper;
-    grasplink::viewer::PickPlaceMission mission(models::hanwha::kHcr12a);
+    grasplink::application::PickPlaceMission mission(models::hanwha::kHcr12a);
     CartesianPose box{};
     box.positionMeters = {0.4, 0.2, 0.1};
 
@@ -226,7 +226,7 @@ TEST(PickPlaceMissionTests, UnrelatedControllerErrorDoesNotTriggerCollisionRecov
 {
     FakeRobotController controller;
     StubGripper gripper;
-    grasplink::viewer::PickPlaceMission mission(models::hanwha::kHcr12a);
+    grasplink::application::PickPlaceMission mission(models::hanwha::kHcr12a);
     CartesianPose box{};
     box.positionMeters = {0.4, 0.2, 0.1};
 
@@ -248,7 +248,7 @@ TEST(PickPlaceMissionTests, RejectedStopDoesNotPauseMission)
     FakeRobotController controller;
     StubGripper gripper;
     controller.stopResult = {ErrorCode::Fault, "stop rejected"};
-    grasplink::viewer::PickPlaceMission mission(models::hanwha::kHcr12a);
+    grasplink::application::PickPlaceMission mission(models::hanwha::kHcr12a);
 
     mission.ApplyActions({false, false, true}, controller.state, controller, false, {});
 
@@ -264,7 +264,7 @@ TEST(PickPlaceMissionTests, ResumeWithHeldObjectRequiresValidTcpFeedback)
 {
     FakeRobotController controller;
     StubGripper gripper;
-    grasplink::viewer::PickPlaceMission mission(models::hanwha::kHcr12a);
+    grasplink::application::PickPlaceMission mission(models::hanwha::kHcr12a);
     mission.ApplyActions({false, false, true}, controller.state, controller, false, {});
     ASSERT_TRUE(mission.Snapshot().paused);
     controller.state.valid = false;
@@ -285,7 +285,7 @@ TEST(PickPlaceMissionTests, SuccessfulCyclePublishesOneCompletionEvent)
 {
     FakeRobotController controller(models::hanwha::kHcr12a, true);
     StubGripper gripper;
-    grasplink::viewer::PickPlaceMission mission(models::hanwha::kHcr12a);
+    grasplink::application::PickPlaceMission mission(models::hanwha::kHcr12a);
     CartesianPose box{};
     box.positionMeters = controller.state.tcpPose.positionMeters;
     box.positionMeters[1] -= 0.25;
@@ -322,7 +322,7 @@ TEST(PickPlaceMissionTests, GripperMissReleasesAndFailsWithoutSuccessEvent)
     StubGripper gripper;
     gripper.state.mode = GripperMode::Idle;
     gripper.state.objectStatus = GripperObjectStatus::AtRequestedPosition;
-    grasplink::viewer::PickPlaceMission mission(models::hanwha::kHcr12a);
+    grasplink::application::PickPlaceMission mission(models::hanwha::kHcr12a);
     CartesianPose box{};
     box.positionMeters = controller.state.tcpPose.positionMeters;
     box.positionMeters[1] -= 0.25;
@@ -346,7 +346,7 @@ TEST(PickPlaceMissionTests, RejectedTransitPathPreservesControllerError)
     FakeRobotController controller(models::hanwha::kHcr12a, true);
     controller.pathResult = {ErrorCode::Unsupported, "path execution unavailable"};
     StubGripper gripper;
-    grasplink::viewer::PickPlaceMission mission(models::hanwha::kHcr12a);
+    grasplink::application::PickPlaceMission mission(models::hanwha::kHcr12a);
     CartesianPose box{};
     box.positionMeters = controller.state.tcpPose.positionMeters;
     box.positionMeters[1] -= 0.25;

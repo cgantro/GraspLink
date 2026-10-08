@@ -6,7 +6,7 @@
 
 #include <vector>
 
-namespace grasplink::viewer::robotics
+namespace grasplink::simulation::robotics
 {
 
 /**

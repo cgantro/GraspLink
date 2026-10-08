@@ -39,8 +39,8 @@
 
 #include "scene/Scene.h"
 
-#include "viewer/robotics/RobotTransformAdapter.h"
-#include "viewer/robotics/GripperTransformAdapter.h"
+#include "simulation/robotics/RobotTransformAdapter.h"
+#include "simulation/robotics/GripperTransformAdapter.h"
 
 #include <algorithm>
 #include <cmath>
@@ -79,7 +79,7 @@ const glm::vec3 kCameraPosition{2.0F, 1.35F, 1.15F};
 const glm::vec3 kCameraTarget{0.05F, 0.50F, 0.40F};
 
 using SimRobotController = grasplink::robotics::backends::simulation::SimRobotController;
-using RobotTransformAdapter = grasplink::viewer::robotics::RobotTransformAdapter;
+using RobotTransformAdapter = grasplink::simulation::robotics::RobotTransformAdapter;
 using PhysicsWorld = grasplink::physics::PhysicsWorld;
 
 // World 행렬에는 Entity의 크기 변경도 들어가므로 축 길이를 제거한 뒤 회전만 quaternion으로 바꾼다.
@@ -325,7 +325,7 @@ bool ViewerApp::InitGripper(const Entity& robotRoot)
         return false;
     }
     m_GripperKinematics = std::make_unique<grasplink::robotics::kinematics::GripperKinematics>(specification);
-    m_GripperTransformAdapter = std::make_unique<grasplink::viewer::robotics::GripperTransformAdapter>(
+    m_GripperTransformAdapter = std::make_unique<grasplink::simulation::robotics::GripperTransformAdapter>(
         robotRoot.FindChildByNameRecursive("Gripper"), specification);
 
     // 데모와 smoke test에서는 테스트할 수 있도록 그리퍼를 실제로 닫는다. 일반 Viewer는 열린 기준 자세에서 시작한다.
@@ -510,7 +510,8 @@ void ViewerApp::MainLoop()
             const grasplink::gui::RobotPanelView robotPanelView{robotState,
                 m_RobotController->GetSpecification(), boxPose, placementPose, missionView};
             const auto panelActions = m_RobotPanel->DrawContents(robotPanelView);
-            m_PickPlaceMission.ApplyActions({panelActions.start, panelActions.resume, panelActions.stop},
+            m_PickPlaceMission.ApplyActions(grasplink::application::PickPlaceMissionActions{
+                panelActions.start, panelActions.resume, panelActions.stop},
                 m_RobotController->GetStateView(), *m_RobotController, graspState.grasped, boxPose);
             if (m_PickPlaceMission.ConsumeSuccessEvent())
             {

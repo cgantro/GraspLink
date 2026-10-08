@@ -17,6 +17,10 @@ function(grasplink_add_scene_dependencies)
     GIT_TAG v4.1.5
     GIT_SHALLOW TRUE
   )
+  FetchContent_MakeAvailable(flecs)
+endfunction()
+
+function(grasplink_add_model_dependencies)
   set(TINYGLTF_BUILD_LOADER_EXAMPLE OFF CACHE BOOL "" FORCE)
   set(TINYGLTF_BUILD_GL_EXAMPLES OFF CACHE BOOL "" FORCE)
   set(TINYGLTF_BUILD_VALIDATOR_EXAMPLE OFF CACHE BOOL "" FORCE)
@@ -28,10 +32,14 @@ function(grasplink_add_scene_dependencies)
     GIT_TAG v2.9.7
     GIT_SHALLOW TRUE
   )
-  FetchContent_MakeAvailable(flecs tinygltf)
+  FetchContent_MakeAvailable(tinygltf)
 endfunction()
 
 function(grasplink_add_graphics_dependencies)
+  set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+  set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+  set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+  set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
   FetchContent_Declare(
     glfw
     GIT_REPOSITORY https://github.com/glfw/glfw.git
@@ -40,49 +48,6 @@ function(grasplink_add_graphics_dependencies)
   )
   FetchContent_MakeAvailable(glfw)
   find_package(OpenGL REQUIRED)
-endfunction()
-
-function(grasplink_add_graphics_library)
-  add_library(grasplink_glad STATIC third_party/glad/src/glad.c)
-  target_include_directories(grasplink_glad PUBLIC third_party/glad/include)
-
-  set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
-  set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-  set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-  set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
-
-  set(GRASPLINK_GRAPHICS_SOURCES
-    modules/viewer/src/graphics/Camera.cpp
-    modules/viewer/src/graphics/OrbitCameraController.cpp
-    modules/viewer/src/graphics/IndexBuffer.cpp
-    modules/viewer/src/graphics/Material.cpp
-    modules/viewer/src/graphics/Mesh.cpp
-    modules/viewer/src/graphics/Renderer.cpp
-    modules/viewer/src/graphics/Shader.cpp
-    modules/viewer/src/graphics/Texture.cpp
-    modules/viewer/src/graphics/VertexArray.cpp
-    modules/viewer/src/graphics/VertexBuffer.cpp
-    modules/viewer/src/graphics/Window.cpp
-    modules/viewer/src/graphics/MultisampleFramebuffer.cpp
-  )
-
-  add_library(grasplink_graphics STATIC
-    ${GRASPLINK_GRAPHICS_SOURCES}
-  )
-  target_include_directories(grasplink_graphics PUBLIC
-    modules/viewer/include
-    modules/viewer/include/components
-    modules/viewer/include/graphics
-    modules/viewer/include/systems
-  )
-  target_link_libraries(grasplink_graphics PUBLIC
-    grasplink_glad
-    glfw
-    glm::glm
-    grasplink_model_data
-    OpenGL::GL
-  )
-  target_compile_definitions(grasplink_graphics PUBLIC GLFW_INCLUDE_NONE)
 endfunction()
 
 function(grasplink_add_gui_dependencies)
@@ -95,16 +60,6 @@ function(grasplink_add_gui_dependencies)
   FetchContent_GetProperties(imgui)
   if(NOT imgui_POPULATED)
     FetchContent_Populate(imgui)
-    add_library(grasplink_imgui_backend STATIC
-      ${imgui_SOURCE_DIR}/imgui.cpp
-      ${imgui_SOURCE_DIR}/imgui_draw.cpp
-      ${imgui_SOURCE_DIR}/imgui_tables.cpp
-      ${imgui_SOURCE_DIR}/imgui_widgets.cpp
-      ${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
-      ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
-    )
-    target_include_directories(grasplink_imgui_backend PUBLIC ${imgui_SOURCE_DIR})
-    target_link_libraries(grasplink_imgui_backend PUBLIC glfw OpenGL::GL)
   endif()
 endfunction()
 

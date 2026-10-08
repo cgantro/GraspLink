@@ -9,9 +9,9 @@
 #include <cstdint>
 #include <string_view>
 
-namespace grasplink::viewer
+namespace grasplink::application
 {
-struct RobotPanelActions
+struct PickPlaceMissionActions
 {
     bool start = false;
     bool resume = false;
@@ -49,7 +49,7 @@ public:
         const robotics::CartesianPose& graspBoxPoseInBase,
         const robotics::CartesianPose& placementPoseInBase);
     /** @brief 패널에서 받은 시작, 재개, 정지 입력을 임무 명령으로 처리한다. */
-    void ApplyActions(const RobotPanelActions& actions,
+    void ApplyActions(const PickPlaceMissionActions& actions,
         const robotics::RobotState& state,
         robotics::IRobotController& controller, bool boxGrasped,
         const robotics::CartesianPose& graspBoxPoseInBase);

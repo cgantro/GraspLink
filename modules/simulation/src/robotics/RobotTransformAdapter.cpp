@@ -1,4 +1,4 @@
-#include "viewer/robotics/RobotTransformAdapter.h"
+#include "simulation/robotics/RobotTransformAdapter.h"
 #include "systems/TransformSystemModule.h"
 #include "components/TransformComponents.h"
 
@@ -8,7 +8,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace grasplink::viewer::robotics
+namespace grasplink::simulation::robotics
 {
 namespace
 {

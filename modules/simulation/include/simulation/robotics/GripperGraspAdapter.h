@@ -39,7 +39,7 @@ class GripperGraspAdapter final
 public:
     /** @brief 물리 상태와 장면 Body 조회, 개폐 Controller를 빌려 연결한다. */
     GripperGraspAdapter(physics::PhysicsWorld& world, PhysicsSystemModule& system,
-        robotics::backends::simulation::SimGripperController& controller);
+        ::grasplink::robotics::backends::simulation::SimGripperController& controller);
     /** @brief 남은 물리 파지 연결을 해제한다. */
     ~GripperGraspAdapter();
     GripperGraspAdapter(const GripperGraspAdapter&) = delete;
@@ -77,7 +77,7 @@ private:
 
     physics::PhysicsWorld& world_;
     PhysicsSystemModule& system_;
-    robotics::backends::simulation::SimGripperController& controller_;
+    ::grasplink::robotics::backends::simulation::SimGripperController& controller_;
     Entity anchor_;
     Entity left_;
     Entity right_;

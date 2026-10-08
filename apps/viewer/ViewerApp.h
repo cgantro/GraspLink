@@ -34,7 +34,7 @@ class SimRobotController;
 class SimGripperController;
 }
 
-namespace grasplink::viewer::robotics
+namespace grasplink::simulation::robotics
 {
 class RobotTransformAdapter;
 class GripperTransformAdapter;
@@ -145,10 +145,10 @@ private:
 
     // 아래 변환 adapter는 Scene Entity handle을 빌려 쓰므로 Scene보다 먼저 파괴해야 한다.
     std::unique_ptr<grasplink::robotics::kinematics::RobotKinematics> m_RobotKinematics;
-    std::unique_ptr<grasplink::viewer::robotics::RobotTransformAdapter> m_RobotTransformAdapter;
+    std::unique_ptr<grasplink::simulation::robotics::RobotTransformAdapter> m_RobotTransformAdapter;
     std::unique_ptr<grasplink::simulation::RobotPhysicsAdapter> m_RobotPhysicsAdapter;
     std::unique_ptr<grasplink::robotics::kinematics::GripperKinematics> m_GripperKinematics;
-    std::unique_ptr<grasplink::viewer::robotics::GripperTransformAdapter> m_GripperTransformAdapter;
+    std::unique_ptr<grasplink::simulation::robotics::GripperTransformAdapter> m_GripperTransformAdapter;
 
     // 렌더 프레임 시간과 분리해 Controller 및 Physics를 고정 간격으로 실행한다.
     grasplink::robotics::runtime::FixedControlLoop m_ControlLoop;
@@ -169,7 +169,7 @@ private:
     std::unique_ptr<grasplink::gui::GuiModule> m_GuiModule;
     std::unique_ptr<grasplink::gui::GripperPanel> m_GripperPanel;
     std::unique_ptr<grasplink::gui::RobotPanel> m_RobotPanel;
-    grasplink::viewer::PickPlaceMission m_PickPlaceMission{grasplink::robotics::models::hanwha::kHcr12a};
+    grasplink::application::PickPlaceMission m_PickPlaceMission{grasplink::robotics::models::hanwha::kHcr12a};
     std::unique_ptr<grasplink::gui::PhysicsDebugPanel> m_PhysicsDebugPanel;
     std::unique_ptr<grasplink::gui::ColliderOverlay> m_ColliderOverlay;
 

@@ -1,4 +1,4 @@
-#include "viewer/robotics/GripperTransformAdapter.h"
+#include "simulation/robotics/GripperTransformAdapter.h"
 
 #include "components/TransformComponents.h"
 
@@ -13,7 +13,7 @@
 #include <utility>
 #include <vector>
 
-namespace grasplink::viewer::robotics
+namespace grasplink::simulation::robotics
 {
 namespace
 {
