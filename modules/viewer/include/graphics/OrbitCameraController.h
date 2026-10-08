@@ -1,5 +1,8 @@
 #pragma once
 
+namespace grasplink::graphics
+{
+
 class Camera;
 class Window;
 
@@ -66,3 +69,5 @@ private:
     float m_MinDistance = 0.25F;
     float m_MaxDistance = 10.0F;
 };
+
+} // namespace grasplink::graphics

@@ -1,4 +1,4 @@
-#include "assets/GltfLoader.h"
+#include "model/GltfLoader.h"
 #include <gtest/gtest.h>
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -20,6 +20,9 @@
 
 namespace
 {
+using grasplink::model::GltfLoader;
+using grasplink::model::NodeData;
+
 using Bytes = std::vector<unsigned char>;
 
 void AppendUInt32(Bytes& bytes, std::uint32_t value)

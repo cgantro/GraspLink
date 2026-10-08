@@ -1,6 +1,9 @@
-#include "VertexBuffer.h"
+#include "graphics/VertexBuffer.h"
 
 #include <glad/glad.h>
+
+namespace grasplink::graphics
+{
 
 VertexBuffer::VertexBuffer(const void* data, uint32_t size)
 {
@@ -31,3 +34,5 @@ void VertexBuffer::UnBind() const
     // 현재 GL_ARRAY_BUFFER 선택만 해제한다. GPU에 복사된 데이터와 VAO에 기록한 정점 속성 설명은 유지된다.
     glBindBuffer(GL_ARRAY_BUFFER, 0);
 }
+
+} // namespace grasplink::graphics

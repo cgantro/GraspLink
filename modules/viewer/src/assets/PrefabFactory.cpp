@@ -1,13 +1,13 @@
-#include "assets/PrefabFactory.h"
+#include "rendering/assets/PrefabFactory.h"
 
-#include "assets/AssetManager.h"
-#include "assets/GraphicsTypes.h"
+#include "rendering/assets/AssetManager.h"
+#include "model/ModelResource.h"
 
-#include "Material.h"
-#include "Mesh.h"
-#include "Shader.h"
+#include "graphics/Material.h"
+#include "graphics/Mesh.h"
+#include "graphics/Shader.h"
 
-#include "components/RenderComponents.h"
+#include "rendering/components/RenderComponents.h"
 #include "scene/Scene.h"
 
 #include <memory>
@@ -16,14 +16,17 @@
 #include <cstdint>
 #include <vector>
 
+namespace grasplink::rendering
+{
+
 namespace
 {
 /**
  * @brief 표면 묶음에 지정된 재질을 모델의 재질 목록과 자원 캐시에서 찾는다.
  * @details -1은 glTF 표면에 재질 번호가 없다는 뜻이므로 이 경우만 기본 Material을 쓴다. 목록 범위를 벗어난 번호나 GPU에 올리지 않은 재질은 잘못된 모델 연결이므로 예외를 던진다.
  */
-std::shared_ptr<Material> ResolveMaterial(
-    const ModelResource& model,
+std::shared_ptr<::grasplink::graphics::Material> ResolveMaterial(
+    const ::grasplink::model::ModelResource& model,
     const AssetManager& assets,
     int materialIndex)
 {
@@ -32,10 +35,10 @@ std::shared_ptr<Material> ResolveMaterial(
     if (materialIndex >= static_cast<int>(model.materials.size()))
         throw std::runtime_error("Invalid material index");
 
-    const MaterialData& materialData =
+    const ::grasplink::model::MaterialData& materialData =
         model.materials[static_cast<std::size_t>(materialIndex)];
 
-    std::shared_ptr<Material> material = assets.GetMaterial(materialData.uniqueID);
+    std::shared_ptr<::grasplink::graphics::Material> material = assets.GetMaterial(materialData.uniqueID);
     if (!material)
         throw std::runtime_error("Material has not been uploaded");
 
@@ -43,9 +46,9 @@ std::shared_ptr<Material> ResolveMaterial(
 }
 
 void ValidateModelBeforeSceneChanges(
-    const ModelResource& model,
+    const ::grasplink::model::ModelResource& model,
     const AssetManager& assets,
-    const std::shared_ptr<Shader>& shader)
+    const std::shared_ptr<::grasplink::graphics::Shader>& shader)
 {
     if (!shader)
         throw std::runtime_error("PrefabFactory requires a shader");
@@ -76,17 +79,17 @@ void ValidateModelBeforeSceneChanges(
             parentState[index] = 2;
     }
 
-    for (const NodeData& node : model.nodes)
+    for (const ::grasplink::model::NodeData& node : model.nodes)
     {
         if (node.meshIndex < -1 || node.meshIndex >= static_cast<int>(model.meshes.size()))
             throw std::runtime_error("Invalid mesh index in model node");
         if (node.meshIndex < 0)
             continue;
 
-        const MeshData& mesh = model.meshes[static_cast<std::size_t>(node.meshIndex)];
+        const ::grasplink::model::MeshData& mesh = model.meshes[static_cast<std::size_t>(node.meshIndex)];
         if (!assets.GetMesh(mesh.uniqueID))
             throw std::runtime_error("Mesh has not been uploaded: " + mesh.name);
-        for (const SubMeshInfo& subMesh : mesh.subMeshes)
+        for (const ::grasplink::model::SubMeshInfo& subMesh : mesh.subMeshes)
         {
             const std::size_t begin = subMesh.indexStart;
             const std::size_t count = subMesh.indexCount;
@@ -112,22 +115,22 @@ void ValidateModelBeforeSceneChanges(
  * 여러 표면은 재질이나 연결 번호 범위가 다를 수 있어 자식 Entity로 나눈다.
  */
 void CreateRenderEntities(
-    Scene& scene,
-    const ModelResource& model,
+    ::grasplink::scene::Scene& scene,
+    const ::grasplink::model::ModelResource& model,
     const AssetManager& assets,
-    const std::shared_ptr<Shader>& shader,
-    const NodeData& node,
+    const std::shared_ptr<::grasplink::graphics::Shader>& shader,
+    const ::grasplink::model::NodeData& node,
     std::size_t nodeIndex,
-    Entity& nodeEntity)
+    ::grasplink::scene::Entity& nodeEntity)
 {
     if (node.meshIndex < 0) return;
 
-    const MeshData& meshData = model.meshes[static_cast<std::size_t>(node.meshIndex)];
-    const std::shared_ptr<Mesh> gpuMesh = assets.GetMesh(meshData.uniqueID);
+    const ::grasplink::model::MeshData& meshData = model.meshes[static_cast<std::size_t>(node.meshIndex)];
+    const std::shared_ptr<::grasplink::graphics::Mesh> gpuMesh = assets.GetMesh(meshData.uniqueID);
 
     if (meshData.subMeshes.size() == 1)
     {
-        const SubMeshInfo& subMesh = meshData.subMeshes.front();
+        const ::grasplink::model::SubMeshInfo& subMesh = meshData.subMeshes.front();
         nodeEntity
             .set<MeshFilter>(MeshFilter{gpuMesh, subMesh.indexStart, subMesh.indexCount})
             .set<MeshRenderer>(MeshRenderer{
@@ -141,7 +144,7 @@ void CreateRenderEntities(
          primitiveIndex < meshData.subMeshes.size();
          ++primitiveIndex)
     {
-        const SubMeshInfo& subMesh = meshData.subMeshes[primitiveIndex];
+        const ::grasplink::model::SubMeshInfo& subMesh = meshData.subMeshes[primitiveIndex];
 
         const std::string renderEntityName =
             node.name + "_Primitive_" +
@@ -149,11 +152,11 @@ void CreateRenderEntities(
             std::to_string(primitiveIndex);
 
         // 새 자식의 부모 기준 위치와 회전은 0, 크기는 1이다. 별도 이동 없이 부모 부품의 위치·회전을 물려받게 한다.
-        Entity renderEntity = scene.CreateEntity(renderEntityName);
+        ::grasplink::scene::Entity renderEntity = scene.CreateEntity(renderEntityName);
         renderEntity.SetParent(nodeEntity);
 
         // 재질은 자원 번호로 찾아 공유한다. 파일에 재질을 지정하지 않은 표면만 기본 재질을 쓴다.
-        std::shared_ptr<Material> material =
+        std::shared_ptr<::grasplink::graphics::Material> material =
             ResolveMaterial(model, assets, subMesh.defaultMaterialIndex);
 
         renderEntity
@@ -169,23 +172,23 @@ void CreateRenderEntities(
 }
 } // namespace
 
-Entity prefab_factory::CreateModel(
-    Scene& scene,
-    const ModelResource& model,
+::grasplink::scene::Entity prefab_factory::CreateModel(
+    ::grasplink::scene::Scene& scene,
+    const ::grasplink::model::ModelResource& model,
     const AssetManager& assets,
-    const std::shared_ptr<Shader>& shader)
+    const std::shared_ptr<::grasplink::graphics::Shader>& shader)
 {
     // 참조와 계층을 먼저 검증해 잘못된 Asset 때문에 Scene에 일부 Entity만 남는 일을 막는다.
     ValidateModelBeforeSceneChanges(model, assets, shader);
 
     // 첫 단계: 부모 부품이 배열에서 자식 뒤에 있어도 되도록 모든 Entity를 먼저 만든다.
-    std::vector<Entity> entities(model.nodes.size());
+    std::vector<::grasplink::scene::Entity> entities(model.nodes.size());
 
     // 둘째 단계: 파일의 부모 기준 위치 [m], 길이 1인 회전값, 크기 배율을 Entity에 복사한다.
     for (std::size_t i = 0; i < model.nodes.size(); ++i)
     {
-        const NodeData& node = model.nodes[i];
-        Entity entity = scene.CreateEntity(node.name);
+        const ::grasplink::model::NodeData& node = model.nodes[i];
+        ::grasplink::scene::Entity entity = scene.CreateEntity(node.name);
 
         entity.SetLocalPosition(node.translation);
         entity.SetLocalRotation(node.rotation);
@@ -197,7 +200,7 @@ Entity prefab_factory::CreateModel(
     // 셋째 단계: 미리 만든 Entity 번호로 부모 관계를 설정한다. SetParent는 부모 기준 위치·회전·크기를 유지한다.
     for (std::size_t i = 0; i < model.nodes.size(); ++i)
     {
-        const NodeData& node = model.nodes[i];
+        const ::grasplink::model::NodeData& node = model.nodes[i];
 
         // 부모가 없는 최상위 Entity는 CreateEntity가 장면의 최상위 기준에 이미 연결했다.
         if (node.parentIndex < 0) continue;
@@ -222,3 +225,5 @@ Entity prefab_factory::CreateModel(
 
     return entities[static_cast<std::size_t>(model.rootNodeIndex)];
 }
+
+} // namespace grasplink::rendering

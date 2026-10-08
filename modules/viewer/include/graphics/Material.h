@@ -3,6 +3,9 @@
 #include <glm/glm.hpp>
 #include <memory>
 
+namespace grasplink::graphics
+{
+
 class Texture;
 
 /**
@@ -55,3 +58,5 @@ private:
     // GPU 이미지의 공유 소유권이다. 마지막 참조가 사라질 때 Texture가 GL ID를 지우므로 그때까지 context가 필요하다.
     std::shared_ptr<Texture> m_BaseColorTexture;
 };
+
+} // namespace grasplink::graphics

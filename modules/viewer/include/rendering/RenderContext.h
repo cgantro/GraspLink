@@ -1,7 +1,13 @@
 #pragma once
 
+namespace grasplink::graphics
+{
 class Renderer;
 class Camera;
+}
+
+namespace grasplink::rendering
+{
 
 /**
  * @brief 장면 그리기 시스템이 현재 프레임에 사용할 Renderer와 Camera를 찾는 전역 자료다.
@@ -13,8 +19,10 @@ class Camera;
 struct RenderContext
 {
     /// Entity의 Mesh를 GPU에 그리는 Renderer를 빌려 가리킨다. 이 포인터는 수명을 연장하지 않는다.
-    Renderer* renderer = nullptr;
+    ::grasplink::graphics::Renderer* renderer = nullptr;
 
     /// 장면 좌표를 카메라 좌표와 화면 투영 좌표로 바꾸는 Camera를 빌려 가리킨다. 장면 그리기 중에는 계속 살아 있어야 한다.
-    Camera* camera = nullptr;
+    ::grasplink::graphics::Camera* camera = nullptr;
 };
+
+} // namespace grasplink::rendering

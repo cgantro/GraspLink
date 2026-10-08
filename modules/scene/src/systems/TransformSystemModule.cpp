@@ -1,12 +1,15 @@
-#include "systems/TransformSystemModule.h"
+#include "scene/TransformSystemModule.h"
 
-#include "components/TransformComponents.h"
+#include "scene/TransformComponents.h"
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
 
 #include <unordered_map>
 #include <vector>
+
+namespace grasplink::scene
+{
 
 namespace
 {
@@ -79,4 +82,6 @@ void TransformSystemModule::UpdateWorldTransforms(flecs::world& world)
     // 같은 호출 안에서 여러 자식이 쓰는 부모 위치는 한 번만 계산해 재사용한다. 다음 물리 갱신이나 화면 그리기 전에는 바뀐 부모 기준 값을 새로 읽는다.
     for (flecs::entity entity : transformedEntities)
         UpdateEntityWorldTransform(entity, cache);
+}
+
 }

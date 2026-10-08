@@ -1,22 +1,40 @@
-﻿#pragma once
+#pragma once
 
 #include "robotics/runtime/FixedControlLoop.h"
 #include "diagnostics/Logger.h"
-#include "assets/GraphicsTypes.h"
-#include "PickPlaceMission.h"
+#include "model/ModelResource.h"
+#include "application/PickPlaceMission.h"
+#include "application/PickPlaceScenarioSampler.h"
+#include "scene/Entity.h"
 #include "robotics/models/hanwha/Hcr12a.h"
 
 #include <flecs.h>
 #include <memory>
 
+namespace grasplink::graphics
+{
 class Window;
 class Renderer;
 class Camera;
 class OrbitCameraController;
-class Scene;
-class AssetManager;
 class Shader;
+}
+
+namespace grasplink::rendering
+{
+class AssetManager;
+}
+
+namespace grasplink::scene
+{
 class Entity;
+class Scene;
+}
+
+namespace grasplink::model
+{
+struct ModelResource;
+}
 
 namespace grasplink::physics
 {
@@ -56,22 +74,21 @@ class RobotPhysicsAdapter;
 class GripperGraspAdapter;
 }
 
-namespace grasplink::viewer
-{
-class ViewerRobotCollisionGuard;
-}
+namespace grasplink::simulation::robotics { class RobotEnvironmentCollisionGuard; }
 
-/** Options for automated Viewer checks. */
+namespace grasplink::simulator
+{
+/** @brief Viewer 실행 시 자동 smoke test 동작을 선택한다. */
 struct ViewerOptions
 {
     bool smokeTest = false;
 };
 
 /**
- * @brief Viewer 창, 장면, 로봇 제어, 물리와 GUI 객체를 만들고 종료 순서를 관리한다.
- * @details 그래픽 창은 GPU 자원을 만들고 해제하는 OpenGL context를 제공한다. Entity는 장면 물체 참조이고 Flecs World가 실제 물체와 값을 소유하므로 이 앱은 두 수명을 조정한다.
- * 초기화는 창과 World를 준비한 뒤 장면·모델·제어기·물리를 연결한다. 로봇 FK는 관절 각도에서 링크와 도구 끝의 위치·방향을 계산하며, 결과는 화면 모델과 물리 충돌용 단순 물체에 적용한다.
- * 종료할 때 Scene 참조, 삭제 observer, World, 물리 상태 순으로 정리하고 GPU 자원 해제까지 OpenGL context를 유지한다.
+ * @brief 그래픽 창, Scene, 로봇 제어, 물리와 GUI를 조립하고 종료 순서를 관리한다.
+ * @details OpenGL context는 Renderer와 GPU 자원이 동작하는 창 환경이다. Scene의 Entity는 물체를 가리키고 Flecs World가 실제 물체와 Component를 보관하므로 이 앱은 두 수명을 맞춘다.
+ * 초기화는 창과 World를 준비한 뒤 Scene, 모델, 제어기와 물리를 연결한다. 정기구학은 관절 각도에서 링크와 도구 끝의 위치·방향을 계산하고, 앱은 그 결과를 화면 모델과 충돌용 단순 형상에 적용한다.
+ * 종료할 때는 Scene 삭제 observer가 Jolt Body를 정리하도록 World와 PhysicsWorld를 유지하고, GPU 자원이 해제될 때까지 OpenGL context를 열어 둔다.
  */
 class ViewerApp
 {
@@ -91,16 +108,16 @@ private:
     bool InitViewer();
 
     // GLB 모델의 node 부모 관계로 장면 물체를 만들고, 물리 충돌용 단순 모양을 만들 원본 꼭짓점 자료도 보관한다.
-    void InitScene(Entity& robotRoot, Entity& floorEntity);
+    void InitScene(grasplink::scene::Entity& robotRoot, grasplink::scene::Entity& floorEntity);
 
     // Controller의 관절 각도에서 각 링크 위치와 방향을 계산해 화면 모델과 로봇을 따라 움직이는 충돌 물체에 적용한다.
-    bool InitRobot(const Entity& robotRoot);
+    bool InitRobot(const grasplink::scene::Entity& robotRoot);
 
     // 그리퍼 개폐 비율을 손가락 관절별 부모 기준 회전으로 바꾼다. GLB가 정한 장착 위치와 관절 위치는 유지한다.
-    bool InitGripper(const Entity& robotRoot);
+    bool InitGripper(const grasplink::scene::Entity& robotRoot);
 
     // ECS의 충돌 모양 설정에서 Jolt 물체를 만들고, 초기 위치를 화면 물체 및 화면 모델을 따라가는 충돌용 물체에 맞춘다.
-    void InitPhysics(const Entity& robotRoot, Entity& floorEntity);
+    void InitPhysics(const grasplink::scene::Entity& robotRoot, grasplink::scene::Entity& floorEntity);
 
     // Controller 상태에서 계산한 로봇과 그리퍼 위치·방향을 장면 물체에 적용한다. 호출자는 이후 Scene 전체 행렬을 다시 계산한다.
     void ApplyControllerPoses();
@@ -112,27 +129,27 @@ private:
     void Shutdown();
 
     // GLFW Window와 OpenGL Context를 소유한다. Renderer와 GPU 객체의 소멸자가 실행될 때까지 Context를 유지한다.
-    std::unique_ptr<Window> m_Window;
+    std::unique_ptr<grasplink::graphics::Window> m_Window;
 
     // OpenGL 상태를 설정하고 Mesh를 화면에 그린다.
-    std::unique_ptr<Renderer> m_Renderer;
+    std::unique_ptr<grasplink::graphics::Renderer> m_Renderer;
 
     // 카메라의 위치와 View·Projection 행렬을 관리한다.
-    std::unique_ptr<Camera> m_Camera;
+    std::unique_ptr<grasplink::graphics::Camera> m_Camera;
 
     // 마우스 입력으로 바라보는 지점 주위를 도는 카메라를 움직인다.
-    std::unique_ptr<OrbitCameraController> m_CameraController;
-    // Owns the SceneRoot until physics cleanup is complete.
-    std::unique_ptr<Scene> m_Scene;
+    std::unique_ptr<grasplink::graphics::OrbitCameraController> m_CameraController;
+    // Physics cleanup이 끝날 때까지 Flecs World의 SceneRoot를 유지한다.
+    std::unique_ptr<grasplink::scene::Scene> m_Scene;
 
     // 모델의 Mesh, Material, Texture를 GPU 자원으로 올리고 공유한다.
-    std::unique_ptr<AssetManager> m_AssetManager;
+    std::unique_ptr<grasplink::rendering::AssetManager> m_AssetManager;
 
     // Collider 추출에 필요한 원본 CPU 정점 자료를 보관한다.
-    ModelResource m_RobotModel;
+    grasplink::model::ModelResource m_RobotModel;
 
     // 로봇 모델과 디버그 상자 렌더링에 함께 사용하는 Shader다.
-    std::shared_ptr<Shader> m_RobotShader;
+    std::shared_ptr<grasplink::graphics::Shader> m_RobotShader;
 
     // 장면 물체와 위치 같은 값, 자동 실행 규칙을 저장하는 Flecs World다. 물체 삭제를 감지하는 callback이 Jolt 물체를 지울 때까지 PhysicsWorld가 살아 있어야 한다.
     flecs::world m_World;
@@ -163,18 +180,20 @@ private:
     std::unique_ptr<grasplink::simulation::GripperGraspAdapter> m_GripperGraspAdapter;
 
     // Controller가 제안한 자세와 매 고정 tick의 실제 자세를 Environment와 검사한다. 빌린 객체보다 먼저 해제한다.
-    std::unique_ptr<grasplink::viewer::ViewerRobotCollisionGuard> m_RobotCollisionGuard;
+    std::unique_ptr<grasplink::simulation::robotics::RobotEnvironmentCollisionGuard> m_RobotCollisionGuard;
 
     // ImGui backend, 조작 패널, 디버그 패널과 Collider overlay의 수명을 앱이 함께 관리한다.
     std::unique_ptr<grasplink::gui::GuiModule> m_GuiModule;
     std::unique_ptr<grasplink::gui::GripperPanel> m_GripperPanel;
     std::unique_ptr<grasplink::gui::RobotPanel> m_RobotPanel;
     grasplink::application::PickPlaceMission m_PickPlaceMission{grasplink::robotics::models::hanwha::kHcr12a};
+    std::unique_ptr<grasplink::application::PickPlaceScenarioSampler> m_ScenarioSampler;
     std::unique_ptr<grasplink::gui::PhysicsDebugPanel> m_PhysicsDebugPanel;
     std::unique_ptr<grasplink::gui::ColliderOverlay> m_ColliderOverlay;
 
     // GUI가 장면 속 로봇 기준점과 파지 상자의 World 위치를 매 프레임 읽는다. wrapper는 Entity를 소유하지 않는다.
-    std::unique_ptr<Entity> m_RobotRoot;
-    std::unique_ptr<Entity> m_GraspBox;
-    std::unique_ptr<Entity> m_PlacementArea;
+    grasplink::scene::Entity m_RobotRoot;
+    grasplink::scene::Entity m_GraspBox;
+    grasplink::scene::Entity m_PlacementArea;
 };
+} // namespace grasplink::simulator

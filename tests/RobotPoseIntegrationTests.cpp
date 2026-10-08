@@ -1,16 +1,16 @@
-#include "Entity.h"
-#include "Shader.h"
-#include "Window.h"
-#include "assets/AssetManager.h"
-#include "assets/GltfLoader.h"
-#include "assets/GraphicsTypes.h"
-#include "assets/PrefabFactory.h"
-#include "components/RenderComponents.h"
+#include "scene/Entity.h"
+#include "graphics/Shader.h"
+#include "graphics/Window.h"
+#include "rendering/assets/AssetManager.h"
+#include "model/GltfLoader.h"
+#include "model/ModelResource.h"
+#include "rendering/assets/PrefabFactory.h"
+#include "rendering/components/RenderComponents.h"
 #include "robotics/kinematics/RobotKinematics.h"
 #include "robotics/models/hanwha/Hcr12a.h"
 #include "scene/Scene.h"
 #include "scene/Scene.h"
-#include "systems/TransformSystemModule.h"
+#include "scene/TransformSystemModule.h"
 #include "simulation/robotics/RobotTransformAdapter.h"
 #include "TestSupport.h"
 
@@ -30,6 +30,20 @@ using namespace grasplink::robotics;
 
 namespace
 {
+using grasplink::graphics::Shader;
+using grasplink::graphics::Window;
+using grasplink::model::GltfLoader;
+using grasplink::model::MeshData;
+using grasplink::model::ModelResource;
+using grasplink::model::NodeData;
+using grasplink::model::ResourceID;
+using grasplink::scene::Entity;
+using grasplink::scene::Scene;
+using grasplink::scene::TransformSystemModule;
+using grasplink::rendering::AssetManager;
+using grasplink::rendering::MeshFilter;
+using grasplink::rendering::prefab_factory::CreateModel;
+
 struct TestCheckFailure {};
 
 void CheckImpl(bool condition, const std::string& label, const char* file, int line)
@@ -157,12 +171,12 @@ TEST(RobotPoseIntegration, MatchesKinematicsAndPreservesCachedMeshOwnership)
         invalidHierarchy.nodes.front().name = "PreflightFailureRoot";
         invalidHierarchy.nodes.front().parentIndex = 0;
         CheckThrows<std::runtime_error>(
-            [&] { prefab_factory::CreateModel(scene, invalidHierarchy, assets, shader); },
+            [&] { CreateModel(scene, invalidHierarchy, assets, shader); },
             "cyclic model hierarchy is rejected before Scene mutation");
         Check(!world.lookup("PreflightFailureRoot").is_valid(),
             "preflight failure leaves no partial model Entity in the Scene");
 
-        Entity robotRoot = prefab_factory::CreateModel(scene, model, assets, shader);
+        Entity robotRoot = CreateModel(scene, model, assets, shader);
         const auto meshNode = std::find_if(model.nodes.begin(), model.nodes.end(),
             [](const NodeData& node) { return node.meshIndex >= 0; });
         Check(meshNode != model.nodes.end(), "robot model contains a renderable node");

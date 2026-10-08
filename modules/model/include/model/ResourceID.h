@@ -4,6 +4,9 @@
 #include <functional>
 #include <string_view>
 
+namespace grasplink::model
+{
+
 inline constexpr std::uint64_t kFnvOffsetBasis64 = 14695981039346656037ULL;
 
 inline constexpr std::uint64_t kFnvPrime64 = 1099511628211ULL;
@@ -74,12 +77,14 @@ private:
     }
 };
 
+} // namespace grasplink::model
+
 namespace std
 {
 template<>
-struct hash<ResourceID>
+struct hash<grasplink::model::ResourceID>
 {
-    std::size_t operator()(const ResourceID& id) const noexcept
+    std::size_t operator()(const grasplink::model::ResourceID& id) const noexcept
     {
         return static_cast<std::size_t>(id.value);
     }

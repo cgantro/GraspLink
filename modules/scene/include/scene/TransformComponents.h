@@ -7,6 +7,9 @@
 #include <cmath>
 #include <stdexcept>
 
+namespace grasplink::scene
+{
+
 /**
  * @brief 바로 위 부모를 기준으로 장면 물체 원점의 위치를 미터 단위로 저장한다.
  * @details Local은 부모 기준 값이고 World는 Scene 전체 기준 값이다. 예를 들어 로봇 팔 링크의 Local 위치는 부모 관절에서 떨어진 거리다.
@@ -99,3 +102,5 @@ struct World
  * SceneRoot에는 자체 위치·회전·크기가 없지만 일반 부모처럼 조상의 World 행렬을 자식에게 전달한다.
  */
 struct SceneRootTag {};
+
+}

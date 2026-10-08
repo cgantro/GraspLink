@@ -3,6 +3,9 @@
 #include <cstdint>
 #include <memory>
 
+namespace grasplink::graphics
+{
+
 /**
  * @brief Texture는 GPU가 표면 색을 찾을 때 읽는 이미지이며 이 클래스는 8 bit 채널의 2D 이미지를 만든다.
  * @details
@@ -56,3 +59,5 @@ private:
     // 이미지 모양. 현재는 평면 2D 이미지만 만든다.
     std::uint32_t m_Target = 0;
 };
+
+} // namespace grasplink::graphics

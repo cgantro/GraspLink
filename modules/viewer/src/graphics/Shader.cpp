@@ -1,4 +1,4 @@
-#include "Shader.h"
+#include "graphics/Shader.h"
 
 #include <glad/glad.h>
 #include <glm/glm.hpp>
@@ -10,6 +10,9 @@
 #include <iostream>
 #include <stdexcept>
 #include <filesystem>
+
+namespace grasplink::graphics
+{
 
 
 
@@ -228,3 +231,5 @@ void Shader::SetFloat3(const std::string& name, const glm::vec3& value){glUnifor
 void Shader::SetFloat4(const std::string& name, const glm::vec4& value){glUniform4fv(GetUniformLocation(name),1,glm::value_ptr(value));}
 void Shader::SetMat3(const std::string& name, const glm::mat3& value){glUniformMatrix3fv(GetUniformLocation(name),1,GL_FALSE,glm::value_ptr(value));}
 void Shader::SetMat4(const std::string& name, const glm::mat4& value){glUniformMatrix4fv(GetUniformLocation(name),1,GL_FALSE,glm::value_ptr(value));}
+
+} // namespace grasplink::graphics

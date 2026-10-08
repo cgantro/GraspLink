@@ -1,13 +1,13 @@
 #include "robotics/kinematics/RobotKinematics.h"
 #include "robotics/models/hanwha/Hcr12a.h"
-#include "assets/GltfLoader.h"
+#include "model/GltfLoader.h"
 #include "scene/Scene.h"
-#include "PhysicsWorld.h"
+#include "physics/PhysicsWorld.h"
 #include "simulation/components/PhysicsComponents.h"
 #include "simulation/robotics/RobotPhysicsAdapter.h"
 #include "simulation/robotics/RobotCollisionGeometryBuilder.h"
 #include "simulation/systems/PhysicsSystemModule.h"
-#include "systems/TransformSystemModule.h"
+#include "scene/TransformSystemModule.h"
 #include "TestSupport.h"
 
 #include <gtest/gtest.h>
@@ -18,6 +18,14 @@
 
 namespace
 {
+using grasplink::model::MeshData;
+using grasplink::model::ModelResource;
+using grasplink::model::SubMeshInfo;
+using grasplink::model::Vertex;
+using grasplink::scene::Entity;
+using grasplink::scene::Scene;
+using grasplink::scene::TransformSystemModule;
+
 #define ASSERT_TRUE_MESSAGE(condition, message) ASSERT_TRUE(condition) << message
 #define EXPECT_TRUE_MESSAGE(condition, message) EXPECT_TRUE(condition) << message
 #define ASSERT_NEAR_FINITE(actual, expected, tolerance, message) \

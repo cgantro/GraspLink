@@ -1,4 +1,4 @@
-#include "PhysicsWorld.h"
+#include "physics/PhysicsWorld.h"
 
 #include <gtest/gtest.h>
 #include <glm/gtc/quaternion.hpp>

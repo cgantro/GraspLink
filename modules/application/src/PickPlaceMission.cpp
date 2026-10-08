@@ -1,5 +1,5 @@
-#include "PickPlaceMission.h"
-#include "PickPlaceConfig.h"
+#include "application/PickPlaceMission.h"
+#include "application/PickPlaceConfig.h"
 #include "robotics/planning/WristAlignmentPlanner.h"
 
 #include <glm/gtc/constants.hpp>

@@ -4,6 +4,9 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 
+namespace grasplink::scene
+{
+
 /**
  * @brief 장면 물체의 부모 기준 위치·회전·크기를 Scene 전체 기준 변환으로 계산한다.
  * @details Local 값은 바로 위 부모를 기준으로 하고 World 값은 모든 부모 변환을 누적한 Scene 기준이다. 로봇 팔 링크의 Local 회전을 바꾸면 이 모듈은 부모 관절의 회전까지 반영한 World 행렬을 만든다.
@@ -38,3 +41,5 @@ public:
      */
     static void UpdateWorldTransforms(flecs::world& world);
 };
+
+}

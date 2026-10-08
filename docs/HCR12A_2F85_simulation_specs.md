@@ -346,7 +346,7 @@ docs/MODEL_DATA_PROVENANCE.md
 GLB 구조:
 
 ```text
-docs/HCR12A GLB 정규화.md
+docs/HCR12A_GLB_NORMALIZATION.md
 ```
 
 Controller architecture:

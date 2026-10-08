@@ -1,4 +1,4 @@
-#include "robotics/backends/simulation/detail/LinearPathPlanner.h"
+#include "robotics/planning/LinearPathPlanner.h"
 #include "robotics/kinematics/RobotInverseKinematics.h"
 #include "robotics/kinematics/RobotKinematics.h"
 #include "robotics/models/hanwha/Hcr12a.h"
@@ -17,7 +17,7 @@ using namespace grasplink::robotics;
 using namespace grasplink::robotics::kinematics;
 using namespace grasplink::robotics::models;
 using namespace grasplink::robotics::models::hanwha;
-using namespace grasplink::robotics::backends::simulation::detail;
+using namespace grasplink::robotics::planning;
 
 const JointVector kSeed(6, 0.0);
 const JointVector kTargetJoints{0.04, -0.05, 0.03, 0.02, -0.03, 0.04};

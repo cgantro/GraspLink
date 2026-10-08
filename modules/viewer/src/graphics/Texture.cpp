@@ -1,8 +1,11 @@
-#include "Texture.h"
+#include "graphics/Texture.h"
 
 #include <glad/glad.h>
 
 #include <stdexcept>
+
+namespace grasplink::graphics
+{
 
 Texture::Texture() = default;
 
@@ -89,3 +92,5 @@ std::shared_ptr<Texture> Texture::Create2D(
     // 이 경로는 glTF에 저장된 sampler 설정을 읽지 않고 Texture 반복 방식과 필터를 고정값으로 사용한다.
     return texture;
 }
+
+} // namespace grasplink::graphics

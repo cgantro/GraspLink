@@ -1,13 +1,19 @@
 #pragma once
 
-#include "assets/GraphicsTypes.h"
+#include "model/ModelResource.h"
 
 #include <memory>
 #include <unordered_map>
 
+namespace grasplink::graphics
+{
 class Material;
 class Mesh;
 class Texture;
+}
+
+namespace grasplink::rendering
+{
 
 /**
  * @brief 파일에서 읽은 모델 데이터를 그래픽 카드에 올리고 같은 자원을 여러 사용자가 함께 쓰게 한다.
@@ -37,21 +43,23 @@ public:
      * sRGB는 모니터용 RGB 색을 GPU 조명 계산용 선형 색으로 읽게 하는 저장 형식이다. Material에는 기본색 이미지 참조만 연결하며 금속성·거칠기, 표면 방향, 빛 가림, 발광 이미지 참조는 유효한 ID로 설정하지 않는다.
      * GPU 업로드에는 OpenGL 명령 실행 환경(context)이 현재 스레드에서 활성화되어 있어야 한다.
      */
-    void UploadModel(const ModelResource& model);
+    void UploadModel(const ::grasplink::model::ModelResource& model);
 
     /** @brief 형상 식별자에 해당하는 GPU Mesh를 찾는다. @return 업로드되지 않았으면 빈 공유 참조. */
-    std::shared_ptr<Mesh> GetMesh(ResourceID id) const;
+    std::shared_ptr<::grasplink::graphics::Mesh> GetMesh(::grasplink::model::ResourceID id) const;
 
     /** @brief 자원 식별자에 해당하는 Material(표면 색·빛 반응 정보)을 찾는다. @return 없으면 빈 공유 참조. */
-    std::shared_ptr<Material> GetMaterial(ResourceID id) const;
+    std::shared_ptr<::grasplink::graphics::Material> GetMaterial(::grasplink::model::ResourceID id) const;
 
     /** @brief 파일에서 재질 번호를 주지 않은 표면에 쓸 기본 재질을 반환한다. */
-    std::shared_ptr<Material> GetDefaultMaterial() const;
+    std::shared_ptr<::grasplink::graphics::Material> GetDefaultMaterial() const;
 
 private:
-    std::unordered_map<ResourceID, std::shared_ptr<Mesh>> meshes_;
-    std::unordered_map<ResourceID, std::shared_ptr<Material>> materials_;
-    std::unordered_map<ResourceID, std::shared_ptr<Texture>> textures_;
+    std::unordered_map<::grasplink::model::ResourceID, std::shared_ptr<::grasplink::graphics::Mesh>> meshes_;
+    std::unordered_map<::grasplink::model::ResourceID, std::shared_ptr<::grasplink::graphics::Material>> materials_;
+    std::unordered_map<::grasplink::model::ResourceID, std::shared_ptr<::grasplink::graphics::Texture>> textures_;
 
-    std::shared_ptr<Material> defaultMaterial_;
+    std::shared_ptr<::grasplink::graphics::Material> defaultMaterial_;
 };
+
+} // namespace grasplink::rendering

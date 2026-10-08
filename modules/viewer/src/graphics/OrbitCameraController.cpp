@@ -1,12 +1,15 @@
-#include "OrbitCameraController.h"
+#include "graphics/OrbitCameraController.h"
 
-#include "Camera.h"
-#include "Window.h"
+#include "graphics/Camera.h"
+#include "graphics/Window.h"
 
 #include <glm/glm.hpp>
 
 #include <algorithm>
 #include <cmath>
+
+namespace grasplink::graphics
+{
 
 OrbitCameraController::OrbitCameraController(Camera& camera, Window& window)
     : m_Camera(camera),
@@ -126,3 +129,5 @@ void OrbitCameraController::Zoom(float scrollOffset)
     const glm::vec3 direction = offset / currentDistance;
     m_Camera.SetPosition(target + direction * newDistance);
 }
+
+} // namespace grasplink::graphics

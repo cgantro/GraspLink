@@ -1,8 +1,8 @@
-#include "assets/AssetManager.h"
+#include "rendering/assets/AssetManager.h"
 
-#include "Material.h"
-#include "Mesh.h"
-#include "Texture.h"
+#include "graphics/Material.h"
+#include "graphics/Mesh.h"
+#include "graphics/Texture.h"
 
 #include <glm/glm.hpp>
 
@@ -10,26 +10,29 @@
 #include <limits>
 #include <stdexcept>
 
+namespace grasplink::rendering
+{
+
 AssetManager::AssetManager()
 {
-    defaultMaterial_ = std::make_shared<Material>(
+    defaultMaterial_ = std::make_shared<::grasplink::graphics::Material>(
         glm::vec4{0.7F, 0.7F, 0.7F, 1.0F},
         0.0F,
         0.8F);
 }
 
-void AssetManager::UploadModel(const ModelResource& model)
+void AssetManager::UploadModel(const ::grasplink::model::ModelResource& model)
 {
     // 이미지, 재질, 형상 순서로 올린다. 뒤에 처리할 데이터가 앞서 만든 자원을 번호로 찾기 때문이다.
 
-    for (const TextureData& textureData : model.textures)
+    for (const ::grasplink::model::TextureData& textureData : model.textures)
     {
         if (textures_.find(textureData.uniqueID) != textures_.end()) continue;
         if (textureData.pixels.empty()) continue;
 
         // 현재 업로드 경로는 모델의 모든 texture 항목을 sRGB 형식으로 만든다. 화면용 재질에는 기본색 이미지만 연결한다.
         // 다른 종류의 이미지를 실제 재질 입력으로 연결하려면 용도에 맞는 색 공간 처리가 필요하다.
-        auto texture = Texture::Create2D(
+        auto texture = ::grasplink::graphics::Texture::Create2D(
             textureData.width,
             textureData.height,
             textureData.channels,
@@ -39,11 +42,11 @@ void AssetManager::UploadModel(const ModelResource& model)
         textures_.emplace(textureData.uniqueID, texture);
     }
 
-    for (const MaterialData& materialData : model.materials)
+    for (const ::grasplink::model::MaterialData& materialData : model.materials)
     {
         if (materials_.find(materialData.uniqueID) != materials_.end()) continue;
 
-        auto material = std::make_shared<Material>(
+        auto material = std::make_shared<::grasplink::graphics::Material>(
             materialData.baseColorFactor,
             materialData.metallicFactor,
             materialData.roughnessFactor);
@@ -61,7 +64,7 @@ void AssetManager::UploadModel(const ModelResource& model)
         materials_.emplace(materialData.uniqueID, std::move(material));
     }
 
-    for (const MeshData& meshData : model.meshes)
+    for (const ::grasplink::model::MeshData& meshData : model.meshes)
     {
         const auto existing = meshes_.find(meshData.uniqueID);
         if (existing != meshes_.end())
@@ -80,7 +83,7 @@ void AssetManager::UploadModel(const ModelResource& model)
         if (meshData.indices.size() > std::numeric_limits<std::uint32_t>::max())
             throw std::runtime_error("Mesh index count exceeds uint32_t range");
 
-        auto gpuMesh = std::make_shared<Mesh>(
+        auto gpuMesh = std::make_shared<::grasplink::graphics::Mesh>(
             meshData.vertices.data(),
             static_cast<std::uint32_t>(meshData.vertices.size()),
             meshData.indices.data(),
@@ -90,21 +93,23 @@ void AssetManager::UploadModel(const ModelResource& model)
     }
 }
 
-std::shared_ptr<Mesh> AssetManager::GetMesh(ResourceID id) const
+std::shared_ptr<::grasplink::graphics::Mesh> AssetManager::GetMesh(::grasplink::model::ResourceID id) const
 {
     const auto iterator = meshes_.find(id);
     if (iterator == meshes_.end()) return nullptr;
     return iterator->second;
 }
 
-std::shared_ptr<Material> AssetManager::GetMaterial(ResourceID id) const
+std::shared_ptr<::grasplink::graphics::Material> AssetManager::GetMaterial(::grasplink::model::ResourceID id) const
 {
     const auto iterator = materials_.find(id);
     if (iterator == materials_.end()) return nullptr;
     return iterator->second;
 }
 
-std::shared_ptr<Material> AssetManager::GetDefaultMaterial() const
+std::shared_ptr<::grasplink::graphics::Material> AssetManager::GetDefaultMaterial() const
 {
     return defaultMaterial_;
 }
+
+} // namespace grasplink::rendering

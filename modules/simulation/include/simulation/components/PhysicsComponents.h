@@ -1,6 +1,6 @@
 #pragma once
 
-#include "PhysicsTypes.h"
+#include "physics/PhysicsTypes.h"
 
 #include <glm/gtc/quaternion.hpp>
 

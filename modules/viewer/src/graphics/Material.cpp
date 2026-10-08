@@ -1,6 +1,9 @@
-#include "Material.h"
+#include "graphics/Material.h"
 
-#include "Texture.h"
+#include "graphics/Texture.h"
+
+namespace grasplink::graphics
+{
 
 // Material은 전달된 Factor 값을 그대로 저장한다. 값의 유효 범위 제한은 Metallic/Roughness를 해석하는 Shader가 적용한다.
 Material::Material(
@@ -43,3 +46,5 @@ bool Material::HasBaseColorTexture() const
 {
     return m_BaseColorTexture != nullptr;
 }
+
+} // namespace grasplink::graphics

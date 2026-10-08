@@ -1,7 +1,7 @@
 #pragma once
 
 #include <flecs.h>
-#include "PhysicsTypes.h"
+#include "physics/PhysicsTypes.h"
 
 #include <memory>
 

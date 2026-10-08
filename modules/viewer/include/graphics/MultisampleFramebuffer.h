@@ -2,6 +2,9 @@
 
 #include <cstdint>
 
+namespace grasplink::graphics
+{
+
 /**
  * @brief 다중 표본 framebuffer는 창에 바로 표시하지 않고 GPU가 여러 색·깊이 표본을 임시 저장하는 출력 대상이다.
  * @details Framebuffer는 그려진 색과 깊이를 저장할 GPU 대상이며 실제 창 화면과 다르다. 색은 픽셀마다 RGBA 채널 각각 8 bit, 카메라 앞뒤 비교용 깊이는 24 bit, stencil 표식은 8 bit로 저장한다.
@@ -83,3 +86,5 @@ private:
     // 색과 카메라 깊이 저장소가 픽셀마다 공통으로 검사하는 위치 수.
     int m_Samples = 4;
 };
+
+} // namespace grasplink::graphics

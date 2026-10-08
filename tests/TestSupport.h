@@ -1,15 +1,15 @@
 #pragma once
 
 #ifdef GRASPLINK_TEST_SCENE_SUPPORT
-#include "assets/GltfLoader.h"
-#include "PhysicsWorld.h"
+#include "model/GltfLoader.h"
+#include "physics/PhysicsWorld.h"
 #include "simulation/systems/PhysicsSystemModule.h"
 #include <filesystem>
 #include <memory>
 
-inline ModelResource LoadTestGlb(const std::filesystem::path& filename)
+inline grasplink::model::ModelResource LoadTestGlb(const std::filesystem::path& filename)
 {
-    return GltfLoader::LoadGLB(std::filesystem::path("assets") / filename);
+    return grasplink::model::GltfLoader::LoadGLB(std::filesystem::path("assets") / filename);
 }
 
 inline std::unique_ptr<grasplink::simulation::PhysicsSystemModule> CreateTestPhysicsSystem(

@@ -1,12 +1,15 @@
-#include "systems/RenderSystemModule.h"
+#include "rendering/systems/RenderSystemModule.h"
 
-#include "components/RenderComponents.h"
-#include "components/TransformComponents.h"
+#include "rendering/components/RenderComponents.h"
+#include "scene/TransformComponents.h"
 #include "graphics/Camera.h"
 #include "graphics/Renderer.h"
-#include "RenderContext.h"
+#include "rendering/RenderContext.h"
 
 #include <vector>
+
+namespace grasplink::rendering
+{
 
 namespace
 {
@@ -29,11 +32,11 @@ void RenderSystemModule::RegisterSystem(flecs::world& world)
 {
     // Flecs의 PreStore 단계에서 Scene OnUpdate 이후에 그린다. 변환 계산은 자동 단계가 아니므로 ViewerApp이 World 진행 전에 명시적으로 끝낸다.
     world
-        .system<const MeshFilter, const MeshRenderer, const TransformMatrix>(
+        .system<const MeshFilter, const MeshRenderer, const ::grasplink::scene::TransformMatrix>(
             "RenderSystem")
         .kind(flecs::PreStore)
         .term_at(2)
-        .second<World>()
+        .second<::grasplink::scene::World>()
         .run(
             [](flecs::iter& it)
             {
@@ -50,7 +53,7 @@ void RenderSystemModule::RegisterSystem(flecs::world& world)
                 {
                     auto meshFilters = it.field<const MeshFilter>(0);
                     auto meshRenderers = it.field<const MeshRenderer>(1);
-                    auto worldMatrices = it.field<const TransformMatrix>(2);
+                    auto worldMatrices = it.field<const ::grasplink::scene::TransformMatrix>(2);
 
                     for (auto i : it)
                     {
@@ -82,3 +85,5 @@ void RenderSystemModule::RegisterSystem(flecs::world& world)
 
             });
 }
+
+} // namespace grasplink::rendering

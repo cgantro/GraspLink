@@ -17,6 +17,11 @@
 
 namespace grasplink::simulation::robot_collision_geometry
 {
+using grasplink::model::MeshData;
+using grasplink::model::ModelResource;
+using grasplink::model::NodeData;
+using grasplink::model::SubMeshInfo;
+
 namespace
 {
 struct PositionKey

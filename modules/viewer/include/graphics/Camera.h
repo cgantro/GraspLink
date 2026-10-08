@@ -2,6 +2,9 @@
 
 #include <glm/glm.hpp>
 
+namespace grasplink::graphics
+{
+
 /**
  * @brief 장면을 어디에서 어느 점 쪽으로 볼지와 화면에 들어올 거리 범위를 보관한다.
  * @details
@@ -87,3 +90,5 @@ private:
 
     float m_FarPlane;
 };
+
+} // namespace grasplink::graphics

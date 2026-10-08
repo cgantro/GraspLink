@@ -7,6 +7,9 @@
 
 #include <glm/glm.hpp>
 
+namespace grasplink::graphics
+{
+
 /**
  * @brief 정점 위치를 화면에 그릴 계산 프로그램 두 개를 준비해 GPU에서 실행하게 한다.
  * @details
@@ -115,3 +118,5 @@ private:
 
     mutable std::unordered_map<std::string, int> m_UniformLocationCache;
 };
+
+} // namespace grasplink::graphics

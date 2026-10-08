@@ -1,30 +1,30 @@
-﻿#include "ViewerApp.h"
+#include "ViewerApp.h"
 
-#include "ViewerRobotCollisionGuard.h"
+#include "simulation/robotics/RobotEnvironmentCollisionGuard.h"
 
-#include "Camera.h"
+#include "graphics/Camera.h"
 #include "PickPlaceScenario.h"
-#include "Entity.h"
-#include "OrbitCameraController.h"
-#include "RenderContext.h"
-#include "Renderer.h"
-#include "RenderSystemModule.h"
-#include "Shader.h"
-#include "TransformSystemModule.h"
-#include "Window.h"
+#include "application/PickPlaceConfig.h"
+#include "scene/Entity.h"
+#include "graphics/OrbitCameraController.h"
+#include "rendering/RenderContext.h"
+#include "graphics/Renderer.h"
+#include "rendering/systems/RenderSystemModule.h"
+#include "graphics/Shader.h"
+#include "scene/TransformSystemModule.h"
+#include "graphics/Window.h"
 
-#include "assets/AssetManager.h"
-#include "assets/GltfLoader.h"
-#include "assets/PrefabFactory.h"
+#include "rendering/assets/AssetManager.h"
+#include "model/GltfLoader.h"
+#include "rendering/assets/PrefabFactory.h"
 
-#include "PhysicsWorld.h"
+#include "physics/PhysicsWorld.h"
 #include "gui/GuiModule.h"
 #include "gui/panels/GripperPanel.h"
 #include "gui/panels/RobotPanel.h"
 #include "gui/panels/PhysicsDebugPanel.h"
 #include "gui/overlays/ColliderOverlay.h"
-#include "simulation/SimulationSceneBuilder.h"
-#include "simulation/RandomScenario.h"
+#include "application/PickPlaceScenarioSampler.h"
 #include "simulation/robotics/GripperColliders.h"
 #include "simulation/robotics/GripperGraspAdapter.h"
 #include "simulation/robotics/RobotPhysicsAdapter.h"
@@ -56,6 +56,24 @@
 #define ZoneScopedN(name) ((void)0)
 #define FrameMark ((void)0)
 #endif
+
+namespace grasplink::simulator
+{
+using grasplink::graphics::Camera;
+using grasplink::graphics::OrbitCameraController;
+using grasplink::graphics::Renderer;
+using grasplink::graphics::Shader;
+using grasplink::graphics::Window;
+using grasplink::model::GltfLoader;
+using grasplink::model::ModelResource;
+using grasplink::model::NodeData;
+using grasplink::rendering::AssetManager;
+using grasplink::rendering::RenderContext;
+using grasplink::rendering::RenderSystemModule;
+using grasplink::rendering::prefab_factory::CreateModel;
+using grasplink::scene::Entity;
+using grasplink::scene::Scene;
+using grasplink::scene::TransformSystemModule;
 
 namespace
 {
@@ -89,6 +107,18 @@ glm::quat RotationFromWorldMatrix(const glm::mat4& worldMatrix)
     for (int axis = 0; axis < 3; ++axis)
         axes[axis] = glm::normalize(axes[axis]);
     return glm::normalize(glm::quat_cast(axes));
+}
+
+grasplink::robotics::CartesianPose ToRobotBasePose(
+    const Entity& robotRoot, const glm::mat4& worldMatrix, float heightOffset)
+{
+    const glm::mat4 baseWorld = robotRoot.GetWorldMatrix();
+    const glm::vec3 position(glm::inverse(baseWorld) * worldMatrix[3]);
+    const glm::quat baseInverseRotation = glm::inverse(RotationFromWorldMatrix(baseWorld));
+    const glm::quat orientation = glm::normalize(
+        baseInverseRotation * RotationFromWorldMatrix(worldMatrix));
+    return {{position.x, position.y + heightOffset, position.z},
+        {orientation.x, orientation.y, orientation.z, orientation.w}};
 }
 
 /**
@@ -200,7 +230,7 @@ bool ViewerApp::Init()
     Entity robotRoot;
     Entity floorEntity;
     InitScene(robotRoot, floorEntity);
-    m_RobotRoot = std::make_unique<Entity>(robotRoot);
+    m_RobotRoot = robotRoot;
 
     if (!InitRobot(robotRoot))
         return false;
@@ -209,6 +239,9 @@ bool ViewerApp::Init()
         return false;
 
     InitPhysics(robotRoot, floorEntity);
+    m_RobotModel = {};
+    m_AssetManager.reset();
+    m_RobotShader.reset();
 
     return true;
 }
@@ -266,7 +299,7 @@ void ViewerApp::InitScene(Entity& robotRoot, Entity& floorEntity)
     m_AssetManager->UploadModel(m_RobotModel);
 
     // GLB의 node 부모 관계를 Flecs Entity 계층으로 복사한다. 반환한 robotRoot 아래에서 이후 J1~J6 관절을 찾는다.
-    robotRoot = prefab_factory::CreateModel(
+    robotRoot = CreateModel(
         *scene,
         m_RobotModel,
         *m_AssetManager,
@@ -276,7 +309,7 @@ void ViewerApp::InitScene(Entity& robotRoot, Entity& floorEntity)
     ModelResource planeModel = GltfLoader::LoadGLB("plane.glb");
     m_AssetManager->UploadModel(planeModel);
 
-    floorEntity = prefab_factory::CreateModel(
+    floorEntity = CreateModel(
         *scene,
         planeModel,
         *m_AssetManager,
@@ -356,7 +389,7 @@ void ViewerApp::ApplyControllerPoses()
 void ViewerApp::InitPhysics(const Entity& robotRoot, Entity& floorEntity)
 {
     m_PhysicsWorld = std::make_unique<PhysicsWorld>();
-    grasplink::simulation::ConfigureFloor(floorEntity);
+    pick_place::ConfigureFloor(floorEntity);
     m_RobotPhysicsAdapter = std::make_unique<grasplink::simulation::RobotPhysicsAdapter>(
         *m_Scene, robotRoot, grasplink::robotics::models::hanwha::kHcr12a,
         m_RobotModel);
@@ -369,8 +402,10 @@ void ViewerApp::InitPhysics(const Entity& robotRoot, Entity& floorEntity)
     // GUI의 보라색 선은 ECS에 지정한 shape를 깊이 가림 없이 그린 근사다. 화면 Mesh나 Jolt가 최종 생성한 hull을 직접 보여 주지는 않는다.
     grasplink::simulation::ConfigureTwoF85Colliders(
         *m_Scene, robotRoot, m_RobotModel);
-    m_GraspBox = std::make_unique<Entity>(grasplink::viewer::pick_place::CreateGraspBox(*m_Scene, m_RobotShader));
-    m_PlacementArea = std::make_unique<Entity>(grasplink::viewer::pick_place::CreatePlacementArea(*m_Scene, m_RobotShader));
+    m_GraspBox = pick_place::CreateGraspBox(*m_Scene, m_RobotShader);
+    m_PlacementArea = pick_place::CreatePlacementArea(*m_Scene, m_RobotShader);
+    m_ScenarioSampler = std::make_unique<grasplink::application::PickPlaceScenarioSampler>();
+    pick_place::RandomizePickPlaceScene(m_GraspBox, m_PlacementArea, *m_ScenarioSampler);
     // Physics Body를 만들기 전에 첫 FK 자세와 계층 World 행렬을 계산해 화면 Entity와 Kinematic 목표를 같은 위치에 맞춘다.
     ApplyControllerPoses();
     TransformSystemModule::UpdateWorldTransforms(m_World);
@@ -382,7 +417,7 @@ void ViewerApp::InitPhysics(const Entity& robotRoot, Entity& floorEntity)
     if (!m_GripperGraspAdapter->Bind(robotRoot))
         throw std::runtime_error("ViewerApp: cannot bind gripper contact bodies");
 
-    m_RobotCollisionGuard = std::make_unique<grasplink::viewer::ViewerRobotCollisionGuard>(
+    m_RobotCollisionGuard = std::make_unique<grasplink::simulation::robotics::RobotEnvironmentCollisionGuard>(
         *m_RobotController, *m_GripperController,
         *m_RobotKinematics, *m_RobotTransformAdapter, *m_RobotPhysicsAdapter,
         *m_GripperKinematics, *m_GripperTransformAdapter, m_World, *m_PhysicsWorld,
@@ -410,7 +445,6 @@ void ViewerApp::MainLoop()
         // 디버거 정지 등으로 한 프레임이 길어져도 설정한 최대 시간만 제어 및 물리 누적기에 전달한다.
         const double clampedFrameDeltaSeconds = std::min(frameDeltaSeconds, kMaxFrameDeltaSeconds);
         const float renderDeltaSeconds = static_cast<float>(clampedFrameDeltaSeconds);
-
         // 창 이벤트를 처리하고, ImGui가 마우스를 사용하지 않을 때만 카메라 입력을 전달한다.
         m_Window->PollEvents();
         if (!m_GuiModule->WantsMouse())
@@ -444,6 +478,25 @@ void ViewerApp::MainLoop()
             }
         });
 
+        const auto boxPose = ToRobotBasePose(m_RobotRoot, m_GraspBox.GetWorldMatrix(), 0.0F);
+        const auto placementPose = ToRobotBasePose(m_RobotRoot, m_PlacementArea.GetWorldMatrix(),
+            grasplink::application::pick_place::config::boxSideMeters * 0.5F);
+        m_PickPlaceMission.Update(m_RobotController->GetStateView(), *m_RobotController,
+            *m_GripperController, m_GripperGraspAdapter->GetState().grasped, boxPose, placementPose);
+        if (m_PickPlaceMission.ConsumeSuccessEvent())
+        {
+            pick_place::RandomizePickPlaceScene(
+                m_GraspBox, m_PlacementArea, *m_ScenarioSampler);
+            TransformSystemModule::UpdateWorldTransforms(m_World);
+            const glm::mat4 boxTransform = m_GraspBox.GetWorldMatrix();
+            const auto boxHandle = m_PhysicsSystemModule->GetBodyHandle(m_GraspBox.GetHandle());
+            const glm::quat boxRotation = RotationFromWorldMatrix(boxTransform);
+            m_PhysicsWorld->SetBodyTransform(boxHandle, grasplink::physics::Transform{
+                glm::vec3(boxTransform[3]), boxRotation});
+            m_GripperGraspAdapter->Release();
+            m_PickPlaceMission.PrepareNextTask();
+        }
+
         // 최소화된 창은 framebuffer의 가로 또는 세로가 0일 수 있으므로, 이때 GPU 렌더링 단계만 건너뛴다.
         int framebufferWidth = 0;
         int framebufferHeight = 0;
@@ -476,20 +529,6 @@ void ViewerApp::MainLoop()
             TransformSystemModule::UpdateWorldTransforms(m_World);
             m_World.progress(renderDeltaSeconds);
             const auto graspState = m_GripperGraspAdapter->GetState();
-            const glm::mat4 robotBaseWorld = m_RobotRoot->GetWorldMatrix();
-            const glm::mat4 worldToRobotBase = glm::inverse(robotBaseWorld);
-            const glm::quat worldToRobotBaseRotation = glm::inverse(RotationFromWorldMatrix(robotBaseWorld));
-            const auto toRobotBasePose = [&](const glm::mat4& worldMatrix, float heightOffset)
-            {
-                const glm::vec3 position(worldToRobotBase * worldMatrix[3]);
-                const glm::quat orientation = glm::normalize(
-                    worldToRobotBaseRotation * RotationFromWorldMatrix(worldMatrix));
-                return grasplink::robotics::CartesianPose{
-                    {position.x, position.y + heightOffset, position.z},
-                    {orientation.x, orientation.y, orientation.z, orientation.w}};
-            };
-            const auto boxPose = toRobotBasePose(m_GraspBox->GetWorldMatrix(), 0.0F);
-            const auto placementPose = toRobotBasePose(m_PlacementArea->GetWorldMatrix(), 0.020F);
             const float sidebarX = displayWidth - sidebarWidth;
             ImGui::SetNextWindowPos(ImVec2(sidebarX, 0.0F), ImGuiCond_Always);
             ImGui::SetNextWindowSize(ImVec2(sidebarWidth, displayHeight), ImGuiCond_Always);
@@ -499,13 +538,11 @@ void ViewerApp::MainLoop()
             ImGui::Begin("Robot controls", nullptr, sidebarFlags);
             ImGui::TextUnformatted("GraspLink | HCR-12A");
             ImGui::Separator();
-            const auto& stateForMission = m_RobotController->GetStateView();
-            m_PickPlaceMission.Update(stateForMission, *m_RobotController, *m_GripperController,
-                graspState.grasped, boxPose, placementPose);
             const auto& robotState = m_RobotController->GetStateView();
             const auto mission = m_PickPlaceMission.Snapshot();
             const grasplink::gui::RobotPanelMissionView missionView{mission.stageLabel, mission.lastMessage,
-                mission.completedCount, 2.0, 8.0, mission.paused, mission.missionSucceeded,
+                mission.completedCount, grasplink::application::pick_place::config::linearVelocityMetersPerSecond,
+                grasplink::application::pick_place::config::angularVelocityRadiansPerSecond, mission.paused, mission.missionSucceeded,
                 mission.autoRepeat, mission.hasResult, mission.lastRequestAccepted, mission.canStart};
             const grasplink::gui::RobotPanelView robotPanelView{robotState,
                 m_RobotController->GetSpecification(), boxPose, placementPose, missionView};
@@ -513,25 +550,6 @@ void ViewerApp::MainLoop()
             m_PickPlaceMission.ApplyActions(grasplink::application::PickPlaceMissionActions{
                 panelActions.start, panelActions.resume, panelActions.stop},
                 m_RobotController->GetStateView(), *m_RobotController, graspState.grasped, boxPose);
-            if (m_PickPlaceMission.ConsumeSuccessEvent())
-            {
-                const auto nextPosition = grasplink::simulation::scenario::SampleBoxPosition();
-                const auto nextGoalPosition = grasplink::simulation::scenario::SamplePlacementPosition();
-                m_GraspBox->SetLocalPosition({nextPosition[0], nextPosition[1], nextPosition[2]});
-                m_GraspBox->SetLocalRotation(glm::angleAxis(
-                    grasplink::simulation::scenario::SamplePlanarRotation(), glm::vec3{0.0F, 1.0F, 0.0F}));
-                m_PlacementArea->SetLocalPosition({nextGoalPosition[0], nextGoalPosition[1], nextGoalPosition[2]});
-                m_PlacementArea->SetLocalRotation(glm::angleAxis(
-                    grasplink::simulation::scenario::SamplePlanarRotation(), glm::vec3{0.0F, 1.0F, 0.0F}));
-                TransformSystemModule::UpdateWorldTransforms(m_World);
-                const glm::mat4 boxTransform = m_GraspBox->GetWorldMatrix();
-                const auto boxHandle = m_PhysicsSystemModule->GetBodyHandle(m_GraspBox->GetHandle());
-                const glm::quat boxRotation = RotationFromWorldMatrix(boxTransform);
-                m_PhysicsWorld->SetBodyTransform(boxHandle, grasplink::physics::Transform{
-                    glm::vec3(boxTransform[3]), boxRotation});
-                m_GripperGraspAdapter->Release();
-                m_PickPlaceMission.PrepareNextTask();
-            }
             m_GripperPanel->DrawContents(*m_GripperController, &graspState);
             m_PhysicsDebugPanel->DrawContents();
             ImGui::End();
@@ -545,7 +563,6 @@ void ViewerApp::MainLoop()
             break;
     }
 }
-
 
 void ViewerApp::Shutdown()
 {
@@ -575,9 +592,9 @@ void ViewerApp::Shutdown()
 
     // Scene을 파괴하면 ECS 삭제 observer가 Jolt Body를 제거한다.
     // Destroy the Scene while physics observers and the Jolt world are alive.
-    m_RobotRoot.reset();
-    m_GraspBox.reset();
-    m_PlacementArea.reset();
+    m_RobotRoot = {};
+    m_GraspBox = {};
+    m_PlacementArea = {};
     m_Scene.reset();
     m_PhysicsSystemModule.reset();
     m_GuiModule.reset();
@@ -588,6 +605,7 @@ void ViewerApp::Shutdown()
 
     m_AssetManager.reset();
     m_RobotShader.reset();
+    m_ScenarioSampler.reset();
 
     // GUI와 GPU 객체를 모두 정리한 다음 Window를 파괴해 OpenGL Context를 마지막에 닫는다.
     m_CameraController.reset();
@@ -598,3 +616,5 @@ void ViewerApp::Shutdown()
     m_Logger.Flush();
     m_Logger.Shutdown();
 }
+
+} // namespace grasplink::simulator

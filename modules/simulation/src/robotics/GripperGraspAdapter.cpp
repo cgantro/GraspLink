@@ -1,6 +1,6 @@
 #include "simulation/robotics/GripperGraspAdapter.h"
 
-#include "PhysicsWorld.h"
+#include "physics/PhysicsWorld.h"
 #include "simulation/components/RobotCollisionProxy.h"
 #include "robotics/backends/simulation/SimGripperController.h"
 #include "simulation/systems/PhysicsSystemModule.h"
@@ -10,6 +10,8 @@
 
 namespace grasplink::simulation
 {
+using grasplink::scene::Entity;
+
 namespace
 {
 // 손끝 표면의 실제 이격만 열기 차단으로 판단하고 수치 잡음을 무시한다.

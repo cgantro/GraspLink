@@ -1,5 +1,5 @@
-#include "Camera.h"
-#include "Window.h"
+#include "graphics/Camera.h"
+#include "graphics/Window.h"
 #include "TestSupport.h"
 #include "gui/GuiModule.h"
 #include "gui/overlays/ColliderOverlay.h"
@@ -9,7 +9,7 @@
 #include "robotics/models/robotiq/TwoF85.h"
 #include "scene/Scene.h"
 #include "simulation/components/PhysicsComponents.h"
-#include "systems/TransformSystemModule.h"
+#include "scene/TransformSystemModule.h"
 
 #include <imgui.h>
 
@@ -22,6 +22,12 @@
 
 namespace
 {
+using grasplink::graphics::Camera;
+using grasplink::graphics::Window;
+using grasplink::scene::Entity;
+using grasplink::scene::Scene;
+using grasplink::scene::TransformSystemModule;
+
 using namespace grasplink::robotics;
 
 Colliders ConfiguredShapes()

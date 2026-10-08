@@ -2,6 +2,9 @@
 
 #include <cstdint>
 
+namespace grasplink::graphics
+{
+
 /**
  * @brief VertexBuffer Object(VBO)는 꼭짓점의 위치·법선·이미지 좌표 byte를 GPU에 보관한다.
  * @details
@@ -38,3 +41,5 @@ private:
     // GPU가 부여한 꼭짓점 배열의 이름.
     uint32_t m_RendererID = 0;
 };
+
+} // namespace grasplink::graphics

@@ -1,8 +1,11 @@
 #pragma once
 
-#include "assets/GraphicsTypes.h"
+#include "model/ModelResource.h"
 
 #include <filesystem>
+
+namespace grasplink::model
+{
 
 /**
  * @brief GLB 3D 모델 파일에서 삼각형 표면·이미지·부품 정보를 읽어 프로그램 메모리에 담는다.
@@ -39,3 +42,5 @@ public:
 private:
     GltfLoader() = delete;
 };
+
+} // namespace grasplink::model

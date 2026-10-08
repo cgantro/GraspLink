@@ -1,7 +1,10 @@
-#include "IndexBuffer.h"
+#include "graphics/IndexBuffer.h"
 
 #include <glad/glad.h>
 #include <stdexcept>
+
+namespace grasplink::graphics
+{
 
 
 IndexBuffer::IndexBuffer(const uint32_t* indices, uint32_t cnt) : m_Count(cnt){
@@ -44,3 +47,5 @@ void IndexBuffer::UnBind() const{
     // GL_ELEMENT_ARRAY_BUFFER 연결은 VAO에 저장된다. 따라서 0을 연결하면 현재 VAO가 기억하던 EBO도 지워진다.
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,0);
 }
+
+} // namespace grasplink::graphics

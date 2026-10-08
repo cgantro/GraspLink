@@ -1,6 +1,6 @@
 #include "gui/GuiModule.h"
 
-#include "Window.h"
+#include "graphics/Window.h"
 
 #include <imgui.h>
 #include <backends/imgui_impl_glfw.h>
@@ -11,7 +11,7 @@ namespace grasplink::gui
 
 struct GuiModule::Impl
 {
-    explicit Impl(Window& window)
+    explicit Impl(grasplink::graphics::Window& window)
     {
         IMGUI_CHECKVERSION();
         ImGui::CreateContext();
@@ -42,7 +42,7 @@ struct GuiModule::Impl
     }
 };
 
-GuiModule::GuiModule(Window& window)
+GuiModule::GuiModule(grasplink::graphics::Window& window)
     : m_Impl(std::make_unique<Impl>(window))
 {
 }

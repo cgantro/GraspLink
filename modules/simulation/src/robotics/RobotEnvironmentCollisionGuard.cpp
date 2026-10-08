@@ -1,9 +1,9 @@
-#include "ViewerRobotCollisionGuard.h"
+#include "simulation/robotics/RobotEnvironmentCollisionGuard.h"
 
-#include "Entity.h"
-#include "TransformSystemModule.h"
+#include "scene/Entity.h"
+#include "scene/TransformSystemModule.h"
 
-#include "PhysicsWorld.h"
+#include "physics/PhysicsWorld.h"
 #include "simulation/components/PhysicsComponents.h"
 #include "simulation/components/RobotCollisionProxy.h"
 #include "simulation/systems/PhysicsSystemModule.h"
@@ -13,11 +13,12 @@
 #include "robotics/kinematics/RobotKinematics.h"
 #include "robotics/kinematics/GripperKinematics.h"
 
-#include "viewer/robotics/RobotTransformAdapter.h"
-#include "viewer/robotics/GripperTransformAdapter.h"
+#include "simulation/robotics/RobotTransformAdapter.h"
+#include "simulation/robotics/GripperTransformAdapter.h"
 #include "simulation/robotics/RobotPhysicsAdapter.h"
 
 #include <algorithm>
+#include <cstring>
 #include <glm/gtc/quaternion.hpp>
 #if GRASPLINK_ENABLE_TRACY
 #include <tracy/Tracy.hpp>
@@ -25,16 +26,19 @@
 #define ZoneScopedN(name) ((void)0)
 #endif
 
-namespace grasplink::viewer
+namespace grasplink::simulation::robotics
 {
-ViewerRobotCollisionGuard::ViewerRobotCollisionGuard(
+using grasplink::scene::Entity;
+using grasplink::scene::TransformSystemModule;
+
+RobotEnvironmentCollisionGuard::RobotEnvironmentCollisionGuard(
     grasplink::robotics::backends::simulation::SimRobotController& robotController,
     grasplink::robotics::IGripperController& gripperController,
     grasplink::robotics::kinematics::RobotKinematics& robotKinematics,
-    grasplink::viewer::robotics::RobotTransformAdapter& robotTransformAdapter,
+    RobotTransformAdapter& robotTransformAdapter,
     grasplink::simulation::RobotPhysicsAdapter& robotPhysicsAdapter,
     grasplink::robotics::kinematics::GripperKinematics& gripperKinematics,
-    grasplink::viewer::robotics::GripperTransformAdapter& gripperTransformAdapter,
+    GripperTransformAdapter& gripperTransformAdapter,
     flecs::world& world,
     grasplink::physics::PhysicsWorld& physicsWorld,
     grasplink::simulation::PhysicsSystemModule& physicsSystem,
@@ -76,18 +80,18 @@ ViewerRobotCollisionGuard::ViewerRobotCollisionGuard(
     });
 }
 
-ViewerRobotCollisionGuard::~ViewerRobotCollisionGuard()
+RobotEnvironmentCollisionGuard::~RobotEnvironmentCollisionGuard()
 {
     m_RobotController.SetJointStateValidityChecker({});
 }
 
-void ViewerRobotCollisionGuard::CaptureSafeJointPose()
+void RobotEnvironmentCollisionGuard::CaptureSafeJointPose()
 {
     const auto& currentJoints = m_RobotController.GetStateView().jointPositionRadians;
     std::copy(currentJoints.begin(), currentJoints.end(), m_SafeJointPositions.begin());
 }
 
-void ViewerRobotCollisionGuard::RestoreSafePoseIfOverlapping()
+void RobotEnvironmentCollisionGuard::RestoreSafePoseIfOverlapping()
 {
     if (m_RobotController.GetStateView().mode != grasplink::robotics::RobotMode::Moving ||
         !RobotAssemblyOverlapsEnvironment())
@@ -100,7 +104,7 @@ void ViewerRobotCollisionGuard::RestoreSafePoseIfOverlapping()
     ApplyJointPose(m_RobotController.GetStateView());
 }
 
-grasplink::robotics::JointStateInvalidity ViewerRobotCollisionGuard::ValidateCandidatePose(
+grasplink::robotics::planning::JointStateInvalidity RobotEnvironmentCollisionGuard::ValidateCandidatePose(
     const grasplink::robotics::JointVector& candidateJoints)
 {
     const auto& previousState = m_RobotController.GetStateView();
@@ -108,11 +112,11 @@ grasplink::robotics::JointStateInvalidity ViewerRobotCollisionGuard::ValidateCan
     ApplyJointPose(m_CandidateState);
     const bool collisionFree = !RobotAssemblyOverlapsEnvironment();
     ApplyJointPose(previousState);
-    return collisionFree ? grasplink::robotics::JointStateInvalidity::None :
-        grasplink::robotics::JointStateInvalidity::EnvironmentCollision;
+    return collisionFree ? grasplink::robotics::planning::JointStateInvalidity::None :
+        grasplink::robotics::planning::JointStateInvalidity::EnvironmentCollision;
 }
 
-void ViewerRobotCollisionGuard::ApplyJointPose(const grasplink::robotics::RobotState& state)
+void RobotEnvironmentCollisionGuard::ApplyJointPose(const grasplink::robotics::RobotState& state)
 {
     const auto& kinematicState = m_RobotKinematics.Update(state);
     m_RobotTransformAdapter.Apply(kinematicState);
@@ -122,7 +126,7 @@ void ViewerRobotCollisionGuard::ApplyJointPose(const grasplink::robotics::RobotS
     TransformSystemModule::UpdateWorldTransforms(m_World);
 }
 
-bool ViewerRobotCollisionGuard::RobotAssemblyOverlapsEnvironment() const
+bool RobotEnvironmentCollisionGuard::RobotAssemblyOverlapsEnvironment() const
 {
     ZoneScopedN("CollisionCheck");
     // Collider 설정 변경으로 Jolt Body가 재생성될 수 있으므로 매 검사마다 Entity에서 현재 handle을 조회한다.

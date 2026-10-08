@@ -1,6 +1,6 @@
 #include "simulation/robotics/GripperTransformAdapter.h"
 
-#include "components/TransformComponents.h"
+#include "scene/TransformComponents.h"
 
 #include <glm/gtx/quaternion.hpp>
 
@@ -15,6 +15,9 @@
 
 namespace grasplink::simulation::robotics
 {
+using grasplink::scene::Rotation;
+using grasplink::scene::Entity;
+
 namespace
 {
 constexpr float kUnitScaleTolerance = 1.0e-4F;
@@ -189,4 +192,4 @@ void GripperTransformAdapter::Apply(
         joints_[i].entity.SetLocalRotation(preparedRotations_[i]);
 }
 
-} // namespace grasplink::viewer::robotics
+} // namespace grasplink::simulation::robotics

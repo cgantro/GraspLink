@@ -1,16 +1,19 @@
-#include "Renderer.h"
+#include "graphics/Renderer.h"
 
-#include "Texture.h"
-#include "Material.h"
-#include "Mesh.h"
-#include "Shader.h"
-#include "components/RenderComponents.h"
-#include "MultisampleFramebuffer.h"
+#include "graphics/Texture.h"
+#include "graphics/Material.h"
+#include "graphics/Mesh.h"
+#include "graphics/Shader.h"
+#include "rendering/components/RenderComponents.h"
+#include "graphics/MultisampleFramebuffer.h"
 
 #include <glad/glad.h>
 
 #include <cstdint>
 #include <algorithm>
+
+namespace grasplink::graphics
+{
 
 Renderer::Renderer() = default;
 Renderer::~Renderer() = default;
@@ -74,8 +77,8 @@ void Renderer::SetSceneViewport(int x, int y, int width, int height)
 
 void Renderer::Draw(
     const glm::mat4& model,
-    const MeshFilter& meshFilter,
-    const MeshRenderer& meshRenderer,
+    const ::grasplink::rendering::MeshFilter& meshFilter,
+    const ::grasplink::rendering::MeshRenderer& meshRenderer,
     const glm::mat4& view,
     const glm::mat4& projection,
     const glm::vec3& cameraPosition)
@@ -136,3 +139,5 @@ void Renderer::Draw(
     meshRenderer.shader->UnBind();
 
 }
+
+} // namespace grasplink::graphics

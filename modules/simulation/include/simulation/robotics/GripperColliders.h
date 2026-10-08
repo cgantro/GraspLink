@@ -1,8 +1,7 @@
 #pragma once
 
-class Entity;
-class Scene;
-struct ModelResource;
+namespace grasplink::scene { class Entity; class Scene; }
+namespace grasplink::model { struct ModelResource; }
 
 namespace grasplink::simulation
 {
@@ -24,5 +23,8 @@ namespace grasplink::simulation
  * @param model TwoF85 노드 관계와 정점 [m]을 제공하는 로드된 GLB 자원이다.
  * @throws std::invalid_argument 필수 노드, 계층 변환 또는 충돌 모양이 유효하지 않을 때 발생한다.
  */
-void ConfigureTwoF85Colliders(Scene& scene, const Entity& robotRoot, const ModelResource& model);
+void ConfigureTwoF85Colliders(
+    grasplink::scene::Scene& scene,
+    const grasplink::scene::Entity& robotRoot,
+    const grasplink::model::ModelResource& model);
 }

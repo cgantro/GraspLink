@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Entity.h"
+#include "scene/Entity.h"
 #include "robotics/kinematics/RobotKinematics.h"
 #include "robotics/models/RobotSpecification.h"
 
@@ -26,7 +26,7 @@ public:
      * @throws std::invalid_argument 관절 부모 관계 또는 초기 변환이 정기구학 모델과 맞지 않는 경우.
      */
     RobotTransformAdapter(
-        const Entity& robotRoot,
+        const grasplink::scene::Entity& robotRoot,
         const ::grasplink::robotics::models::RobotSpecification& specification);
 
     /**
@@ -40,11 +40,11 @@ public:
 private:
     struct JointBinding
     {
-        Entity entity;
+        grasplink::scene::Entity entity;
     };
 
     /// 모델 사양에 적힌 순서대로 Scene이 소유하는 관절 Entity를 보관한다. 각 Entity는 계산된 관절 회전을 화면에 반영하는 데 사용한다.
     std::vector<JointBinding> joints_;
 };
 
-} // namespace grasplink::viewer::robotics
+} // namespace grasplink::simulation::robotics

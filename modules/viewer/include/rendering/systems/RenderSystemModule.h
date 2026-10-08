@@ -2,6 +2,9 @@
 
 #include <flecs.h>
 
+namespace grasplink::rendering
+{
+
 /**
  * @brief 장면 물체의 모양·표면 설정과 위치를 읽어 Renderer가 화면에 그리도록 요청한다.
  * @details 각 물체의 World 행렬은 Scene 전체 위치와 방향이고 MeshFilter는 그릴 꼭짓점·삼각형 자료, MeshRenderer는 색과 표시 여부를 제공한다.
@@ -20,3 +23,5 @@ public:
 private:
     void RegisterSystem(flecs::world& world);
 };
+
+} // namespace grasplink::rendering

@@ -1,5 +1,5 @@
 #include "CollisionGeometry.h"
-#include "assets/GraphicsTypes.h"
+#include "model/ModelResource.h"
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/quaternion.hpp>
@@ -11,6 +11,10 @@
 
 namespace grasplink::simulation::detail
 {
+using grasplink::model::MeshData;
+using grasplink::model::ModelResource;
+using grasplink::model::NodeData;
+
 namespace
 {
 glm::mat4 NodeLocalTransform(const NodeData& node)

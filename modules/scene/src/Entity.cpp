@@ -1,7 +1,10 @@
-#include "Entity.h"
+#include "scene/Entity.h"
 
-#include "components/TransformComponents.h"
+#include "scene/TransformComponents.h"
 #include <stdexcept>
+
+namespace grasplink::scene
+{
 
 
 Entity::Entity(flecs::entity handle)
@@ -263,4 +266,6 @@ void Entity::Destroy()
 
     // Flecs는 이 물체와 그 아래 연결된 자손을 저장소에서 함께 삭제한다. 복사된 Entity 참조는 메모리에 남아도 모두 더는 유효하지 않다.
     m_EntityHandle.destruct();
+}
+
 }

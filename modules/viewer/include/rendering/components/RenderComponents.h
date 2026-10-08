@@ -3,9 +3,15 @@
 #include <cstddef>
 #include <memory>
 
+namespace grasplink::graphics
+{
 class Mesh;
 class Shader;
 class Material;
+}
+
+namespace grasplink::rendering
+{
 
 /**
  * @brief 장면 물체가 화면에 그릴 3D 모양과 그중 사용할 삼각형 범위를 지정한다.
@@ -18,7 +24,7 @@ class Material;
 struct MeshFilter
 {
     /// AssetManager가 GPU에 올린 표면 모양의 공유 참조다. 참조가 비어 있으면 RenderSystem은 이 물체를 그리지 않는다.
-    std::shared_ptr<Mesh> mesh;
+    std::shared_ptr<::grasplink::graphics::Mesh> mesh;
 
     /// 삼각형 목록에서 그리기를 시작할 uint32 index 번호다. byte 위치로 직접 지정하지 않는다.
     std::size_t indexOffset = 0U;
@@ -38,11 +44,13 @@ struct MeshFilter
 struct MeshRenderer
 {
     /// 카메라 화면을 만들 때 꼭짓점 위치와 색을 계산하는 GPU 프로그램의 공유 참조다.
-    std::shared_ptr<Shader> shader;
+    std::shared_ptr<::grasplink::graphics::Shader> shader;
 
     /// Renderer가 표면 색과 지원된 Texture를 선택할 때 사용하는 Material 공유 참조다.
-    std::shared_ptr<Material> material;
+    std::shared_ptr<::grasplink::graphics::Material> material;
 
     /// false이면 화면에 이 Mesh를 그리지 않는다.
     bool visible = true;
 };
+
+} // namespace grasplink::rendering

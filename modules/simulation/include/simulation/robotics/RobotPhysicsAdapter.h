@@ -1,12 +1,13 @@
 #pragma once
 
-#include "Entity.h"
-#include "assets/GraphicsTypes.h"
+#include "scene/Entity.h"
+#include "model/ModelResource.h"
 #include "robotics/models/RobotSpecification.h"
 
 #include <vector>
 
-class Scene;
+namespace grasplink::scene { class Scene; }
+namespace grasplink::model { struct ModelResource; }
 
 namespace grasplink::robotics::kinematics
 {
@@ -41,10 +42,10 @@ public:
      * @throws std::runtime_error GLB의 부모 관계, 삼각형 연결 번호 또는 정점 번호가 잘못되었을 때.
      */
     RobotPhysicsAdapter(
-        Scene& scene,
-        const Entity& robotRoot,
+        grasplink::scene::Scene& scene,
+        const grasplink::scene::Entity& robotRoot,
         const grasplink::robotics::models::RobotSpecification& specification,
-        const ModelResource& model);
+        const grasplink::model::ModelResource& model);
 
         /**
      * @brief FK 결과를 대응하는 충돌 proxy의 부모 기준 위치와 회전으로 저장한다.
@@ -59,13 +60,13 @@ private:
     struct LinkBinding
     {
         /// Scene이 소유하며 FK pose를 받는 Kinematic proxy Entity.
-        Entity entity;
+        grasplink::scene::Entity entity;
         /// RobotKinematicState에서 이 proxy가 사용할 관절 pose의 index.
         std::size_t jointIndex = 0;
     };
 
     /// Scene이 소유하며 GLB Base 메시를 담는 고정 Environment 충돌 proxy Entity.
-    Entity base_;
+    grasplink::scene::Entity base_;
     std::vector<LinkBinding> links_;
 };
 

@@ -1,9 +1,12 @@
-#include "MultisampleFramebuffer.h"
+#include "graphics/MultisampleFramebuffer.h"
 
 #include <glad/glad.h>
 
 #include <algorithm>
 #include <stdexcept>
+
+namespace grasplink::graphics
+{
 
 MultisampleFramebuffer::MultisampleFramebuffer(int width, int height, int samples)
     : m_Width(width),
@@ -139,3 +142,5 @@ void MultisampleFramebuffer::Resize(int width, int height)
     Destroy();
     Create();
 }
+
+} // namespace grasplink::graphics

@@ -2,6 +2,9 @@
 
 #include <cstdint>
 
+namespace grasplink::graphics
+{
+
 /**
  * @brief VertexArray Object(VAO)는 GPU 정점 자료의 읽는 방법과 꼭짓점 연결 배열을 기억한다.
  * @details
@@ -34,3 +37,5 @@ private:
     // GPU가 부여한 정점 읽기 설정의 이름.
     uint32_t m_RendererID = 0;
 };
+
+} // namespace grasplink::graphics

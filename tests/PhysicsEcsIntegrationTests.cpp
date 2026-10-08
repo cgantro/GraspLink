@@ -1,16 +1,19 @@
-#include "Entity.h"
-#include "PhysicsWorld.h"
-#include "components/TransformComponents.h"
+#include "scene/Entity.h"
+#include "physics/PhysicsWorld.h"
+#include "scene/TransformComponents.h"
 #include "scene/Scene.h"
 #include "simulation/components/PhysicsComponents.h"
 #include "simulation/systems/PhysicsSystemModule.h"
-#include "systems/TransformSystemModule.h"
+#include "scene/TransformSystemModule.h"
 #include "TestSupport.h"
 
 #include <gtest/gtest.h>
 #include <memory>
 
 using grasplink::physics::BodyMotionType;
+using grasplink::scene::Entity;
+using grasplink::scene::Scene;
+using grasplink::scene::TransformSystemModule;
 
 #define ASSERT_TRUE_MESSAGE(condition, message) ASSERT_TRUE(condition) << message
 #define EXPECT_TRUE_MESSAGE(condition, message) EXPECT_TRUE(condition) << message

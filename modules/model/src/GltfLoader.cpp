@@ -1,4 +1,4 @@
-#include "assets/GltfLoader.h"
+#include "model/GltfLoader.h"
 
 #include <tiny_gltf.h>
 
@@ -17,6 +17,8 @@
 #include <string>
 #include <vector>
 
+namespace grasplink::model
+{
 namespace
 {
 // Buffer는 glTF 파일의 원본 byte 묶음이고 BufferView는 그중 일부 구간이다. Accessor는 그 구간에서 읽을 값의 자료형·개수·간격을 적은 기록이다.
@@ -741,3 +743,5 @@ ModelResource GltfLoader::LoadGLB(const std::filesystem::path& path)
 
     return result;
 }
+
+} // namespace grasplink::model

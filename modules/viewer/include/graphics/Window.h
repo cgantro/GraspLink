@@ -4,6 +4,9 @@
 
 struct GLFWwindow;
 
+namespace grasplink::graphics
+{
+
 enum class MouseButton
 {
     Left,
@@ -104,3 +107,5 @@ private:
     // 입력 처리기가 전달한 세로 휠 이동량의 합. ConsumeScrollOffset이 읽을 때 비운다.
     double m_ScrollOffset = 0.0;
 };
+
+} // namespace grasplink::graphics

@@ -7,6 +7,9 @@
 #include <string>
 #include <vector>
 
+namespace grasplink::scene
+{
+
 /**
  * @brief 장면 속 한 물체의 ID를 보관하고 그 물체의 값을 다루는 Entity 참조다.
  * @details
@@ -216,3 +219,5 @@ public:
 private:
     flecs::entity m_EntityHandle{flecs::entity::null()};
 };
+
+}

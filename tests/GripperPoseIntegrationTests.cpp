@@ -1,8 +1,8 @@
-#include "Entity.h"
-#include "PhysicsWorld.h"
+#include "scene/Entity.h"
+#include "physics/PhysicsWorld.h"
 #include "TestSupport.h"
-#include "assets/GltfLoader.h"
-#include "components/TransformComponents.h"
+#include "model/GltfLoader.h"
+#include "scene/TransformComponents.h"
 #include "robotics/backends/simulation/SimGripperController.h"
 #include "robotics/kinematics/GripperKinematics.h"
 #include "robotics/kinematics/RobotKinematics.h"
@@ -12,7 +12,7 @@
 #include "simulation/components/PhysicsComponents.h"
 #include "simulation/robotics/GripperColliders.h"
 #include "simulation/systems/PhysicsSystemModule.h"
-#include "systems/TransformSystemModule.h"
+#include "scene/TransformSystemModule.h"
 #include "simulation/robotics/GripperTransformAdapter.h"
 #include "simulation/robotics/RobotTransformAdapter.h"
 
@@ -33,6 +33,14 @@
 
 namespace
 {
+using grasplink::model::ModelResource;
+using grasplink::model::NodeData;
+using grasplink::scene::Entity;
+using grasplink::scene::Rotation;
+using grasplink::scene::Local;
+using grasplink::scene::Scene;
+using grasplink::scene::TransformSystemModule;
+
 #define ASSERT_TRUE_MESSAGE(condition, message) ASSERT_TRUE(condition) << message
 #define EXPECT_TRUE_MESSAGE(condition, message) EXPECT_TRUE(condition) << message
 #define ASSERT_NEAR_FINITE(actual, expected, tolerance, message) \

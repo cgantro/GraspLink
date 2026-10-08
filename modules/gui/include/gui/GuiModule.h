@@ -2,7 +2,7 @@
 
 #include <memory>
 
-class Window;
+namespace grasplink::graphics { class Window; }
 
 namespace grasplink::gui
 {
@@ -16,7 +16,7 @@ class GuiModule
 {
 public:
     /** @brief 이미 만들어진 Window의 입력과 OpenGL context에 ImGui 입출력 연결 코드를 설정한다. */
-    explicit GuiModule(Window& window);
+    explicit GuiModule(grasplink::graphics::Window& window);
 
     /** @brief OpenGL과 GLFW 입출력 연결을 먼저 끊고, 마지막으로 ImGui가 보관한 UI 상태를 해제한다. */
     ~GuiModule();

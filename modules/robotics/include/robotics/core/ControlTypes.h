@@ -47,24 +47,6 @@ enum class ErrorCode
 };
 
 /**
- * @brief 관절 자세가 상태 유효성 검사를 통과하지 못한 이유를 나타낸다.
- * @details None은 관절 수, 유한한 각도, 관절 한계를 통과했고, 충돌 검사기가 등록된 경우 그 검사기도 자세를 허용했음을 뜻한다.
- * EnvironmentCollision은 현재 Viewer가 검사하는 바닥이나 작업대 같은 고정 환경과 겹쳤음을 뜻한다.
- * SelfCollision은 로봇 링크끼리 겹친 경우이고 AttachedObjectCollision은 로봇에 붙은 물체가 다른 물체와 겹친 경우다. 이 두 충돌 검사는 아직 구현되지 않았다.
- * 각 실패 사유는 원인과 해결 방법이 다르므로 EnvironmentCollision으로 합치지 않는다.
- */
-enum class JointStateInvalidity : std::uint8_t
-{
-    None,
-    JointCountMismatch,
-    NonFinitePosition,
-    JointLimitViolation,
-    EnvironmentCollision,
-    SelfCollision, // 로봇 링크끼리 충돌했다.
-    AttachedObjectCollision // 로봇에 붙은 물체가 충돌했다.
-};
-
-/**
  * @brief 장치 또는 Simulation 구현이 요청을 처리한 결과와 선택적 설명을 반환한다.
  * @details 성공은 요청을 받아들였다는 뜻일 수 있으며 목표 위치 도달이나 동작 완료를 보장하지 않는다.
  * 소프트웨어 정지 요청은 장비의 보호 정지(protective stop)나 비상 정지(E-Stop)를 보장하지 않는다.

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Entity.h"
+#include "scene/Entity.h"
 #include "robotics/kinematics/GripperKinematics.h"
 #include "robotics/models/GripperSpecification.h"
 
@@ -27,7 +27,7 @@ public:
      * @throws std::invalid_argument 관절 위치·회전·크기가 유효하지 않거나 부모 연결에 `(1,1,1)`이 아닌 크기 배율이 있는 경우.
      */
     GripperTransformAdapter(
-        const Entity& gripperRoot,
+        const grasplink::scene::Entity& gripperRoot,
         const ::grasplink::robotics::models::GripperSpecification& specification);
 
     /**
@@ -43,16 +43,16 @@ public:
 private:
     struct JointBinding
     {
-        Entity entity;
+        grasplink::scene::Entity entity;
         ::grasplink::robotics::models::QuaternionWxyz bindRotation;
         // 첫 물체는 관절이고 마지막 물체는 gripperRoot다. 중간 GLB 물체까지 보관해 모델 연결이 바뀌었는지 확인한다.
-        std::vector<Entity> ancestry;
+        std::vector<grasplink::scene::Entity> ancestry;
     };
 
-    Entity gripperRoot_;
+    grasplink::scene::Entity gripperRoot_;
     std::vector<JointBinding> joints_;
     // 입력 확인과 계산이 끝날 때까지 새 관절 방향을 임시 저장한다. 매 4 ms 갱신에서 메모리를 다시 할당하지 않는다.
     std::vector<glm::quat> preparedRotations_;
 };
 
-} // namespace grasplink::viewer::robotics
+} // namespace grasplink::simulation::robotics

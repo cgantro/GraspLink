@@ -1,8 +1,8 @@
 #include "gui/overlays/ColliderOverlay.h"
 
-#include "Camera.h"
+#include "graphics/Camera.h"
 #include "simulation/components/PhysicsComponents.h"
-#include "components/TransformComponents.h"
+#include "scene/TransformComponents.h"
 
 #include <imgui.h>
 #include <glm/gtx/matrix_decompose.hpp>
@@ -156,19 +156,19 @@ glm::mat4 PhysicsTransform(const glm::mat4& world)
 struct ColliderOverlay::Impl
 {
     // ECS에 지정된 Collider 형상과 최신 World 행렬을 읽어 선을 만든다. Jolt가 내부에서 최적화하거나 바꾼 실제 충돌 형상은 읽지 않는다.
-    flecs::query<const RigidBody, const Colliders, const TransformMatrix> colliderQuery;
+    flecs::query<const RigidBody, const Colliders, const grasplink::scene::TransformMatrix> colliderQuery;
     std::vector<ScreenLine> collisionLines;
     std::chrono::steady_clock::time_point nextCollisionRefresh{};
     ImVec2 cachedDisplaySize{};
     bool wasVisible = false;
 
     explicit Impl(flecs::world& world)
-        : colliderQuery(world.query_builder<const RigidBody, const Colliders, const TransformMatrix>()
-            .term_at(2).second<World>().build())
+        : colliderQuery(world.query_builder<const RigidBody, const Colliders, const grasplink::scene::TransformMatrix>()
+            .term_at(2).second<grasplink::scene::World>().build())
     {
     }
 
-    void Draw(const Camera& camera, bool visible, const ImVec2& viewportSize)
+    void Draw(const grasplink::graphics::Camera& camera, bool visible, const ImVec2& viewportSize)
     {
         if (visible)
         {
@@ -193,14 +193,14 @@ struct ColliderOverlay::Impl
         wasVisible = visible;
     }
 
-    void RefreshCollisionLines(const Camera& camera, const ImVec2& displaySize)
+    void RefreshCollisionLines(const grasplink::graphics::Camera& camera, const ImVec2& displaySize)
     {
         collisionLines.clear();
         // View와 Projection 행렬을 차례로 적용해 Scene 좌표를 화면 투영 전 좌표로 옮긴다.
         // PhysicsTransform에서 제외한 Entity 크기 배율은 이 선에도 적용하지 않는다.
         const glm::mat4 viewProjection = camera.GetProjectionMatrix() * camera.GetViewMatrix();
         colliderQuery.each([&](flecs::entity, const RigidBody& rigidBody,
-            const Colliders& colliders, const TransformMatrix& matrix)
+            const Colliders& colliders, const grasplink::scene::TransformMatrix& matrix)
         {
             const glm::mat4 entityWorld = PhysicsTransform(static_cast<const glm::mat4&>(matrix));
             const ImU32 color = LayerColor(rigidBody.collisionLayer);
@@ -227,12 +227,12 @@ ColliderOverlay::ColliderOverlay(flecs::world& world)
 
 ColliderOverlay::~ColliderOverlay() = default;
 
-void ColliderOverlay::Draw(const Camera& camera, bool visible)
+void ColliderOverlay::Draw(const grasplink::graphics::Camera& camera, bool visible)
 {
     m_Impl->Draw(camera, visible, ImGui::GetIO().DisplaySize);
 }
 
-void ColliderOverlay::Draw(const Camera& camera, bool visible, const ImVec2& viewportSize)
+void ColliderOverlay::Draw(const grasplink::graphics::Camera& camera, bool visible, const ImVec2& viewportSize)
 {
     m_Impl->Draw(camera, visible, viewportSize);
 }

@@ -1,5 +1,5 @@
 #include "robotics/backends/simulation/SimRobotController.h"
-#include "robotics/backends/simulation/detail/LinearPathPlanner.h"
+#include "robotics/planning/LinearPathPlanner.h"
 #include "robotics/kinematics/RobotInverseKinematics.h"
 #include "robotics/models/hanwha/Hcr12a.h"
 
@@ -12,6 +12,7 @@
 #include <string>
 
 using namespace grasplink::robotics;
+using namespace grasplink::robotics::planning;
 using grasplink::robotics::backends::simulation::SimRobotController;
 using grasplink::robotics::kinematics::DampedLeastSquaresIk;
 
@@ -213,8 +214,8 @@ void CheckExplicitWristUnwindPreservesZeroRepresentation()
 
 void CheckJointStateValidityReasons()
 {
-    using grasplink::robotics::backends::simulation::detail::MapJointStateInvalidity;
-    using grasplink::robotics::backends::simulation::detail::ValidateJointState;
+    using grasplink::robotics::planning::MapJointStateInvalidity;
+    using grasplink::robotics::planning::ValidateJointState;
 
     const auto& specification = models::hanwha::kHcr12a;
     JointVector joints(specification.jointCount, 0.0);
@@ -245,6 +246,33 @@ void CheckJointStateValidityReasons()
     ASSERT_TRUE((MapJointStateInvalidity(JointStateInvalidity::EnvironmentCollision).code == ErrorCode::EnvironmentContact)) << "environment collision retains its existing controller error code";
     ASSERT_TRUE((MapJointStateInvalidity(JointStateInvalidity::SelfCollision).code == ErrorCode::SelfCollision)) << "self collision is not reported as environment contact";
     ASSERT_TRUE((MapJointStateInvalidity(JointStateInvalidity::AttachedObjectCollision).code == ErrorCode::AttachedObjectCollision)) << "attached-object collision is not reported as environment contact";
+}
+
+void CheckMoveJointRejectsInvalidPath()
+{
+    SimRobotController controller(models::hanwha::kHcr12a);
+    ASSERT_TRUE(static_cast<bool>(controller.Connect())) << "controller connects before joint path validation";
+
+    std::size_t collisionChecks = 0;
+    double firstCollisionCheckedPosition = -1.0;
+    controller.SetJointStateValidityChecker([&](const JointVector& joints)
+    {
+        ++collisionChecks;
+        if (collisionChecks == 1)
+            firstCollisionCheckedPosition = joints[0];
+        return joints[0] > 0.06 && joints[0] < 0.14 ?
+            JointStateInvalidity::EnvironmentCollision : JointStateInvalidity::None;
+    });
+
+    JointVector target = controller.GetState().jointPositionRadians;
+    target[0] = 0.2;
+    const Result result = controller.MoveJoint({target, 1.0, 1.0});
+    ASSERT_TRUE((result.code == ErrorCode::EnvironmentContact)) << "MoveJoint rejects a collision between valid endpoints";
+    ASSERT_TRUE((collisionChecks >= 1)) << "MoveJoint checks joint states along the path";
+    ASSERT_TRUE((firstCollisionCheckedPosition > 0.0 && firstCollisionCheckedPosition < target[0]))
+        << "MoveJoint checks an intermediate state before the target";
+    ASSERT_TRUE((controller.GetState().mode == RobotMode::Idle)) << "rejected path leaves the controller idle";
+    ASSERT_NEAR(controller.GetState().jointPositionRadians[0], 0.0, 1e-12) << "rejected path leaves the current joints unchanged";
 }
 
 void CheckEnvironmentCollisionCanBeRetried()
@@ -743,6 +771,7 @@ TEST(RobotMotion, EquivalentJointTargetUsesNearestLegalTurn) { CheckEquivalentJo
 TEST(RobotMotion, ExplicitWristUnwindPreservesZeroRepresentation) { CheckExplicitWristUnwindPreservesZeroRepresentation(); }
 TEST(RobotMotion, HomeSeedReachesFoldedValidPosture) { CheckHomeSeedCanReachFoldedButValidPosture(); }
 TEST(RobotMotion, JointStateValidityReasons) { CheckJointStateValidityReasons(); }
+TEST(RobotMotion, MoveJointRejectsInvalidPath) { CheckMoveJointRejectsInvalidPath(); }
 TEST(RobotMotion, EnvironmentCollisionCanBeRetried) { CheckEnvironmentCollisionCanBeRetried(); }
 TEST(RobotMotion, CollisionAwareIkSelectsAnotherBranch) { CheckCollisionAwareIkSelectsAnotherBranch(); }
 TEST(RobotMotion, LinearPathAndVelocityBoundsAtFourMilliseconds) { CheckLinearPathAndVelocityBounds(0.004); }

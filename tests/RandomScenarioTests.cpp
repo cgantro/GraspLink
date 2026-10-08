@@ -1,4 +1,5 @@
-#include "simulation/RandomScenario.h"
+#include "application/PickPlaceScenarioSampler.h"
+#include "application/PickPlaceConfig.h"
 
 #include <gtest/gtest.h>
 
@@ -14,34 +15,47 @@ struct ScenarioSample
     float placementRotation;
 };
 
-ScenarioSample SampleSequence()
+ScenarioSample SampleSequence(grasplink::application::PickPlaceScenarioSampler& sampler)
 {
-    using namespace grasplink::simulation::scenario;
-    return {SampleBoxPosition(), SamplePlacementPosition(), SamplePlanarRotation(), SamplePlanarRotation()};
+    return {sampler.SampleBoxPosition(), sampler.SamplePlacementPosition(),
+        sampler.SamplePlanarRotation(), sampler.SamplePlanarRotation()};
 }
 }
 
 TEST(RandomScenarioTests, SeedRestoresTheSameSequenceAndPositionHistory)
 {
-    using namespace grasplink::simulation::scenario;
-    SeedRandom(13542);
-    const auto first = SampleSequence();
-    const auto second = SampleSequence();
+    grasplink::application::PickPlaceScenarioSampler sampler;
+    sampler.Seed(13542);
+    const auto first = SampleSequence(sampler);
+    const auto second = SampleSequence(sampler);
 
-    SeedRandom(13542);
+    sampler.Seed(13542);
 
-    EXPECT_EQ(SampleSequence().box, first.box);
-    const auto replayedFirst = SampleSequence();
+    EXPECT_EQ(SampleSequence(sampler).box, first.box);
+    const auto replayedFirst = SampleSequence(sampler);
     EXPECT_EQ(replayedFirst.box, second.box);
     EXPECT_EQ(replayedFirst.placement, second.placement);
     EXPECT_FLOAT_EQ(replayedFirst.boxRotation, second.boxRotation);
     EXPECT_FLOAT_EQ(replayedFirst.placementRotation, second.placementRotation);
 }
 
+TEST(RandomScenarioTests, SamplerInstancesKeepIndependentSeedAndPositionHistory)
+{
+    grasplink::application::PickPlaceScenarioSampler firstSampler;
+    grasplink::application::PickPlaceScenarioSampler secondSampler;
+    firstSampler.Seed(251);
+    secondSampler.Seed(251);
+
+    EXPECT_EQ(firstSampler.SampleBoxPosition(), secondSampler.SampleBoxPosition());
+    EXPECT_EQ(firstSampler.SamplePlacementPosition(), secondSampler.SamplePlacementPosition());
+    EXPECT_FLOAT_EQ(firstSampler.SamplePlanarRotation(), secondSampler.SamplePlanarRotation());
+}
+
 TEST(RandomScenarioTests, SamplesCoverBothCoordinateSignsWithinConfiguredReach)
 {
-    using namespace grasplink::simulation::scenario;
-    SeedRandom(8061);
+    namespace config = grasplink::application::pick_place::config;
+    grasplink::application::PickPlaceScenarioSampler sampler;
+    sampler.Seed(8061);
     bool negativeX = false;
     bool positiveX = false;
     bool negativeZ = false;
@@ -51,24 +65,26 @@ TEST(RandomScenarioTests, SamplesCoverBothCoordinateSignsWithinConfiguredReach)
 
     for (int sample = 0; sample < 128; ++sample)
     {
-        const auto box = SampleBoxPosition();
-        const auto placement = SamplePlacementPosition();
+        const auto box = sampler.SampleBoxPosition();
+        const auto placement = sampler.SamplePlacementPosition();
         const float boxRadius = std::hypot(box[0], box[2]);
         const float placementRadius = std::hypot(placement[0], placement[2]);
-        EXPECT_GE(boxRadius, 0.50F);
-        EXPECT_LE(boxRadius, 1.05F);
-        EXPECT_GE(placementRadius, 0.50F);
-        EXPECT_LE(placementRadius, 1.00F);
-        EXPECT_FLOAT_EQ(box[1], 0.026F);
-        EXPECT_FLOAT_EQ(placement[1], 0.006F);
-        EXPECT_GE(std::hypot(box[0] - previousBox[0], box[2] - previousBox[2]), 0.035F);
-        EXPECT_GE(std::hypot(placement[0] - previousPlacement[0], placement[2] - previousPlacement[2]), 0.05F);
+        EXPECT_GE(boxRadius, config::minimumScenarioRadiusMeters);
+        EXPECT_LE(boxRadius, config::maximumBoxRadiusMeters);
+        EXPECT_GE(placementRadius, config::minimumScenarioRadiusMeters);
+        EXPECT_LE(placementRadius, config::maximumPlacementRadiusMeters);
+        EXPECT_FLOAT_EQ(box[1], config::boxPositionHeightMeters);
+        EXPECT_FLOAT_EQ(placement[1], config::placementPositionHeightMeters);
+        EXPECT_GE(std::hypot(box[0] - previousBox[0], box[2] - previousBox[2]),
+            config::minimumBoxRepeatSeparationMeters);
+        EXPECT_GE(std::hypot(placement[0] - previousPlacement[0], placement[2] - previousPlacement[2]),
+            config::minimumPlacementRepeatSeparationMeters);
         previousBox = box;
         previousPlacement = placement;
 
-        const float boxRotation = SamplePlanarRotation();
-        EXPECT_GE(boxRotation, -1.5707964F);
-        EXPECT_LE(boxRotation, 1.5707964F);
+        const float boxRotation = sampler.SamplePlanarRotation();
+        EXPECT_GE(boxRotation, -config::scenarioRotationLimitRadians);
+        EXPECT_LE(boxRotation, config::scenarioRotationLimitRadians);
         negativeX = negativeX || box[0] < 0.0F;
         positiveX = positiveX || box[0] > 0.0F;
         negativeZ = negativeZ || box[2] < 0.0F;

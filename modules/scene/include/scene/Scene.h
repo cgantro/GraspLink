@@ -1,10 +1,13 @@
 #pragma once
 
-#include "Entity.h"
+#include "scene/Entity.h"
 
 #include <flecs.h>
 
 #include <string>
+
+namespace grasplink::scene
+{
 
 /**
  * @brief SceneRoot와 그 아래에 놓인 장면 Entity의 수명을 관리한다.
@@ -30,3 +33,5 @@ private:
     flecs::world& m_World;
     flecs::entity m_SceneRoot{flecs::entity::null()};
 };
+
+}

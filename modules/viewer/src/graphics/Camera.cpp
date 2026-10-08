@@ -1,8 +1,11 @@
-#include "Camera.h"
+#include "graphics/Camera.h"
 
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <stdexcept>
+
+namespace grasplink::graphics
+{
 
 Camera::Camera(
     const glm::vec3& position,
@@ -69,3 +72,5 @@ glm::vec3 Camera::GetTarget() const
 {
     return m_Target;
 }
+
+} // namespace grasplink::graphics

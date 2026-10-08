@@ -1,8 +1,11 @@
 #include "scene/Scene.h"
 
-#include "components/TransformComponents.h"
+#include "scene/TransformComponents.h"
 
 #include <stdexcept>
+
+namespace grasplink::scene
+{
 
 Scene::Scene(flecs::world& world)
     : m_World(world), m_SceneRoot(world.entity("SceneRoot").add<SceneRootTag>())
@@ -39,4 +42,6 @@ flecs::world& Scene::GetWorld()
 flecs::entity Scene::GetSceneRoot() const
 {
     return m_SceneRoot;
+}
+
 }

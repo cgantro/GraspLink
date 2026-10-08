@@ -3,7 +3,7 @@
 #include <glm/glm.hpp>
 #include <vector>
 
-struct ModelResource;
+namespace grasplink::model { struct ModelResource; }
 
 namespace grasplink::simulation::detail
 {
@@ -11,7 +11,7 @@ namespace grasplink::simulation::detail
  * @brief glTF 각 Node의 Local 변환을 부모부터 누적해 모델 기준 변환으로 계산한다.
  * @throws std::invalid_argument 부모 번호가 범위를 벗어나거나 계층에 순환이 있으면 발생한다.
  */
-std::vector<glm::mat4> BuildNodeWorldTransforms(const ModelResource& model);
+std::vector<glm::mat4> BuildNodeWorldTransforms(const grasplink::model::ModelResource& model);
 
 /**
  * @brief 여러 방향에서 가장 바깥쪽에 있는 정점만 골라 Jolt 볼록 충돌 외피의 계산량을 줄인다.

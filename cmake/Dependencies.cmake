@@ -1,4 +1,4 @@
-﻿include(FetchContent)
+include(FetchContent)
 
 function(grasplink_add_common_dependencies)
   FetchContent_Declare(

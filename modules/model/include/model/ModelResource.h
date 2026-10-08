@@ -1,6 +1,6 @@
 #pragma once
 
-#include "assets/ResourceID.h"
+#include "model/ResourceID.h"
 
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
@@ -8,6 +8,9 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+
+namespace grasplink::model
+{
 
 /**
  * @brief 모델 표면의 꼭짓점 한 개와 그릴 때 필요한 표면 정보를 담는다.
@@ -171,3 +174,5 @@ struct ModelResource
     /// 사용할 장면의 최상위 부품 번호. 없으면 -1이다.
     int rootNodeIndex = -1;
 };
+
+} // namespace grasplink::model

@@ -1,6 +1,9 @@
-#include "VertexArray.h"
+#include "graphics/VertexArray.h"
 
 #include <glad/glad.h>
+
+namespace grasplink::graphics
+{
 
 VertexArray::VertexArray()
 {
@@ -27,3 +30,5 @@ void VertexArray::UnBind() const
     // 현재 VAO 선택만 해제한다. 그 안에 저장된 정점 속성 설명과 index buffer 연결은 그대로 남는다.
     glBindVertexArray(0);
 }
+
+} // namespace grasplink::graphics

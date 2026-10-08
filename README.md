@@ -100,8 +100,8 @@ cd build-ninja-debug
 
 기본 실행은 HCR-12A와 2F-85, 바닥, 무작위 Pick&Place 상자와 목표 영역을 표시한다. GUI에서 그리퍼 Open/Close, 요청 개폐율·raw 속도, Activate/Reset/Stop을 조작한다. GUI의 force request는 128로 고정되며 실제 힘 효과를 계산하지 않는다. `Show configured colliders`는 ECS 설정의 X-ray 외곽선이며 Jolt가 만든 실제 형상을 조회하지 않는다. 렌더러는 MSAA와 기본 조명만 사용하며 shadow map은 만들지 않는다.
 
-모듈 경계는 [Architecture](docs/ARCHITECTURE.md), 물리 제약은 [Physics / Flecs Integration](docs/PHYSICS_ECS_INTEGRATION.md), 현재 점검 결과는 [Code Documentation Audit](docs/CODE_DOCUMENTATION_AUDIT.md)를 참고한다.
+모듈 경계는 [Architecture](docs/ARCHITECTURE.md), 물리 제약은 [Physics / Flecs Integration](docs/PHYSICS_ECS_INTEGRATION.md), 과거 감사 기록은 [Code Documentation Audit](docs/history/CODE_DOCUMENTATION_AUDIT.md)을 참고한다.
 
 Logger usage and file output policy are documented in [Diagnostics](docs/DIAGNOSTICS.md). Tracy provides runtime frame and zone timing; see the same document for setup.
 
-그리퍼 충돌, 팔 형상 수 감소와 한글 Doxygen 보강 결과는 [후속 작업 결과](docs/GRIPPER_COLLISION_AND_COMMENT_RESULTS.md)에 정리했다.
+그리퍼 충돌, 팔 형상 수 감소와 한글 Doxygen 보강 당시의 결과는 [후속 작업 기록](docs/history/GRIPPER_COLLISION_AND_COMMENT_RESULTS.md)에 정리했다.

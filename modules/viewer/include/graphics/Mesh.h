@@ -1,11 +1,14 @@
 #pragma once
 
-#include "assets/GraphicsTypes.h"
+#include "model/ModelResource.h"
 
 #include <cstdint>
 #include <memory>
 
 #include <glm/glm.hpp>
+
+namespace grasplink::graphics
+{
 
 class VertexArray;
 class VertexBuffer;
@@ -36,7 +39,7 @@ public:
      * 이 생성자는 번호가 유효한지, 번호 개수가 삼각형을 이루도록 3의 배수인지 검사하지 않으므로 호출자가 맞는 배열을 제공해야 한다.
      */
     Mesh(
-        const Vertex* vertices,
+        const ::grasplink::model::Vertex* vertices,
         std::uint32_t vertexCount,
         const std::uint32_t* indices,
         std::uint32_t indexCount);
@@ -78,3 +81,5 @@ private:
     // GPU에는 32-bit 꼭짓점 번호가 있다. 그리기 명령은 번호 세 개씩 묶어 삼각형을 만든다.
     std::unique_ptr<IndexBuffer> indexBuffer_;
 };
+
+} // namespace grasplink::graphics

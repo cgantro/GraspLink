@@ -1,6 +1,6 @@
 #include "simulation/robotics/RobotTransformAdapter.h"
-#include "systems/TransformSystemModule.h"
-#include "components/TransformComponents.h"
+#include "scene/TransformSystemModule.h"
+#include "scene/TransformComponents.h"
 
 #include <glm/gtx/quaternion.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -10,6 +10,10 @@
 
 namespace grasplink::simulation::robotics
 {
+using grasplink::scene::Rotation;
+using grasplink::scene::Entity;
+using grasplink::scene::TransformSystemModule;
+
 namespace
 {
 constexpr float kBindRotationEpsilon = 1e-4F;
@@ -94,4 +98,4 @@ void RobotTransformAdapter::Apply(const ::grasplink::robotics::kinematics::Robot
     }
 }
 
-} // namespace grasplink::viewer::robotics
+} // namespace grasplink::simulation::robotics

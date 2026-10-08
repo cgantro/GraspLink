@@ -1,13 +1,22 @@
 #pragma once
 
-#include "Entity.h"
+#include "scene/Entity.h"
 
 #include <memory>
 
-class AssetManager;
+namespace grasplink::graphics { class Shader; }
+namespace grasplink::rendering { class AssetManager; }
+
+namespace grasplink::scene
+{
+class Entity;
 class Scene;
-class Shader;
+}
+
+namespace grasplink::model
+{
 struct ModelResource;
+}
 
 /**
  * @brief GLB 모델에서 읽은 부품 Entity를 만드는 함수를 제공한다.
@@ -24,6 +33,8 @@ struct ModelResource;
  * 그리기 정보는 형상·재질·Shader의 공유 참조를 보유한다. GPU 객체의 마지막 참조를 놓을 때 OpenGL 실행 환경(context)이 현재 스레드에서 활성화되어 있어야 한다.
  * 부모 관계, Mesh 범위, GPU Mesh와 Material은 Entity를 만들기 전에 검사한다. Scene 자체의 Entity 생성이 실패하면 먼저 만든 Entity가 남을 수 있다.
  */
+namespace grasplink::rendering
+{
 namespace prefab_factory
 {
 /**
@@ -38,9 +49,11 @@ namespace prefab_factory
  * @details 각 부품의 위치는 부모 기준 [m], 회전은 길이 1인 quaternion, 크기는 배율이다. GPU 자료는 번호로 찾아 공유한다.
  * 재질 번호가 -1인 표면만 기본 재질을 사용한다. 여러 표면 묶음은 각각 자식 Entity가 맡아 연결 번호의 일부를 그린다.
  */
-Entity CreateModel(
-    Scene& scene,
-    const ModelResource& model,
+::grasplink::scene::Entity CreateModel(
+    ::grasplink::scene::Scene& scene,
+    const ::grasplink::model::ModelResource& model,
     const AssetManager& assets,
-    const std::shared_ptr<Shader>& shader);
+    const std::shared_ptr<::grasplink::graphics::Shader>& shader);
 }
+
+} // namespace grasplink::rendering

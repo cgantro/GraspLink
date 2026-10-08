@@ -83,7 +83,7 @@ target_link_libraries(grasplink_diagnostics PUBLIC Threads::Threads)
 #
 add_library(grasplink_robotics STATIC
   modules/robotics/src/backends/simulation/SimRobotController.cpp
-  modules/robotics/src/backends/simulation/detail/LinearPathPlanner.cpp
+  modules/robotics/src/planning/LinearPathPlanner.cpp
   modules/robotics/src/backends/simulation/SimGripperController.cpp
   modules/robotics/src/kinematics/RobotKinematics.cpp
   modules/robotics/src/kinematics/RobotInverseKinematics.cpp
@@ -175,21 +175,20 @@ add_library(grasplink_scene STATIC
 )
 target_include_directories(grasplink_scene PUBLIC
   modules/scene/include
-  modules/scene/include/systems
 )
 target_link_libraries(grasplink_scene PUBLIC flecs::flecs_static glm::glm)
 target_compile_definitions(grasplink_scene PRIVATE GLM_ENABLE_EXPERIMENTAL)
 
-add_library(grasplink_model_data STATIC modules/model/src/GltfLoader.cpp)
-target_include_directories(grasplink_model_data PUBLIC modules/model/include)
-target_link_libraries(grasplink_model_data PUBLIC glm::glm PRIVATE tinygltf)
-target_compile_definitions(grasplink_model_data PRIVATE GLM_ENABLE_EXPERIMENTAL)
+add_library(grasplink_model STATIC modules/model/src/GltfLoader.cpp)
+target_include_directories(grasplink_model PUBLIC modules/model/include)
+target_link_libraries(grasplink_model PUBLIC glm::glm PRIVATE tinygltf)
+target_compile_definitions(grasplink_model PRIVATE GLM_ENABLE_EXPERIMENTAL)
 
 add_library(grasplink_simulation STATIC
-  modules/simulation/src/RandomScenario.cpp
   modules/simulation/src/SimulationSceneBuilder.cpp
   modules/simulation/src/robotics/RobotTransformAdapter.cpp
   modules/simulation/src/robotics/GripperTransformAdapter.cpp
+  modules/simulation/src/robotics/RobotEnvironmentCollisionGuard.cpp
   modules/simulation/src/robotics/CollisionGeometry.cpp
   modules/simulation/src/robotics/GripperColliders.cpp
   modules/simulation/src/robotics/GripperGraspAdapter.cpp
@@ -200,22 +199,31 @@ add_library(grasplink_simulation STATIC
 target_include_directories(grasplink_simulation PUBLIC modules/simulation/include)
 target_link_libraries(grasplink_simulation PUBLIC
   grasplink_scene
-  grasplink_model_data
+  grasplink_model
   grasplink_physics
   grasplink_robotics
   grasplink_diagnostics
 )
 target_compile_definitions(grasplink_simulation PRIVATE GLM_ENABLE_EXPERIMENTAL)
+if(GRASPLINK_BUILD_GRAPHICS AND GRASPLINK_ENABLE_TRACY)
+  target_compile_definitions(grasplink_simulation PRIVATE GRASPLINK_ENABLE_TRACY=1)
+  target_link_libraries(grasplink_simulation PRIVATE Tracy::TracyClient)
+else()
+  target_compile_definitions(grasplink_simulation PRIVATE GRASPLINK_ENABLE_TRACY=0)
+endif()
 
-add_library(grasplink_application STATIC modules/application/src/PickPlaceMission.cpp)
+add_library(grasplink_application STATIC
+  modules/application/src/PickPlaceMission.cpp
+  modules/application/src/PickPlaceScenarioSampler.cpp
+)
 target_include_directories(grasplink_application PUBLIC modules/application/include)
 target_link_libraries(grasplink_application PUBLIC grasplink_robotics glm::glm)
 target_compile_definitions(grasplink_application PRIVATE GLM_ENABLE_EXPERIMENTAL)
 
 if(BUILD_TESTING)
   grasplink_add_test(grasplink_pick_place_mission_tests PickPlaceMission tests/PickPlaceMissionTests.cpp grasplink_application GTEST_DISCOVERY)
-  grasplink_add_test(grasplink_random_scenario_tests RandomScenario tests/RandomScenarioTests.cpp grasplink_simulation GTEST_DISCOVERY)
-  grasplink_add_test(grasplink_gltf_tests GltfLoader tests/GltfLoaderTests.cpp grasplink_model_data GTEST_DISCOVERY)
+  grasplink_add_test(grasplink_pick_place_sampler_tests PickPlaceScenarioSampler tests/RandomScenarioTests.cpp grasplink_application GTEST_DISCOVERY)
+  grasplink_add_test(grasplink_gltf_tests GltfLoader tests/GltfLoaderTests.cpp grasplink_model GTEST_DISCOVERY)
   target_compile_definitions(grasplink_gltf_tests PRIVATE GRASPLINK_TEST_ASSET_DIR="${CMAKE_SOURCE_DIR}/assets")
 
   grasplink_add_test(grasplink_physics_ecs_tests PhysicsEcsIntegration tests/PhysicsEcsIntegrationTests.cpp grasplink_simulation GTEST_DISCOVERY)
@@ -256,12 +264,9 @@ if(GRASPLINK_BUILD_GRAPHICS)
   )
   target_include_directories(grasplink_graphics PUBLIC
     modules/viewer/include
-    modules/viewer/include/components
-    modules/viewer/include/graphics
-    modules/viewer/include/systems
   )
   target_link_libraries(grasplink_graphics PUBLIC
-    grasplink_glad glfw glm::glm grasplink_model_data OpenGL::GL
+    grasplink_glad glfw glm::glm grasplink_model OpenGL::GL
   )
   target_compile_definitions(grasplink_graphics PUBLIC GLFW_INCLUDE_NONE)
 
@@ -284,30 +289,28 @@ if(GRASPLINK_BUILD_GRAPHICS)
   # Viewer
   # ----------------------------------------------------------
 
-  set(GRASPLINK_VIEWER_SOURCES
+  set(GRASPLINK_RENDERING_SOURCES
     modules/viewer/src/systems/RenderSystemModule.cpp
     modules/viewer/src/assets/AssetManager.cpp
     modules/viewer/src/assets/PrefabFactory.cpp
   )
 
-  add_library(grasplink_viewer STATIC
-    ${GRASPLINK_VIEWER_SOURCES}
+  add_library(grasplink_rendering STATIC
+    ${GRASPLINK_RENDERING_SOURCES}
   )
 
-  target_include_directories(grasplink_viewer PUBLIC
+  target_include_directories(grasplink_rendering PUBLIC
     modules/viewer/include
-    modules/viewer/include/graphics
   )
 
 
-  target_link_libraries(grasplink_viewer PUBLIC
+  target_link_libraries(grasplink_rendering PUBLIC
     grasplink_scene
-    grasplink_model_data
-    grasplink_robotics
+    grasplink_model
     grasplink_graphics
   )
 
-  target_compile_definitions(grasplink_viewer PRIVATE
+  target_compile_definitions(grasplink_rendering PRIVATE
     GLM_ENABLE_EXPERIMENTAL
   )
 
@@ -342,7 +345,6 @@ if(GRASPLINK_BUILD_GRAPHICS)
   set(GRASPLINK_APP_SOURCES
     apps/viewer/main.cpp
     apps/viewer/ViewerApp.cpp
-    apps/viewer/ViewerRobotCollisionGuard.cpp
     apps/viewer/PickPlaceScenario.cpp
   )
 
@@ -358,7 +360,7 @@ if(GRASPLINK_BUILD_GRAPHICS)
     grasplink_gui
     grasplink_application
     grasplink_simulation
-    grasplink_viewer
+    grasplink_rendering
     grasplink_robotics
     grasplink_physics
     grasplink_diagnostics
@@ -395,11 +397,11 @@ if(GRASPLINK_BUILD_GRAPHICS)
   )
 
   if(BUILD_TESTING)
-    grasplink_add_test(grasplink_gui_composition_tests GuiComposition tests/GuiCompositionTests.cpp grasplink_gui GTEST_DISCOVERY)
-    grasplink_add_test(grasplink_quaternion_transform_tests QuaternionTransforms tests/QuaternionTransformTests.cpp grasplink_viewer GTEST_DISCOVERY)
+  grasplink_add_test(grasplink_gui_composition_tests GuiComposition tests/GuiCompositionTests.cpp grasplink_gui GTEST_DISCOVERY)
+    grasplink_add_test(grasplink_quaternion_transform_tests QuaternionTransforms tests/QuaternionTransformTests.cpp grasplink_scene GTEST_DISCOVERY)
     grasplink_add_test(grasplink_graphics_tests GraphicsResources tests/GraphicsResourceTests.cpp grasplink_graphics GTEST_DISCOVERY TIMEOUT 60)
 
-    grasplink_add_test(grasplink_robot_pose_integration_tests RobotPoseIntegration tests/RobotPoseIntegrationTests.cpp grasplink_simulation grasplink_viewer GTEST_DISCOVERY WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    grasplink_add_test(grasplink_robot_pose_integration_tests RobotPoseIntegration tests/RobotPoseIntegrationTests.cpp grasplink_simulation grasplink_rendering GTEST_DISCOVERY WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 
     add_test(NAME ViewerSmoke COMMAND grasplink_simulator --smoke-test)
     set_tests_properties(ViewerSmoke PROPERTIES

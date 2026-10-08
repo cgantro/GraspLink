@@ -1,9 +1,9 @@
 #include "simulation/systems/PhysicsSystemModule.h"
 
-#include "PhysicsWorld.h"
+#include "physics/PhysicsWorld.h"
 #include "diagnostics/Logger.h"
 #include "simulation/components/PhysicsComponents.h"
-#include "components/TransformComponents.h"
+#include "scene/TransformComponents.h"
 
 #include <glm/gtx/matrix_decompose.hpp>
 
@@ -18,6 +18,12 @@ using grasplink::physics::BodyDescription;
 using grasplink::physics::BodyMotionType;
 using grasplink::physics::PhysicsBodyHandle;
 using grasplink::physics::Transform;
+using grasplink::scene::Local;
+using grasplink::scene::Position;
+using grasplink::scene::Rotation;
+using grasplink::scene::Scale;
+using grasplink::scene::TransformMatrix;
+using grasplink::scene::World;
 
 struct BodySnapshot
 {

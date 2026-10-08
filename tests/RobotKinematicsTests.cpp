@@ -1,4 +1,4 @@
-﻿#include "robotics/kinematics/RobotKinematics.h"
+#include "robotics/kinematics/RobotKinematics.h"
 #include "robotics/models/hanwha/Hcr12a.h"
 
 #include <array>

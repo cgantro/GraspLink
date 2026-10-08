@@ -4,7 +4,7 @@
 
 #include <memory>
 
-class Camera;
+namespace grasplink::graphics { class Camera; }
 struct ImVec2;
 
 namespace grasplink::gui
@@ -37,10 +37,10 @@ public:
      * 화면 선 좌표는 매번 다시 구하는 비용을 줄이려고 최대 100 ms 재사용한다. 그동안 카메라를 움직이면 선이 잠시 이전 위치에 보일 수 있다.
      * 선은 화면 맨 앞에 그리므로 벽이나 로봇에 가려진 충돌 모양도 확인할 수 있다. OpenGL 명령은 직접 실행하지 않는다.
      */
-    void Draw(const Camera& camera, bool visible);
+    void Draw(const grasplink::graphics::Camera& camera, bool visible);
 
     /** @brief 화면의 일부만 Scene viewport로 쓸 때 해당 영역 크기에 맞춰 충돌선을 그린다. */
-    void Draw(const Camera& camera, bool visible, const ImVec2& viewportSize);
+    void Draw(const grasplink::graphics::Camera& camera, bool visible, const ImVec2& viewportSize);
 
 private:
     struct Impl;

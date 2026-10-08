@@ -1,6 +1,6 @@
-#include "MultisampleFramebuffer.h"
-#include "Shader.h"
-#include "Window.h"
+#include "graphics/MultisampleFramebuffer.h"
+#include "graphics/Shader.h"
+#include "graphics/Window.h"
 #include "TestSupport.h"
 
 #include <glad/glad.h>
@@ -16,6 +16,10 @@
 
 namespace
 {
+using grasplink::graphics::MultisampleFramebuffer;
+using grasplink::graphics::Shader;
+using grasplink::graphics::Window;
+
 struct GlHooks;
 GlHooks* activeHooks = nullptr;
 

@@ -1,5 +1,5 @@
-﻿#include "Entity.h"
-#include "PhysicsWorld.h"
+#include "scene/Entity.h"
+#include "physics/PhysicsWorld.h"
 #include "robotics/backends/simulation/SimGripperController.h"
 #include "robotics/models/robotiq/TwoF85.h"
 #include "scene/Scene.h"
@@ -7,9 +7,9 @@
 #include "simulation/components/RobotCollisionProxy.h"
 #include "simulation/robotics/GripperGraspAdapter.h"
 #include "simulation/systems/PhysicsSystemModule.h"
-#include "systems/TransformSystemModule.h"
+#include "scene/TransformSystemModule.h"
 #include "TestSupport.h"
-#include "assets/GltfLoader.h"
+#include "model/GltfLoader.h"
 #include "robotics/kinematics/GripperKinematics.h"
 #include "simulation/robotics/GripperColliders.h"
 #include "simulation/robotics/GripperTransformAdapter.h"
@@ -33,6 +33,13 @@
 
 namespace
 {
+using grasplink::model::GltfLoader;
+using grasplink::model::ModelResource;
+using grasplink::model::NodeData;
+using grasplink::scene::Entity;
+using grasplink::scene::Scene;
+using grasplink::scene::TransformSystemModule;
+
 using namespace grasplink::physics;
 using grasplink::robotics::backends::simulation::SimGripperController;
 using grasplink::robotics::models::robotiq::kTwoF85;

@@ -14,6 +14,10 @@
 
 namespace grasplink::simulation
 {
+using grasplink::model::ModelResource;
+using grasplink::scene::Entity;
+using grasplink::scene::Scene;
+
 RobotPhysicsAdapter::RobotPhysicsAdapter(
     Scene& scene,
     const Entity& robotRoot,

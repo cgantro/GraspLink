@@ -1,4 +1,4 @@
-#include "PickPlaceMission.h"
+#include "application/PickPlaceMission.h"
 #include "robotics/backends/simulation/SimRobotController.h"
 #include "robotics/kinematics/RobotInverseKinematics.h"
 #include "robotics/models/hanwha/Hcr12a.h"

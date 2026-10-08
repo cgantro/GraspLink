@@ -1,7 +1,7 @@
 #pragma once
 
-#include "Entity.h"
-#include "PhysicsTypes.h"
+#include "scene/Entity.h"
+#include "physics/PhysicsTypes.h"
 
 namespace grasplink::physics { class PhysicsWorld; }
 namespace grasplink::robotics::backends::simulation { class SimGripperController; }
@@ -50,7 +50,7 @@ public:
      * @details Body가 아직 생성되지 않아도 proxy Entity가 있으면 연결한다. 기존 파지는 해제한다.
      * @return 필수 proxy가 살아 있으면 true다.
      */
-    bool Bind(const Entity& robotRoot);
+    bool Bind(const grasplink::scene::Entity& robotRoot);
     /**
      * @brief 열기, Reset, Disconnect와 삭제된 Body를 확인해 다음 물리 계산 전에 파지를 해제한다.
      * @details Controller.Update와 FK보다 먼저 호출한다. FK는 관절 각도에서 화면 부품의 위치와 방향을 계산하는 과정이다.
@@ -78,9 +78,9 @@ private:
     physics::PhysicsWorld& world_;
     PhysicsSystemModule& system_;
     ::grasplink::robotics::backends::simulation::SimGripperController& controller_;
-    Entity anchor_;
-    Entity left_;
-    Entity right_;
+    grasplink::scene::Entity anchor_;
+    grasplink::scene::Entity left_;
+    grasplink::scene::Entity right_;
     physics::PhysicsBodyHandle heldAnchor_;
     physics::PhysicsBodyHandle heldLeft_;
     physics::PhysicsBodyHandle heldRight_;

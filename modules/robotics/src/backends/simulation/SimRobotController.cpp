@@ -11,6 +11,7 @@
 
 namespace grasplink::robotics::backends::simulation
 {
+namespace planning = grasplink::robotics::planning;
 namespace
 {
 constexpr double kPositionEpsilon = 1e-8;
@@ -45,7 +46,7 @@ Result ValidateJointPositionLimits(
 
 kinematics::IkOptions RuntimeLinearIkOptions()
 {
-    kinematics::IkOptions options = detail::PathIkOptions();
+    kinematics::IkOptions options = planning::PathIkOptions();
     // 특이 자세에서 관절을 재배치하는 보조 IK에 완화한 오차를 사용해 반복 횟수를 제한한다.
     options.positionToleranceMeters = 1e-6;
     options.orientationToleranceRadians = 1e-5;
@@ -91,7 +92,7 @@ SimRobotController::SimRobotController(const models::RobotSpecification& specifi
 }
 
 void SimRobotController::SetJointStateValidityChecker(
-    std::function<JointStateInvalidity(const JointVector&)> checker)
+    planning::StateValidityChecker checker)
 {
     jointStateValidityChecker_ = std::move(checker);
 }
@@ -136,6 +137,11 @@ bool SimRobotController::IsConnected() const noexcept
 
 Result SimRobotController::MoveJoint(const JointMoveCommand& command)
 {
+    return MoveJointImpl(command, true);
+}
+
+Result SimRobotController::MoveJointImpl(const JointMoveCommand& command, bool validatePath)
+{
     if (!connected_)
         return Failure(ErrorCode::NotConnected, "SimRobotController: not connected");
 
@@ -152,9 +158,18 @@ Result SimRobotController::MoveJoint(const JointMoveCommand& command)
     // 모든 joint를 먼저 확인한다. 하나라도 범위 밖이면 target이나 기존 진행 상태를 일부만 바꾸지 않는다.
     // 명령을 받는 순간 관절각 q를 바꾸지 않는다. 이후 Update 호출이 정해진 속도 안에서 현재 상태를 목표까지 진행시킨다.
     // 움직이는 도중 새 명령이 들어오면 대기열에 쌓지 않고 현재 목표를 새 목표로 바꾼다.
-    targetPositionRadians_ = command.targetPositionRadians;
+    JointVector targetPositionRadians = command.targetPositionRadians;
     if (!command.preserveJointTurns)
-        detail::AlignEquivalentJointAngles(targetPositionRadians_, state_.jointPositionRadians, *specification_);
+        planning::AlignEquivalentJointAngles(targetPositionRadians, state_.jointPositionRadians, *specification_);
+
+    if (validatePath && jointStateValidityChecker_)
+    {
+        const auto invalidity = planning::ValidateJointPath(state_.jointPositionRadians, targetPositionRadians,
+            *specification_, jointStateValidityChecker_);
+        if (invalidity != planning::JointStateInvalidity::None)
+            return planning::MapJointStateInvalidity(invalidity);
+    }
+    targetPositionRadians_ = std::move(targetPositionRadians);
     velocityScale_ = command.velocityScale;
     accelerationScale_ = command.accelerationScale;
     linearPath_.clear();
@@ -183,20 +198,20 @@ Result SimRobotController::MovePose(const CartesianPose& targetInBase, double ve
         return Failure(ErrorCode::NotConnected, "SimRobotController: not connected");
     if (!IsScaleValid(velocityScale) || !IsScaleValid(accelerationScale))
         return Failure(ErrorCode::InvalidCommand, "SimRobotController: scale must be in (0, 1]");
-    JointStateInvalidity invalidity = JointStateInvalidity::None;
+    planning::JointStateInvalidity invalidity = planning::JointStateInvalidity::None;
     kinematics::IkResult ikFailure;
-    auto solution = detail::SolveCollisionFreeIk(inverse_, *specification_, jointStateValidityChecker_,
-        targetInBase, state_.jointPositionRadians, {}, detail::kDefaultSimulationMotionPolicy,
+    auto solution = planning::SolveCollisionFreeIk(inverse_, *specification_, jointStateValidityChecker_,
+        targetInBase, state_.jointPositionRadians, {}, planning::kDefaultPlanningPolicy,
         invalidity, ikFailure);
     if (!solution)
     {
-        if (invalidity == JointStateInvalidity::EnvironmentCollision)
+        if (invalidity == planning::JointStateInvalidity::EnvironmentCollision)
             return Failure(ErrorCode::EnvironmentContact, "SimRobotController: no collision-free IK solution or joint path");
-        if (invalidity != JointStateInvalidity::None)
-            return detail::MapJointStateInvalidity(invalidity);
-        return detail::MapIkFailure(ikFailure);
+        if (invalidity != planning::JointStateInvalidity::None)
+            return planning::MapJointStateInvalidity(invalidity);
+        return planning::MapIkFailure(ikFailure);
     }
-    return MoveJoint({solution->jointPositionRadians, velocityScale, accelerationScale});
+    return MoveJointImpl({solution->jointPositionRadians, velocityScale, accelerationScale}, false);
 }
 
 Result SimRobotController::MoveLinear(const LinearMoveCommand& command)
@@ -214,14 +229,14 @@ Result SimRobotController::MoveLinearPath(const LinearPathMoveCommand& command)
 {
     if (!connected_)
         return Failure(ErrorCode::NotConnected, "SimRobotController: not connected");
-    const Result validation = detail::ValidateLinearPathCommand(command);
+    const Result validation = planning::ValidateLinearPathCommand(command);
     if (!validation)
         return validation;
     if (!specification_->hasToolFrame)
         return Failure(ErrorCode::Unsupported, "SimRobotController: missing ToolFrame for TCP motion");
 
-    detail::LinearPathPlan plan;
-    const auto result = detail::BuildLinearPath(
+    planning::LinearPathPlan plan;
+    const auto result = planning::BuildLinearPath(
         command, *specification_, state_.jointPositionRadians,
         inverse_.EvaluateTcp(state_.jointPositionRadians), inverse_, jointStateValidityChecker_, plan);
     if (!result)
@@ -411,15 +426,15 @@ void SimRobotController::UpdateLinear(double dtSeconds)
                     (end.joints[joint] - begin.joints[joint]) * nextSegmentFraction;
             double requiredSeconds = 0.0;
             for (std::size_t joint = 0; joint < specification_->jointCount; ++joint)
-                requiredSeconds = std::max(requiredSeconds, detail::RequiredTimeForVelocity(
+                requiredSeconds = std::max(requiredSeconds, planning::RequiredTimeForVelocity(
                     interpolatedJoints[joint] - state_.jointPositionRadians[joint],
                     specification_->joints[joint].maxVelocityRadiansPerSecond));
             const Pose3 nextTcp = FromCartesian(inverse_.EvaluateTcp(interpolatedJoints));
             requiredSeconds = std::max(requiredSeconds,
-                detail::RequiredTimeForVelocity(
+                planning::RequiredTimeForVelocity(
                     Length(Subtract(nextTcp.positionMeters, currentTcp.positionMeters)), linearVelocityLimit_));
             requiredSeconds = std::max(requiredSeconds,
-                detail::RequiredTimeForVelocity(
+                planning::RequiredTimeForVelocity(
                     Length(RotationError(nextTcp.rotation, currentTcp.rotation)), angularVelocityLimit_));
             const double ratio = std::max(1.0, requiredSeconds / available);
             if (ratio <= 1.0 + 1e-8)
@@ -518,16 +533,16 @@ bool SimRobotController::ReorientForLinear(const JointVector& plannedJoints, dou
             for (std::size_t i = 0; i < current.size(); ++i)
             {
                 const double change = solution.jointPositionRadians[i] - current[i];
-                ratio = std::max(ratio, detail::VelocityRatio(
+                ratio = std::max(ratio, planning::VelocityRatio(
                     change, availableSeconds, specification_->joints[i].maxVelocityRadiansPerSecond));
                 movement = std::max(movement, std::abs(change));
                 const double residual = plannedJoints[i] - solution.jointPositionRadians[i];
                 nextDistanceSquared += residual * residual;
             }
             const Pose3 nextTcp = FromCartesian(inverse_.EvaluateTcp(solution.jointPositionRadians));
-            ratio = std::max(ratio, detail::VelocityRatio(
+            ratio = std::max(ratio, planning::VelocityRatio(
                 Length(Subtract(nextTcp.positionMeters, currentTcp.positionMeters)), availableSeconds, linearVelocityLimit_));
-            ratio = std::max(ratio, detail::VelocityRatio(
+            ratio = std::max(ratio, planning::VelocityRatio(
                 Length(RotationError(nextTcp.rotation, currentTcp.rotation)), availableSeconds, angularVelocityLimit_));
             if (ratio <= 1.0 + 1e-8 && movement > 1e-12 && nextDistanceSquared < previousDistanceSquared)
             {

@@ -1,8 +1,8 @@
-#include "Entity.h"
-#include "components/TransformComponents.h"
+#include "scene/Entity.h"
+#include "scene/TransformComponents.h"
 #include "scene/Scene.h"
 #include "scene/Scene.h"
-#include "systems/TransformSystemModule.h"
+#include "scene/TransformSystemModule.h"
 #include "TestSupport.h"
 
 #include <gtest/gtest.h>
@@ -18,6 +18,11 @@
 
 namespace
 {
+using namespace grasplink::scene;
+using grasplink::scene::Entity;
+using grasplink::scene::Scene;
+using grasplink::scene::TransformSystemModule;
+
 constexpr float kTolerance = 1.0e-5F;
 const glm::quat kIdentity{1.0F, 0.0F, 0.0F, 0.0F};
 

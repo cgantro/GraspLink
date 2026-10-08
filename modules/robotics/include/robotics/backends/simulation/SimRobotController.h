@@ -1,7 +1,7 @@
 #pragma once
 
 #include "robotics/core/IRobotController.h"
-#include "robotics/backends/simulation/detail/LinearPathPlanner.h"
+#include "robotics/planning/LinearPathPlanner.h"
 #include "robotics/kinematics/RobotInverseKinematics.h"
 #include "robotics/models/RobotSpecification.h"
 
@@ -45,7 +45,7 @@ public:
      * 검사기는 명령을 처리하는 호출 흐름 안에서 실행되므로 등록한 객체가 검사기가 사용되는 동안 살아 있어야 한다.
      * 빈 함수를 등록하면 환경 충돌 검사를 생략한다.
      */
-    void SetJointStateValidityChecker(std::function<JointStateInvalidity(const JointVector&)> checker);
+    void SetJointStateValidityChecker(planning::StateValidityChecker checker);
 
     /** @brief 관절각과 속도를 0으로 한 유효한 Simulation 상태로 연결한다.
      * @return 성공하며 ToolFrame이 있으면 설정된 TCP의 모델 FK feedback을 제공한다.
@@ -150,8 +150,9 @@ public:
     bool RestoreCollisionSafeState(const JointVector& safePositionRadians);
 
 private:
-    using LinearPathPoint = detail::LinearPathPoint;
+    using LinearPathPoint = planning::LinearPathPoint;
 
+    Result MoveJointImpl(const JointMoveCommand& command, bool validatePath);
     void RefreshTcp();
     void UpdateLinear(double dtSeconds);
     bool ReorientForLinear(const JointVector& plannedJoints, double availableSeconds);
@@ -179,7 +180,7 @@ private:
 
     // IK 계산기는 같은 사양을 빌리며 모델 ToolFrame에 고정 공구 변환을 적용해 TCP를 계산한다.
     kinematics::DampedLeastSquaresIk inverse_;
-    std::function<JointStateInvalidity(const JointVector&)> jointStateValidityChecker_;
+    planning::StateValidityChecker jointStateValidityChecker_;
     std::vector<LinearPathPoint> linearPath_;
     std::size_t linearSegment_ = 1;
     double linearSegmentFraction_ = 0.0;

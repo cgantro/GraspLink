@@ -2,6 +2,9 @@
 
 #include <cstdint>
 
+namespace grasplink::graphics
+{
+
 /**
  * @brief Element Buffer Object(EBO)는 삼각형마다 이을 꼭짓점 번호를 GPU에 보관한다.
  * @details
@@ -47,3 +50,5 @@ private:
     // 그리기에 사용할 번호 개수. GPU로 복사한 byte 수는 번호 개수×4다.
     uint32_t m_Count = 0;
 };
+
+} // namespace grasplink::graphics

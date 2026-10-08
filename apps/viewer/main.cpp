@@ -7,7 +7,7 @@ int main(int argc, char** argv)
 {
     try
     {
-        ViewerOptions options;
+        grasplink::simulator::ViewerOptions options;
         for (int i = 1; i < argc; ++i)
         {
             const std::string argument = argv[i];
@@ -23,7 +23,7 @@ int main(int argc, char** argv)
                 return 2;
             }
         }
-        ViewerApp app(options);
+        grasplink::simulator::ViewerApp app(options);
         return app.Run();
     }
     catch (const std::exception& e)

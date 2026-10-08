@@ -1,7 +1,7 @@
 #include "simulation/robotics/GripperColliders.h"
 
-#include "Entity.h"
-#include "assets/GraphicsTypes.h"
+#include "scene/Entity.h"
+#include "model/ModelResource.h"
 #include "scene/Scene.h"
 #include "simulation/components/PhysicsComponents.h"
 #include "simulation/components/RobotCollisionProxy.h"
@@ -21,6 +21,13 @@
 
 namespace grasplink::simulation
 {
+using grasplink::model::MeshData;
+using grasplink::model::ModelResource;
+using grasplink::model::NodeData;
+using grasplink::model::Vertex;
+using grasplink::scene::Entity;
+using grasplink::scene::Scene;
+
 namespace
 {
 struct ProxySpec

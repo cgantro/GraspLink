@@ -1,7 +1,7 @@
 #pragma once
 
-#include "assets/GraphicsTypes.h"
-#include "PhysicsTypes.h"
+#include "model/ModelResource.h"
+#include "physics/PhysicsTypes.h"
 #include "robotics/models/RobotSpecification.h"
 
 #include <cstddef>
@@ -49,7 +49,7 @@ struct Result
  */
 [[nodiscard]] Result Build(
     const grasplink::robotics::models::RobotSpecification& specification,
-    const ModelResource& model,
+    const grasplink::model::ModelResource& model,
     const Options& options = {});
 
 }

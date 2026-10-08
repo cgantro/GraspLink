@@ -1,4 +1,4 @@
-#include "robotics/backends/simulation/detail/LinearPathPlanner.h"
+#include "robotics/planning/LinearPathPlanner.h"
 
 #include "robotics/kinematics/detail/PoseMath.h"
 #include "robotics/kinematics/detail/AlternativeIkSeeds.h"
@@ -9,18 +9,19 @@
 #include <string>
 #include <utility>
 
-namespace grasplink::robotics::backends::simulation::detail
+namespace grasplink::robotics::planning
 {
 namespace
 {
 constexpr double kFullTurnRadians = 2.0 * 3.14159265358979323846;
+}
 
 JointStateInvalidity ValidateJointPath(
     const JointVector& start,
     const JointVector& end,
     const models::RobotSpecification& specification,
-    const std::function<JointStateInvalidity(const JointVector&)>& stateValidityChecker,
-    const SimulationMotionPolicy& policy)
+    const StateValidityChecker& stateValidityChecker,
+    const PlanningPolicy& policy)
 {
     // 관절 하나의 변화량이 설정한 간격보다 크면 그 사이 자세도 나눠 검사한다. 시작 자세는 이미 검증됐다고 보고 끝 자세까지 확인한다.
     const auto startInvalidity = ValidateJointState(specification, start, {});
@@ -47,12 +48,10 @@ JointStateInvalidity ValidateJointPath(
     }
     return JointStateInvalidity::None;
 }
-}
-
 JointStateInvalidity ValidateJointState(
     const models::RobotSpecification& specification,
     const JointVector& joints,
-    const std::function<JointStateInvalidity(const JointVector&)>& stateValidityChecker)
+    const StateValidityChecker& stateValidityChecker)
 {
     if (specification.joints == nullptr || joints.size() != specification.jointCount)
         return JointStateInvalidity::JointCountMismatch;
@@ -110,11 +109,11 @@ void AlignEquivalentJointAngles(
 std::optional<kinematics::IkResult> SolveCollisionFreeIk(
     kinematics::DampedLeastSquaresIk& inverse,
     const models::RobotSpecification& specification,
-    const std::function<JointStateInvalidity(const JointVector&)>& stateValidityChecker,
+    const StateValidityChecker& stateValidityChecker,
     const CartesianPose& target,
     const JointVector& start,
     const kinematics::IkOptions& options,
-    const SimulationMotionPolicy& policy,
+    const PlanningPolicy& policy,
     JointStateInvalidity& invalidity,
     kinematics::IkResult& ikFailure)
 {
@@ -187,9 +186,9 @@ Result BuildLinearPath(
     const JointVector& startJoints,
     const CartesianPose& startTcp,
     kinematics::DampedLeastSquaresIk& inverse,
-    const std::function<JointStateInvalidity(const JointVector&)>& stateValidityChecker,
+    const StateValidityChecker& stateValidityChecker,
     LinearPathPlan& plan,
-    const SimulationMotionPolicy& policy)
+    const PlanningPolicy& policy)
 {
     using namespace kinematics::detail;
 
@@ -289,4 +288,4 @@ Result BuildLinearPath(
     return Result::Success();
 }
 
-} // namespace grasplink::robotics::backends::simulation::detail
+} // namespace grasplink::robotics::planning

@@ -1,9 +1,12 @@
-#include "Window.h"
+#include "graphics/Window.h"
 
 #include <stdexcept>
 
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
+
+namespace grasplink::graphics
+{
 
 Window::Window(const Properties& properties)
 {
@@ -155,3 +158,5 @@ void Window::ScrollCallback(
     // 한 프레임에 발생한 여러 scroll callback의 세로 이동량을 합쳐 카메라 Controller가 한 번에 처리하게 한다.
     self->m_ScrollOffset += yOffset;
 }
+
+} // namespace grasplink::graphics
