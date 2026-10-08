@@ -315,6 +315,10 @@ TEST(RobotInverseKinematicsTests, ReportsFailureStatusesAndStabilizesNearSingula
     const CartesianPose beyondJointLimit = limited.EvaluateTcp({0.5});
     const IkResult jointLimit = limited.Solve(beyondJointLimit, {0.0});
     EXPECT_EQ(jointLimit.status, IkStatus::JointLimitReached) << "joint boundary failure has its own status";
+    EXPECT_EQ(jointLimit.terminationReason, IkTerminationReason::ActiveJointLimit)
+        << "the local failure is tied to an active joint boundary";
+    EXPECT_TRUE(std::isfinite(jointLimit.weightedJacobianMinimumSingularValue))
+        << "failure records the weighted Jacobian minimum singular value";
 
     const IkResult unreachable = limited.Solve(
         CartesianPose{{50.0, 0.0, 0.0}, {0.0, 0.0, 0.0, 1.0}}, {0.0});
@@ -332,6 +336,11 @@ TEST(RobotInverseKinematicsTests, ReportsFailureStatusesAndStabilizesNearSingula
     }();
     EXPECT_EQ(exhausted.status, IkStatus::DidNotConverge)
         << "iteration exhaustion is distinct from an unreachable target and a joint limit";
+    EXPECT_EQ(exhausted.terminationReason, IkTerminationReason::IterationLimit)
+        << "iteration budget exhaustion is distinguished from numerical stagnation";
+    EXPECT_TRUE(exhausted.weightedJacobianMinimumSingularValue >= 0.0 &&
+        !std::isnan(exhausted.weightedJacobianConditionNumber))
+        << "failure diagnostics contain a nonnegative singular value and a defined condition estimate";
 
     std::array<models::JointSpecification, 1> unconstrainedJoints{};
     const auto unconstrainedModel = MakeSingleJointModel(

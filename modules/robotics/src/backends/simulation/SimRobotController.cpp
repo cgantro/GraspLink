@@ -1,5 +1,6 @@
 #include "robotics/backends/simulation/SimRobotController.h"
 #include "robotics/backends/simulation/detail/SimulationMotionPolicy.h"
+#include "robotics/kinematics/detail/AlternativeIkSeeds.h"
 #include "robotics/kinematics/detail/PoseMath.h"
 
 #include <algorithm>
@@ -44,6 +45,16 @@ Result ValidateJointPositionLimits(
         }
     }
     return Result::Success();
+}
+
+void AppendValidityDiagnostic(Result& result, const std::function<std::string()>& provider)
+{
+    if (result.code == ErrorCode::SelfCollision && provider)
+    {
+        const std::string detail = provider();
+        if (!detail.empty())
+            result.message += " (" + detail + ")";
+    }
 }
 
 bool JointInterpolationFollowsTcpLine(
@@ -125,6 +136,12 @@ void SimRobotController::SetJointStateValidityChecker(
     if (IsMotionPlanning())
     {
         linearPathPlanningJob_.Cancel();
+        if (posePlanningPhase_ != PosePlanningPhase::None)
+        {
+            inverse_.CancelSingleSeed(poseIkSession_);
+            poseJointPathPlanningJob_.Cancel();
+        }
+        posePlanningPhase_ = PosePlanningPhase::None;
         state_.mode = RobotMode::Idle;
         state_.errorCode = ErrorCode::Cancelled;
         linearPathPlanningResult_.emplace(
@@ -132,7 +149,16 @@ void SimRobotController::SetJointStateValidityChecker(
         pendingLinearPathCommand_ = {};
     }
     linearPathPlanningJob_ = {};
+    poseJointPathPlanningJob_.Cancel();
+    posePlanningPhase_ = PosePlanningPhase::None;
+    posePathPoints_.clear();
+    poseAlternativeSeeds_.clear();
     jointStateValidityChecker_ = std::move(checker);
+}
+
+void SimRobotController::SetJointStateValidityDiagnosticProvider(std::function<std::string()> provider)
+{
+    jointStateValidityDiagnosticProvider_ = std::move(provider);
 }
 
 Result SimRobotController::Connect()
@@ -140,6 +166,14 @@ Result SimRobotController::Connect()
     // 재연결은 이전 명령과 상태를 이어가지 않고 q=0의 새 논리 세션을 만든다.
     linearPathPlanningJob_.Cancel();
     linearPathPlanningJob_ = {};
+    if (posePlanningPhase_ != PosePlanningPhase::None)
+    {
+        inverse_.CancelSingleSeed(poseIkSession_);
+        poseJointPathPlanningJob_.Cancel();
+    }
+    posePlanningPhase_ = PosePlanningPhase::None;
+    posePathPoints_.clear();
+    poseAlternativeSeeds_.clear();
     linearPathPlanningResult_.reset();
     pendingLinearPathCommand_ = {};
     state_ = {};
@@ -171,7 +205,16 @@ Result SimRobotController::Connect()
 void SimRobotController::Disconnect() noexcept
 {
     linearPathPlanningJob_.Cancel();
+    if (posePlanningPhase_ != PosePlanningPhase::None)
+    {
+        inverse_.CancelSingleSeed(poseIkSession_);
+        poseJointPathPlanningJob_.Cancel();
+    }
+    posePlanningPhase_ = PosePlanningPhase::None;
+    posePathPoints_.clear();
+    poseAlternativeSeeds_.clear();
     linearPathPlanningResult_.reset();
+    posePathSegment_ = 0;
     pendingLinearPathCommand_ = {};
     // 백엔드의 관절 배열은 재사용하되 연결/feedback 유효성을 내리고 속도만 즉시 0으로 만든다.
     connected_ = false;
@@ -192,6 +235,7 @@ bool SimRobotController::IsConnected() const noexcept
 
 Result SimRobotController::MoveJoint(const JointMoveCommand& command)
 {
+    posePathPoints_.clear();
     return MoveJointImpl(command, true);
 }
 
@@ -240,7 +284,11 @@ Result SimRobotController::MoveJointImpl(const JointMoveCommand& command, bool v
         const auto invalidity = planning::ValidateJointPath(*nextPathStart, targetPositionRadians,
             *specification_, jointStateValidityChecker_);
         if (invalidity != planning::JointStateInvalidity::None)
-            return planning::MapJointStateInvalidity(invalidity);
+        {
+            Result result = planning::MapJointStateInvalidity(invalidity);
+            AppendValidityDiagnostic(result, jointStateValidityDiagnosticProvider_);
+            return result;
+        }
     }
 
     if (canBrakeJointPath)
@@ -346,10 +394,61 @@ Result SimRobotController::MovePose(const CartesianPose& targetInBase, double ve
         if (invalidity == planning::JointStateInvalidity::EnvironmentCollision)
             return Failure(ErrorCode::EnvironmentContact, "SimRobotController: no collision-free IK solution or joint path");
         if (invalidity != planning::JointStateInvalidity::None)
-            return planning::MapJointStateInvalidity(invalidity);
+        {
+            Result result = planning::MapJointStateInvalidity(invalidity);
+            AppendValidityDiagnostic(result, jointStateValidityDiagnosticProvider_);
+            return result;
+        }
         return planning::MapIkFailure(ikFailure);
     }
     return MoveJointImpl({solution->jointPositionRadians, velocityScale, accelerationScale}, false);
+}
+
+Result SimRobotController::BeginPosePlanning(
+    const CartesianPose& targetInBase, double velocityScale, double accelerationScale)
+{
+    if (!connected_)
+        return Failure(ErrorCode::NotConnected, "SimRobotController: not connected");
+    if (IsMotionPlanning())
+        return Failure(ErrorCode::Busy, "SimRobotController: motion planning is in progress");
+    if (!IsScaleValid(velocityScale) || !IsScaleValid(accelerationScale))
+        return Failure(ErrorCode::InvalidCommand, "SimRobotController: scale must be in (0, 1]");
+    if (!specification_->hasToolFrame)
+        return Failure(ErrorCode::Unsupported, "SimRobotController: missing ToolFrame for TCP motion");
+
+    linearPathPlanningResult_.reset();
+    posePathPoints_.clear();
+    poseAlternativeSeeds_ = kinematics::detail::BuildAlternativeIkSeeds(
+        state_.jointPositionRadians, *specification_);
+    kinematics::detail::AppendIkRestartSeeds(poseAlternativeSeeds_,
+        state_.jointPositionRadians, *specification_, 63);
+    poseAlternativeSeedIndex_ = 0;
+    poseIkSeedAttempts_ = 1;
+    posePathSegment_ = 0;
+    poseTarget_ = targetInBase;
+    posePathFailure_ = Result::Success();
+    pendingPoseMove_ = {{}, velocityScale, accelerationScale};
+    poseIkSession_ = inverse_.BeginSingleSeed(targetInBase, state_.jointPositionRadians);
+    posePlanningPhase_ = PosePlanningPhase::Ik;
+    state_.mode = RobotMode::Planning;
+    state_.errorCode = ErrorCode::None;
+    return Result::Success();
+}
+
+bool SimRobotController::StartNextPoseIkSeed()
+{
+    if (poseAlternativeSeedIndex_ >= poseAlternativeSeeds_.size())
+        return false;
+    poseIkSession_ = inverse_.BeginSingleSeed(poseTarget_,
+        poseAlternativeSeeds_[poseAlternativeSeedIndex_++]);
+    ++poseIkSeedAttempts_;
+    posePlanningPhase_ = PosePlanningPhase::Ik;
+    return true;
+}
+
+std::size_t SimRobotController::GetLastPoseIkSeedAttemptCount() const noexcept
+{
+    return poseIkSeedAttempts_;
 }
 
 Result SimRobotController::MoveLinear(const LinearMoveCommand& command)
@@ -374,7 +473,11 @@ Result SimRobotController::MoveLinearPath(const LinearPathMoveCommand& command)
         command, *specification_, state_.jointPositionRadians,
         inverse_.EvaluateTcp(state_.jointPositionRadians), inverse_, jointStateValidityChecker_, plan);
     if (!result)
-        return result;
+    {
+        Result detailed = result;
+        AppendValidityDiagnostic(detailed, jointStateValidityDiagnosticProvider_);
+        return detailed;
+    }
     return CommitLinearPathPlan(command, std::move(plan));
 }
 
@@ -388,10 +491,11 @@ Result SimRobotController::BeginLinearPathPlanning(const LinearPathMoveCommand& 
     linearPathPlanningResult_.reset();
     const Result begin = linearPathPlanningJob_.Begin(command, *specification_,
         state_.jointPositionRadians, inverse_.EvaluateTcp(state_.jointPositionRadians),
-        inverse_, jointStateValidityChecker_);
+        inverse_, jointStateValidityChecker_, planning::kInteractivePlanningPolicy);
     if (!begin)
     {
         linearPathPlanningResult_ = begin;
+        AppendValidityDiagnostic(*linearPathPlanningResult_, jointStateValidityDiagnosticProvider_);
         pendingLinearPathCommand_ = {};
         linearPathPlanningJob_ = {};
         return begin;
@@ -402,6 +506,7 @@ Result SimRobotController::BeginLinearPathPlanning(const LinearPathMoveCommand& 
         const Result committed = plan ? CommitLinearPathPlan(command, std::move(*plan)) :
             Failure(ErrorCode::Fault, "SimRobotController: completed planner returned no plan");
         linearPathPlanningResult_ = committed;
+        AppendValidityDiagnostic(*linearPathPlanningResult_, jointStateValidityDiagnosticProvider_);
         pendingLinearPathCommand_ = {};
         return committed;
     }
@@ -414,6 +519,66 @@ void SimRobotController::AdvanceMotionPlanning(std::size_t workBudget)
 {
     if (!IsMotionPlanning())
         return;
+
+    if (posePlanningPhase_ == PosePlanningPhase::Ik)
+    {
+        const auto ikState = inverse_.StepSingleSeed(poseIkSession_, workBudget);
+        if (ikState == kinematics::IkSessionState::Running)
+            return;
+
+        const auto& ikResult = inverse_.GetSingleSeedResult(poseIkSession_);
+        if (!ikResult)
+        {
+            if (StartNextPoseIkSeed())
+                return;
+            FinishPosePlanning(planning::MapIkFailure(ikResult));
+            return;
+        }
+
+        planning::JointPathPlannerOptions options;
+        options.validationPolicy = planning::kDefaultPlanningPolicy;
+        options.maximumIterations = 512;
+        options.maximumNodesPerTree = 256;
+        options.maximumShortcutAttempts = 32;
+        const Result begin = poseJointPathPlanningJob_.Begin(*specification_, state_.jointPositionRadians,
+            ikResult.jointPositionRadians, jointStateValidityChecker_, options);
+        if (!begin)
+        {
+            FinishPosePlanning(begin);
+            return;
+        }
+        posePlanningPhase_ = PosePlanningPhase::JointPath;
+        return;
+    }
+
+    if (posePlanningPhase_ == PosePlanningPhase::JointPath)
+    {
+        const auto planningState = poseJointPathPlanningJob_.Advance(workBudget);
+        if (planningState == planning::JointPathPlanningState::Running)
+            return;
+        if (planningState != planning::JointPathPlanningState::Completed)
+        {
+            posePathFailure_ = poseJointPathPlanningJob_.GetResult();
+            if (StartNextPoseIkSeed())
+                return;
+            FinishPosePlanning(posePathFailure_);
+            return;
+        }
+        auto plan = poseJointPathPlanningJob_.TakePlan();
+        if (!plan)
+        {
+            FinishPosePlanning(Failure(ErrorCode::Fault,
+                "SimRobotController: joint path planner completed without a path"));
+            return;
+        }
+        posePathPoints_ = std::move(plan->points);
+        poseAlternativeSeeds_.clear();
+        posePathSegment_ = 0;
+        posePlanningPhase_ = PosePlanningPhase::None;
+        FinishPosePlanning(StartPosePathSegment());
+        return;
+    }
+
     const auto planningState = linearPathPlanningJob_.Advance(workBudget);
     if (planningState == planning::LinearPathPlanningState::Running)
         return;
@@ -428,6 +593,7 @@ void SimRobotController::AdvanceMotionPlanning(std::size_t workBudget)
     else
     {
         linearPathPlanningResult_ = linearPathPlanningJob_.GetResult();
+        AppendValidityDiagnostic(*linearPathPlanningResult_, jointStateValidityDiagnosticProvider_);
         state_.mode = RobotMode::Idle;
         state_.errorCode = linearPathPlanningResult_->code;
         pendingLinearPathCommand_ = {};
@@ -437,7 +603,37 @@ void SimRobotController::AdvanceMotionPlanning(std::size_t workBudget)
 
 bool SimRobotController::IsMotionPlanning() const noexcept
 {
-    return linearPathPlanningJob_.GetState() == planning::LinearPathPlanningState::Running;
+    return posePlanningPhase_ != PosePlanningPhase::None ||
+        linearPathPlanningJob_.GetState() == planning::LinearPathPlanningState::Running;
+}
+
+void SimRobotController::FinishPosePlanning(Result result)
+{
+    AppendValidityDiagnostic(result, jointStateValidityDiagnosticProvider_);
+    posePlanningPhase_ = PosePlanningPhase::None;
+    poseAlternativeSeeds_.clear();
+    if (!result && poseIkSeedAttempts_ > 1)
+        result.message += " after " + std::to_string(poseIkSeedAttempts_) + " IK seed attempts";
+    linearPathPlanningResult_ = std::move(result);
+    state_.mode = *linearPathPlanningResult_ ? RobotMode::Moving : RobotMode::Idle;
+    state_.errorCode = linearPathPlanningResult_->code;
+    if (!*linearPathPlanningResult_)
+        posePathPoints_.clear();
+}
+
+Result SimRobotController::StartPosePathSegment()
+{
+    if (posePathPoints_.empty())
+        return Failure(ErrorCode::Fault, "SimRobotController: joint path contains no start state");
+    if (posePathPoints_.size() == 1)
+    {
+        posePathPoints_.clear();
+        return MoveJointImpl({state_.jointPositionRadians, pendingPoseMove_.velocityScale,
+            pendingPoseMove_.accelerationScale}, false);
+    }
+    posePathSegment_ = 1;
+    return MoveJointImpl({posePathPoints_[posePathSegment_], pendingPoseMove_.velocityScale,
+        pendingPoseMove_.accelerationScale}, false);
 }
 
 std::optional<Result> SimRobotController::TakeMotionPlanningResult()
@@ -501,6 +697,12 @@ void SimRobotController::RefreshTcp()
     state_.tcpPoseValid = specification_->hasToolFrame && state_.valid;
     if (state_.tcpPoseValid)
         state_.tcpPose = inverse_.EvaluateTcp(state_.jointPositionRadians);
+    if (posePlanningPhase_ != PosePlanningPhase::None)
+    {
+        inverse_.CancelSingleSeed(poseIkSession_);
+        FinishPosePlanning(Failure(ErrorCode::Cancelled,
+            "SimRobotController: pose planning cancelled because the robot state changed"));
+    }
 }
 
 Result SimRobotController::Stop()
@@ -511,12 +713,22 @@ Result SimRobotController::Stop()
     if (IsMotionPlanning())
     {
         linearPathPlanningJob_.Cancel();
-        linearPathPlanningResult_ = Failure(
-            ErrorCode::Cancelled, "SimRobotController: linear path planning cancelled");
-        state_.mode = RobotMode::Idle;
-        state_.errorCode = ErrorCode::Cancelled;
-        pendingLinearPathCommand_ = {};
-        linearPathPlanningJob_ = {};
+        if (posePlanningPhase_ != PosePlanningPhase::None)
+        {
+            inverse_.CancelSingleSeed(poseIkSession_);
+            poseJointPathPlanningJob_.Cancel();
+            FinishPosePlanning(Failure(ErrorCode::Cancelled,
+                "SimRobotController: pose planning cancelled"));
+        }
+        else
+        {
+            linearPathPlanningResult_ = Failure(
+                ErrorCode::Cancelled, "SimRobotController: linear path planning cancelled");
+            state_.mode = RobotMode::Idle;
+            state_.errorCode = ErrorCode::Cancelled;
+            pendingLinearPathCommand_ = {};
+            linearPathPlanningJob_ = {};
+        }
     }
 
     // 현재 q를 새 목표로 고정해 이후 Update가 남은 동작을 재개하지 않게 한다.
@@ -529,6 +741,7 @@ Result SimRobotController::Stop()
     jointMoveBraking_ = false;
     hasPendingJointTarget_ = false;
     linearPath_.clear();
+    posePathPoints_.clear();
     linearProfileElapsedSeconds_ = 0.0;
     std::fill(
         state_.jointVelocityRadiansPerSecond.begin(),
@@ -639,7 +852,18 @@ void SimRobotController::Update(double dtSeconds)
             state_.jointVelocityRadiansPerSecond.begin(),
             state_.jointVelocityRadiansPerSecond.end(),
             0.0);
-        state_.mode = RobotMode::Idle;
+        if (posePathSegment_ + 1 < posePathPoints_.size())
+        {
+            ++posePathSegment_;
+            ConfigureJointMove(posePathPoints_[posePathSegment_], pendingPoseMove_.velocityScale,
+                pendingPoseMove_.accelerationScale);
+        }
+        else
+        {
+            posePathPoints_.clear();
+            posePathSegment_ = 0;
+            state_.mode = RobotMode::Idle;
+        }
     }
     RefreshTcp();
 }

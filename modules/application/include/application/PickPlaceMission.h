@@ -5,7 +5,6 @@
 #include "robotics/models/RobotSpecification.h"
 
 #include <array>
-#include <cstddef>
 #include <cstdint>
 #include <string_view>
 
@@ -72,7 +71,7 @@ private:
     {
         Ready, UnwindingBeforeTask, MovingAbovePickup, AligningAbovePickup,
         MovingDownToPickup, Closing, Lifting, MovingAbovePlacement,
-        TransitingToPlacement, PlanningMotion, TransitPathRunning, MovingToPlacementOverhead,
+        TransitingToPlacement, PlanningMotion, MovingToPlacementOverhead,
         AligningAbovePlacement, MovingDownToPlacement, Opening, Retreating,
         UnwindingWrist, Recovering, Complete, Failed, RaisingAfterResume
     };
@@ -87,8 +86,6 @@ private:
     robotics::CartesianPose graspedBoxPoseInBase_{};
     std::array<double, 3> boxOffsetInTool_{};
     std::array<double, 4> boxRotationOffsetInTool_{0.0, 0.0, 0.0, 1.0};
-    std::array<robotics::CartesianPose, 6> transitWaypoints_{};
-    std::size_t transitWaypointCount_ = 0;
     robotics::CartesianPose recoveryPose_{};
     robotics::Result lastResult_{};
     Stage stage_ = Stage::Ready;

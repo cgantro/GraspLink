@@ -97,15 +97,16 @@ bool HasExtent(const std::vector<glm::vec3>& vertices, float minimumMeters)
 std::vector<grasplink::physics::CollisionShapeDescription> BuildLinkShapes(
     const ModelResource& model,
     const std::vector<glm::mat4>& nodeTransforms,
-    const NodeData& jointNode,
-    const NodeData& linkNode,
+    std::size_t jointIndex,
+    std::size_t linkIndex,
     const std::unordered_set<std::string>& movingNodes,
     const Options& options)
 {
     using Shape = grasplink::physics::CollisionShapeDescription;
     std::vector<Shape> shapes;
-    const std::size_t jointIndex = static_cast<std::size_t>(&jointNode - model.nodes.data());
-    const std::size_t linkIndex = static_cast<std::size_t>(&linkNode - model.nodes.data());
+    if (jointIndex >= model.nodes.size() || linkIndex >= model.nodes.size() ||
+        nodeTransforms.size() != model.nodes.size())
+        throw std::invalid_argument("Robot collision geometry: node transform index is out of range");
     // 메시 정점을 GLB 좌표에서 이 Link를 움직이는 joint 원점 좌표로 바꾼다. 실행 중 FK로 계산한 관절 자세는 별도 proxy Entity에 적용한다.
     const glm::mat4 jointInverse = glm::inverse(nodeTransforms[jointIndex]);
 
@@ -218,20 +219,23 @@ std::vector<grasplink::physics::CollisionShapeDescription> BuildLinkShapes(
 std::vector<grasplink::physics::CollisionShapeDescription> BuildBaseShapes(
     const ModelResource& model,
     const std::vector<glm::mat4>& nodeTransforms,
-    const std::unordered_map<std::string, const NodeData*>& nodesByName,
+    const std::unordered_map<std::string, std::size_t>& nodesByName,
     const std::unordered_set<std::string>& movingNodes,
     const Options& options)
 {
     const auto baseIterator = nodesByName.find("Base");
     if (baseIterator == nodesByName.end()) return {};
 
-    const std::size_t baseIndex = static_cast<std::size_t>(baseIterator->second - model.nodes.data());
+    const std::size_t baseIndex = baseIterator->second;
     // Base 메시도 Link와 같은 연결 부품 및 16 cm 셀 기준으로 나눠 실제 오목한 공간을 볼록 껍질 하나로 메우지 않는다.
-    auto shapes = BuildLinkShapes(model, nodeTransforms, *baseIterator->second, *baseIterator->second, movingNodes, options);
+    auto shapes = BuildLinkShapes(model, nodeTransforms, baseIndex, baseIndex, movingNodes, options);
     // 분할된 Base 기준 정점을 proxy 자식 Entity가 사용할 RobotRoot 기준 좌표로 옮긴다.
+    if (model.rootNodeIndex >= 0 &&
+        static_cast<std::size_t>(model.rootNodeIndex) >= nodeTransforms.size())
+        throw std::invalid_argument("Robot collision geometry: GLB root node is out of range");
     const glm::mat4 rootInverse = model.rootNodeIndex < 0
         ? glm::mat4(1.0F)
-        : glm::inverse(nodeTransforms.at(static_cast<std::size_t>(model.rootNodeIndex)));
+        : glm::inverse(nodeTransforms[static_cast<std::size_t>(model.rootNodeIndex)]);
     const glm::mat4 baseToRobotRoot = rootInverse * nodeTransforms[baseIndex];
     for (auto& shape : shapes)
         for (glm::vec3& point : shape.pointsMeters)
@@ -258,9 +262,9 @@ Result Build(
         throw std::invalid_argument("Robot collision geometry: geometry options are invalid");
 
     const std::vector<glm::mat4> nodeTransforms = detail::BuildNodeWorldTransforms(model);
-    std::unordered_map<std::string, const NodeData*> nodesByName;
-    for (const NodeData& node : model.nodes)
-        if (!nodesByName.emplace(node.name, &node).second)
+    std::unordered_map<std::string, std::size_t> nodesByName;
+    for (std::size_t index = 0; index < model.nodes.size(); ++index)
+        if (!nodesByName.emplace(model.nodes[index].name, index).second)
             throw std::invalid_argument("Robot collision geometry: duplicate GLB node name");
 
     std::unordered_set<std::string> movingNodes;
@@ -280,7 +284,8 @@ Result Build(
         if (joint == nodesByName.end() || linkNode == nodesByName.end())
             throw std::invalid_argument("Robot collision geometry: GLB joint or link node is missing");
 
-        auto shapes = BuildLinkShapes(model, nodeTransforms, *joint->second, *linkNode->second, movingNodes, options);
+        auto shapes = BuildLinkShapes(model, nodeTransforms, joint->second, linkNode->second,
+            movingNodes, options);
         if (shapes.empty())
             throw std::invalid_argument("Robot collision geometry: link has no GLB collision geometry");
         result.links.push_back({link.jointIndex, std::move(shapes)});

@@ -10,6 +10,7 @@
 #include <glm/glm.hpp>
 
 #include <vector>
+#include <string>
 
 namespace grasplink::scene { class Entity; }
 
@@ -80,6 +81,7 @@ private:
     [[nodiscard]] bool RobotAssemblyHasSelfCollision();
     [[nodiscard]] bool RobotAssemblyHasSelfCollision(
         const std::vector<grasplink::physics::Transform>& candidateTransforms) const;
+    [[nodiscard]] std::string DescribeSelfCollision() const;
     void BuildCandidateProxyTransforms(
         const grasplink::robotics::kinematics::RobotKinematicState& robotState);
 
@@ -104,6 +106,7 @@ private:
     grasplink::scene::Entity m_RobotRoot;
     grasplink::scene::Entity m_GripperRoot;
     glm::mat4 m_GripperRootInLink6{1.0F};
+    mutable std::string m_LastSelfCollisionDescription;
     std::size_t m_Link6JointIndex = static_cast<std::size_t>(-1);
     flecs::entity m_BaseEnvironmentEntity;
     grasplink::simulation::PhysicsSystemModule& m_PhysicsSystem;

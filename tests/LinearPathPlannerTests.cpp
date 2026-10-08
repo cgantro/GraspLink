@@ -365,4 +365,11 @@ TEST(LinearPathPlanner, RejectsSeedBudgetSmallerThanCandidateBeam)
         << "the declared IK seed budget must cover each mandatory beam continuation";
     ASSERT_TRUE(plan.points.empty()) << "invalid planner policy does not publish a path";
 }
+
+TEST(LinearPathPlanner, InteractivePolicyKeepsTheSeedSearchBounded)
+{
+    EXPECT_EQ(kInteractivePlanningPolicy.maximumIkSeedAttemptsPerSample, 12U);
+    EXPECT_LE(kInteractivePlanningPolicy.maximumIkSeedAttemptsPerSample,
+        kDefaultPlanningPolicy.maximumIkSeedAttemptsPerSample);
+}
 } // namespace

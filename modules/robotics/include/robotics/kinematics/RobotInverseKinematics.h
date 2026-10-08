@@ -19,12 +19,28 @@ namespace grasplink::robotics::kinematics
  */
 enum class IkStatus { Success, InvalidInput, MissingToolFrame, Unreachable, JointLimitReached, DidNotConverge };
 
+/** @brief 반복 계산이 끝난 원인을 나타낸다. */
+enum class IkTerminationReason
+{
+    None,
+    Converged,
+    InvalidInput,
+    MissingToolFrame,
+    ConservativeReachExceeded,
+    ActiveJointLimit,
+    Stagnation,
+    IterationLimit,
+    Cancelled
+};
+
 /**
  * @brief 위치와 방향의 허용 오차 및 Damped Least Squares 반복 계산 설정을 정한다.
  * @details damping은 팔을 펴서 일부 방향으로 움직일 수 없는 특이 자세에서도 작은 수로 나누어 관절 변화가 폭증하는 것을 줄이는 양수 계수다.
  * 이 값에서 시작해 오차 감소가 확인되면 최소 1%까지 낮추고 감소하지 않으면 높여 안정성과 작은 잔여 오차를 함께 다룬다.
  * orientationWeightMetersPerRadian은 회전 오차 [rad]를 위치 오차 [m]와 함께 최소화하기 위한 길이 비율이며 실제 공구 길이나 속도 제한은 아니다.
  * 수렴은 위치와 방향의 개별 허용 오차를 모두 만족해야 하며 반복 계산만으로 항상 해를 찾는다고 보장하지 않는다.
+ * 관절이 한계에 닿아 바깥으로 향하는 계산값을 내면 해당 관절을 그 반복에서 고정하고 나머지 관절로 다시 계산한다.
+ * 정체 한도는 작은 관절 변화와 작은 오차 감소가 연속될 때 계산을 멈추며, 오차가 허용 범위 안에 든 성공 해는 중단하지 않는다.
  */
 struct IkOptions
 {
@@ -34,6 +50,12 @@ struct IkOptions
     double damping = 1e-3;
     double orientationWeightMetersPerRadian = 0.3;
     double maxJointStepRadians = 0.2;
+    /// 허용 오차에 못 미친 채 작은 변화만 반복할 때 종료할 연속 반복 횟수다.
+    std::size_t stagnationIterationLimit = 8;
+    /// 반복 중 오차 감소율이 이 값 이하일 때 작은 변화로 볼 상대 기준이다.
+    double stagnationRelativeCostTolerance = 1e-8;
+    /// 관절 변화가 이 값 이하일 때 작은 변화로 볼 크기 [rad]다.
+    double stagnationJointStepToleranceRadians = 1e-5;
 };
 
 /**
@@ -41,6 +63,8 @@ struct IkOptions
  * @details jointPositionRadians는 RobotSpecification 순서의 [rad] 값이다.
  * 실패 결과의 관절각은 진단용 후보이므로 Controller 목표로 실행하지 않는다.
  * iterations는 수행한 반복 수이며 오차는 Robot base 기준 위치 거리 [m]와 최단 회전각 [rad]다.
+ * terminationReason은 제한, 정체, 반복 한도 중 계산을 끝낸 직접 원인을 나타낸다.
+ * weightedJacobianMinimumSingularValue와 weightedJacobianConditionNumber는 실패 시 가중 Jacobian에서 계산하며 위치·방향 scaling에 따라 값이 달라진다.
  * 입력이나 거리 사전검사에서 반환되어 FK 오차를 계산하지 않았다면 두 오차 값은 infinity다.
  */
 struct IkResult
@@ -50,6 +74,9 @@ struct IkResult
     std::size_t iterations = 0;
     double positionErrorMeters = 0.0;
     double orientationErrorRadians = 0.0;
+    IkTerminationReason terminationReason = IkTerminationReason::None;
+    double weightedJacobianMinimumSingularValue = 0.0;
+    double weightedJacobianConditionNumber = 0.0;
     std::string message;
     [[nodiscard]] bool Ok() const noexcept { return status == IkStatus::Success; }
     explicit operator bool() const noexcept { return Ok(); }
@@ -135,7 +162,8 @@ private:
     SessionId activeSessionId_ = 0;
     std::size_t sessionIteration_ = 0;
     double sessionDamping_ = 0.0;
-    bool sessionBoundaryBlocked_ = false;
+    bool sessionActiveJointLimit_ = false;
+    std::size_t sessionStagnantIterations_ = 0;
     IkSessionState sessionState_ = IkSessionState::Cancelled;
 };
 }

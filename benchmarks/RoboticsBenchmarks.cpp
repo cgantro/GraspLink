@@ -4,6 +4,8 @@
 #include "robotics/kinematics/RobotKinematics.h"
 #include "robotics/kinematics/detail/PoseMath.h"
 #include "robotics/models/hanwha/Hcr12a.h"
+#include "robotics/planning/JointPathPlanner.h"
+#include "physics/PhysicsWorld.h"
 
 #include <benchmark/benchmark.h>
 
@@ -140,7 +142,8 @@ void IncrementalLinearPathPlanning(benchmark::State& state)
     for (auto _ : state)
     {
         LinearPathPlanningJob job;
-        if (!job.Begin(command, kHcr12a, kSeed, startTcp, solver, {}))
+        if (!job.Begin(command, kHcr12a, kSeed, startTcp, solver, {},
+            grasplink::robotics::planning::kInteractivePlanningPolicy))
         {
             state.SkipWithError("incremental planner could not begin the benchmark path");
             break;
@@ -240,6 +243,9 @@ struct RuntimePathCase
 {
     CartesianPose targetPose;
     JointVector reachableTargetJoints;
+    std::size_t endpointIkIterations = 0;
+    bool endpointIkConvergedFromStart = false;
+    bool directJointPathValid = false;
 };
 
 std::vector<RuntimePathCase> RuntimePathCases(std::size_t caseCount)
@@ -258,9 +264,580 @@ std::vector<RuntimePathCase> RuntimePathCases(std::size_t caseCount)
                 limits.minPositionRadians * 0.8, limits.maxPositionRadians * 0.8);
             targetJoints[joint] = position(random);
         }
-        generated.push_back({inverse.EvaluateTcp(targetJoints), std::move(targetJoints)});
+        RuntimePathCase testCase;
+        testCase.targetPose = inverse.EvaluateTcp(targetJoints);
+        testCase.reachableTargetJoints = std::move(targetJoints);
+        const IkResult endpoint = inverse.SolveSingleSeed(testCase.targetPose, kSeed);
+        testCase.endpointIkIterations = endpoint.iterations;
+        testCase.endpointIkConvergedFromStart = endpoint.Ok();
+        testCase.directJointPathValid = ValidateJointPath(
+            kSeed, testCase.reachableTargetJoints, kHcr12a, {}) == JointStateInvalidity::None;
+        generated.push_back(std::move(testCase));
     }
     return generated;
+}
+
+void InteractiveLinearPathStress(benchmark::State& state)
+{
+    using Clock = std::chrono::steady_clock;
+    using namespace grasplink::robotics::kinematics::detail;
+
+    constexpr auto kFramePlanningBudget = std::chrono::microseconds(1500);
+    constexpr std::size_t kMaximumPlanningFrames = 100000;
+    const auto cases = RuntimePathCases(static_cast<std::size_t>(state.range(0)));
+    DampedLeastSquaresIk inverse(kHcr12a);
+    const CartesianPose startTcp = inverse.EvaluateTcp(kSeed);
+    std::vector<double> frameSliceMicroseconds;
+    std::uint64_t plannerRuns = 0;
+    std::uint64_t completed = 0;
+    std::uint64_t rejected = 0;
+    std::uint64_t timedOut = 0;
+    std::uint64_t stateValidityCallbackCalls = 0;
+    std::uint64_t totalWorkFrames = 0;
+    std::uint64_t maximumWorkFrames = 0;
+    std::uint64_t ikSolves = 0;
+    std::uint64_t ikIterations = 0;
+    std::uint64_t tcpRefinements = 0;
+    std::uint64_t tcpStraightnessChecks = 0;
+    std::uint64_t jointPathValidityChecks = 0;
+    std::uint64_t validityStateChecks = 0;
+    double maximumTcpPositionErrorMeters = 0.0;
+    double maximumTcpOrientationErrorRadians = 0.0;
+
+    for (auto _ : state)
+    {
+        for (const auto& testCase : cases)
+        {
+            LinearPathMoveCommand command;
+            command.targetPoses.push_back(testCase.targetPose);
+            command.maxLinearVelocityMetersPerSecond = 2.0;
+            command.maxAngularVelocityRadiansPerSecond = 8.0;
+            command.maxLinearAccelerationMetersPerSecondSquared = 30.0;
+            command.maxAngularAccelerationRadiansPerSecondSquared = 120.0;
+
+            const StateValidityChecker dummyAlwaysValid = [&stateValidityCallbackCalls](const JointVector&)
+            {
+                ++stateValidityCallbackCalls;
+                return JointStateInvalidity::None;
+            };
+            LinearPathPlanningJob job;
+            const Result begin = job.Begin(command, kHcr12a, kSeed, startTcp, inverse,
+                dummyAlwaysValid, kInteractivePlanningPolicy);
+            if (!begin)
+            {
+                ++rejected;
+                ++plannerRuns;
+                continue;
+            }
+
+            std::size_t workFrames = 0;
+            while (job.GetState() == LinearPathPlanningState::Running &&
+                workFrames < kMaximumPlanningFrames)
+            {
+                const auto frameStart = Clock::now();
+                const auto frameDeadline = frameStart + kFramePlanningBudget;
+                do
+                {
+                    job.Advance(1);
+                } while (job.GetState() == LinearPathPlanningState::Running &&
+                    Clock::now() < frameDeadline);
+                frameSliceMicroseconds.push_back(std::chrono::duration<double, std::micro>(
+                    Clock::now() - frameStart).count());
+                ++workFrames;
+            }
+
+            ++plannerRuns;
+            totalWorkFrames += workFrames;
+            maximumWorkFrames = std::max(maximumWorkFrames,
+                static_cast<std::uint64_t>(workFrames));
+            const auto& plan = job.GetPlan();
+            ikSolves += plan.ikSolveCount;
+            ikIterations += plan.ikIterationCount;
+            tcpRefinements += plan.tcpRefinementCount;
+            tcpStraightnessChecks += plan.tcpStraightnessChecks;
+            jointPathValidityChecks += plan.jointPathValidityChecks;
+            validityStateChecks += plan.validityStateChecks;
+
+            if (job.GetState() == LinearPathPlanningState::Running)
+            {
+                ++timedOut;
+                ++rejected;
+                job.Cancel();
+                continue;
+            }
+            if (job.GetState() != LinearPathPlanningState::Completed)
+            {
+                ++rejected;
+                continue;
+            }
+
+            ++completed;
+            for (std::size_t point = 1; point < plan.points.size(); ++point)
+            {
+                const auto& pathStart = plan.points[point - 1];
+                const auto& pathEnd = plan.points[point];
+                const Pose3 desiredStart = FromCartesian(pathStart.tcpPose);
+                const Pose3 desiredEnd = FromCartesian(pathEnd.tcpPose);
+                JointVector joints(pathStart.joints.size());
+                for (const double fraction : {0.25, 0.5, 0.75})
+                {
+                    for (std::size_t joint = 0; joint < joints.size(); ++joint)
+                        joints[joint] = pathStart.joints[joint] +
+                            (pathEnd.joints[joint] - pathStart.joints[joint]) * fraction;
+                    const Pose3 actual = FromCartesian(inverse.EvaluateTcp(joints));
+                    const Pose3 desired = Interpolate(desiredStart, desiredEnd, fraction);
+                    maximumTcpPositionErrorMeters = std::max(maximumTcpPositionErrorMeters,
+                        Length(Subtract(actual.positionMeters, desired.positionMeters)));
+                    maximumTcpOrientationErrorRadians = std::max(maximumTcpOrientationErrorRadians,
+                        Length(RotationError(desired.rotation, actual.rotation)));
+                }
+            }
+            benchmark::DoNotOptimize(plan.points.data());
+        }
+    }
+
+    const double runCount = static_cast<double>(plannerRuns);
+    state.counters["interactive_planner_runs"] = runCount;
+    state.counters["interactive_completed"] = static_cast<double>(completed);
+    state.counters["interactive_rejected"] = static_cast<double>(rejected);
+    state.counters["interactive_timeouts"] = static_cast<double>(timedOut);
+    state.counters["interactive_success_rate"] = runCount > 0.0
+        ? static_cast<double>(completed) / runCount : 0.0;
+    state.counters["average_work_frames"] = runCount > 0.0
+        ? static_cast<double>(totalWorkFrames) / runCount : 0.0;
+    state.counters["worst_work_frames"] = static_cast<double>(maximumWorkFrames);
+    state.counters["frame_planning_budget_us"] =
+        static_cast<double>(kFramePlanningBudget.count());
+    state.counters["ik_solves_per_request"] = runCount > 0.0
+        ? static_cast<double>(ikSolves) / runCount : 0.0;
+    state.counters["ik_iterations_per_request"] = runCount > 0.0
+        ? static_cast<double>(ikIterations) / runCount : 0.0;
+    state.counters["tcp_refinements_per_request"] = runCount > 0.0
+        ? static_cast<double>(tcpRefinements) / runCount : 0.0;
+    state.counters["tcp_straightness_checks_per_request"] = runCount > 0.0
+        ? static_cast<double>(tcpStraightnessChecks) / runCount : 0.0;
+    state.counters["joint_path_validity_checks_per_request"] = runCount > 0.0
+        ? static_cast<double>(jointPathValidityChecks) / runCount : 0.0;
+    state.counters["validity_state_checks_per_request"] = runCount > 0.0
+        ? static_cast<double>(validityStateChecks) / runCount : 0.0;
+    state.counters["dummy_always_valid_callback_calls"] = static_cast<double>(stateValidityCallbackCalls);
+    state.counters["dummy_always_valid_callback_calls_per_request"] = runCount > 0.0
+        ? static_cast<double>(stateValidityCallbackCalls) / runCount : 0.0;
+    state.counters["max_tcp_position_error_mm"] = maximumTcpPositionErrorMeters * 1000.0;
+    state.counters["max_tcp_orientation_error_mrad"] = maximumTcpOrientationErrorRadians * 1000.0;
+    state.counters["collision_benchmark_mode_dummy_always_valid"] = 1;
+    const auto percentile = [](std::vector<double>& values, double fraction)
+    {
+        if (values.empty())
+            return 0.0;
+        std::sort(values.begin(), values.end());
+        const std::size_t index = static_cast<std::size_t>(std::ceil(
+            fraction * static_cast<double>(values.size()))) - 1;
+        return values[std::min(index, values.size() - 1)];
+    };
+    state.counters["frame_slice_p50_us"] = percentile(frameSliceMicroseconds, 0.50);
+    state.counters["frame_slice_p95_us"] = percentile(frameSliceMicroseconds, 0.95);
+    state.counters["frame_slice_p99_us"] = percentile(frameSliceMicroseconds, 0.99);
+    state.counters["frame_slice_max_us"] = frameSliceMicroseconds.empty() ? 0.0 :
+        *std::max_element(frameSliceMicroseconds.begin(), frameSliceMicroseconds.end());
+    state.SetLabel("interactive policy; 1.5 ms frame planning budget; dummy always-valid callback");
+    state.SetItemsProcessed(static_cast<std::int64_t>(plannerRuns));
+}
+
+void PosePlanEndpointStress(benchmark::State& state)
+{
+    using Clock = std::chrono::steady_clock;
+
+    constexpr auto kFramePlanningBudget = std::chrono::microseconds(1500);
+    constexpr std::size_t kMaximumPlanningFrames = 10000;
+    const auto cases = RuntimePathCases(static_cast<std::size_t>(state.range(0)));
+    std::vector<double> frameSliceMicroseconds;
+    std::uint64_t requests = 0;
+    std::uint64_t accepted = 0;
+    std::uint64_t rejected = 0;
+    std::uint64_t timedOut = 0;
+    std::uint64_t beginRejected = 0;
+    std::uint64_t unreachable = 0;
+    std::uint64_t jointLimitRejected = 0;
+    std::uint64_t ikDidNotConverge = 0;
+    std::uint64_t stateValidityCallbackCalls = 0;
+    std::uint64_t totalWorkFrames = 0;
+    std::uint64_t maximumWorkFrames = 0;
+    std::uint64_t poseIkSeedAttempts = 0;
+    std::uint64_t maximumPoseIkSeedAttempts = 0;
+    std::string firstFailure;
+
+    for (auto _ : state)
+    {
+        for (std::size_t caseIndex = 0; caseIndex < cases.size(); ++caseIndex)
+        {
+            SimRobotController controller(kHcr12a);
+            if (!controller.Connect())
+            {
+                state.SkipWithError("SimRobotController could not connect for pose planning benchmark");
+                return;
+            }
+            controller.SetJointStateValidityChecker([&stateValidityCallbackCalls](const JointVector&)
+            {
+                ++stateValidityCallbackCalls;
+                return JointStateInvalidity::None;
+            });
+
+            ++requests;
+            const Result begin = controller.BeginPosePlanning(cases[caseIndex].targetPose);
+            if (!begin)
+            {
+                ++beginRejected;
+                ++rejected;
+                if (firstFailure.empty())
+                    firstFailure = "BeginPosePlanning case " + std::to_string(caseIndex) + ": " + begin.message;
+                continue;
+            }
+
+            std::size_t workFrames = 0;
+            while (controller.IsMotionPlanning() && workFrames < kMaximumPlanningFrames)
+            {
+                const auto frameStart = Clock::now();
+                const auto frameDeadline = frameStart + kFramePlanningBudget;
+                do
+                {
+                    controller.AdvanceMotionPlanning(1);
+                } while (controller.IsMotionPlanning() && Clock::now() < frameDeadline);
+                frameSliceMicroseconds.push_back(std::chrono::duration<double, std::micro>(
+                    Clock::now() - frameStart).count());
+                ++workFrames;
+            }
+
+            totalWorkFrames += workFrames;
+            maximumWorkFrames = std::max(maximumWorkFrames,
+                static_cast<std::uint64_t>(workFrames));
+            if (controller.IsMotionPlanning())
+            {
+                ++timedOut;
+                controller.Stop();
+                if (firstFailure.empty())
+                    firstFailure = "Pose plan exceeded the 10,000-frame benchmark bound at case " +
+                        std::to_string(caseIndex);
+                continue;
+            }
+
+            const std::size_t seedAttempts = controller.GetLastPoseIkSeedAttemptCount();
+            poseIkSeedAttempts += seedAttempts;
+            maximumPoseIkSeedAttempts = std::max(maximumPoseIkSeedAttempts,
+                static_cast<std::uint64_t>(seedAttempts));
+
+            const auto result = controller.TakeMotionPlanningResult();
+            if (result && *result)
+            {
+                ++accepted;
+                continue;
+            }
+
+            ++rejected;
+            if (result)
+            {
+                unreachable += result->code == ErrorCode::Unreachable;
+                jointLimitRejected += result->code == ErrorCode::JointLimitReached;
+                ikDidNotConverge += result->code == ErrorCode::IkDidNotConverge;
+                if (firstFailure.empty())
+                {
+                    std::ostringstream details;
+                    details << "Pose plan case " << caseIndex << " FK target joints deg=["
+                        << std::fixed << std::setprecision(6);
+                    for (std::size_t joint = 0;
+                        joint < cases[caseIndex].reachableTargetJoints.size(); ++joint)
+                        details << (joint == 0 ? "" : ",") <<
+                            cases[caseIndex].reachableTargetJoints[joint] * 180.0 /
+                                3.14159265358979323846;
+                    details << "]: " << result->message;
+                    firstFailure = details.str();
+                }
+            }
+            else if (firstFailure.empty())
+            {
+                firstFailure = "Pose plan case " + std::to_string(caseIndex) +
+                    ": planner exited without a result";
+            }
+        }
+    }
+
+    const auto percentile = [](std::vector<double>& values, double fraction)
+    {
+        if (values.empty())
+            return 0.0;
+        std::sort(values.begin(), values.end());
+        const std::size_t index = static_cast<std::size_t>(std::ceil(
+            fraction * static_cast<double>(values.size()))) - 1;
+        return values[std::min(index, values.size() - 1)];
+    };
+    const double totalRequests = static_cast<double>(requests);
+    state.counters["fk_generated_reachable_endpoints"] = totalRequests;
+    state.counters["pose_plan_accepted"] = static_cast<double>(accepted);
+    state.counters["pose_plan_rejected"] = static_cast<double>(rejected);
+    state.counters["pose_plan_begin_rejected"] = static_cast<double>(beginRejected);
+    state.counters["pose_plan_timeouts"] = static_cast<double>(timedOut);
+    state.counters["pose_plan_unreachable"] = static_cast<double>(unreachable);
+    state.counters["pose_plan_joint_limit_rejected"] = static_cast<double>(jointLimitRejected);
+    state.counters["pose_plan_ik_did_not_converge"] = static_cast<double>(ikDidNotConverge);
+    state.counters["pose_plan_acceptance_rate"] = totalRequests > 0.0
+        ? static_cast<double>(accepted) / totalRequests : 0.0;
+    state.counters["pose_plan_average_work_frames"] = totalRequests > 0.0
+        ? static_cast<double>(totalWorkFrames) / totalRequests : 0.0;
+    state.counters["pose_plan_worst_work_frames"] = static_cast<double>(maximumWorkFrames);
+    state.counters["pose_plan_average_ik_seed_attempts"] = totalRequests > 0.0
+        ? static_cast<double>(poseIkSeedAttempts) / totalRequests : 0.0;
+    state.counters["pose_plan_maximum_ik_seed_attempts"] =
+        static_cast<double>(maximumPoseIkSeedAttempts);
+    state.counters["frame_slice_p50_us"] = percentile(frameSliceMicroseconds, 0.50);
+    state.counters["frame_slice_p95_us"] = percentile(frameSliceMicroseconds, 0.95);
+    state.counters["frame_slice_p99_us"] = percentile(frameSliceMicroseconds, 0.99);
+    state.counters["frame_slice_max_us"] = frameSliceMicroseconds.empty() ? 0.0 :
+        *std::max_element(frameSliceMicroseconds.begin(), frameSliceMicroseconds.end());
+    state.counters["dummy_always_valid_callback_calls"] = static_cast<double>(stateValidityCallbackCalls);
+    state.counters["dummy_always_valid_callback_calls_per_request"] = totalRequests > 0.0
+        ? static_cast<double>(stateValidityCallbackCalls) / totalRequests : 0.0;
+    state.counters["collision_benchmark_mode_dummy_always_valid"] = 1;
+    state.SetLabel("PTP endpoint planning; 1.5 ms frame budget; dummy always-valid callback");
+    state.SetItemsProcessed(static_cast<std::int64_t>(requests));
+    if (!firstFailure.empty())
+        state.SetLabel(firstFailure);
+}
+
+void EndpointIkGeneratedReachable(benchmark::State& state)
+{
+    const auto cases = RuntimePathCases(static_cast<std::size_t>(state.range(0)));
+    DampedLeastSquaresIk inverse(kHcr12a);
+    std::uint64_t solveCount = 0;
+    std::uint64_t iterationCount = 0;
+    std::uint64_t converged = 0;
+    std::uint64_t unreachable = 0;
+    std::uint64_t jointLimitFailures = 0;
+    std::uint64_t nonConverged = 0;
+    double maximumPositionErrorMeters = 0.0;
+    double maximumOrientationErrorRadians = 0.0;
+
+    for (auto _ : state)
+    {
+        for (const auto& testCase : cases)
+        {
+            const IkResult result = inverse.SolveSingleSeed(testCase.targetPose, kSeed);
+            ++solveCount;
+            iterationCount += result.iterations;
+            if (!result)
+            {
+                unreachable += result.status == IkStatus::Unreachable;
+                jointLimitFailures += result.status == IkStatus::JointLimitReached;
+                nonConverged += result.status == IkStatus::DidNotConverge;
+                continue;
+            }
+            ++converged;
+            maximumPositionErrorMeters = std::max(maximumPositionErrorMeters, result.positionErrorMeters);
+            maximumOrientationErrorRadians = std::max(maximumOrientationErrorRadians, result.orientationErrorRadians);
+            benchmark::DoNotOptimize(result.jointPositionRadians.data());
+        }
+    }
+
+    const double totalCases = static_cast<double>(state.iterations() * cases.size());
+    state.counters["fk_generated_reachable_endpoints"] = totalCases;
+    state.counters["endpoint_ik_solves"] = static_cast<double>(solveCount);
+    state.counters["endpoint_ik_successes"] = static_cast<double>(converged);
+    state.counters["endpoint_ik_unreachable"] = static_cast<double>(unreachable);
+    state.counters["endpoint_ik_joint_limit_failures"] = static_cast<double>(jointLimitFailures);
+    state.counters["endpoint_ik_nonconvergence"] = static_cast<double>(nonConverged);
+    state.counters["endpoint_ik_success_rate"] = totalCases > 0.0 ? static_cast<double>(converged) / totalCases : 0.0;
+    state.counters["endpoint_ik_iterations_per_solve"] = solveCount > 0 ?
+        static_cast<double>(iterationCount) / static_cast<double>(solveCount) : 0.0;
+    state.counters["maximum_endpoint_ik_position_error_meters"] = maximumPositionErrorMeters;
+    state.counters["maximum_endpoint_ik_orientation_error_radians"] = maximumOrientationErrorRadians;
+    state.SetItemsProcessed(static_cast<std::int64_t>(totalCases));
+}
+
+void MoveJJointPathValidation(benchmark::State& state)
+{
+    const auto cases = RuntimePathCases(static_cast<std::size_t>(state.range(0)));
+    std::uint64_t validPaths = 0;
+    std::uint64_t endpointIkConverged = 0;
+    std::uint64_t endpointIkIterations = 0;
+
+    for (auto _ : state)
+    {
+        for (const auto& testCase : cases)
+        {
+            const auto validity = ValidateJointPath(
+                kSeed, testCase.reachableTargetJoints, kHcr12a, {});
+            validPaths += validity == JointStateInvalidity::None;
+            endpointIkConverged += testCase.endpointIkConvergedFromStart;
+            endpointIkIterations += testCase.endpointIkIterations;
+            benchmark::DoNotOptimize(validity);
+        }
+    }
+
+    const double totalCases = static_cast<double>(state.iterations() * cases.size());
+    state.counters["fk_generated_reachable_endpoints"] = totalCases;
+    state.counters["endpoint_ik_successes_from_start_seed"] = static_cast<double>(endpointIkConverged);
+    state.counters["endpoint_ik_iterations_per_endpoint"] = totalCases > 0.0 ?
+        static_cast<double>(endpointIkIterations) / totalCases : 0.0;
+    state.counters["joint_limit_valid_movej_segments"] = static_cast<double>(validPaths);
+    state.counters["joint_limit_valid_movej_segment_rate"] = totalCases > 0.0 ? static_cast<double>(validPaths) / totalCases : 0.0;
+    state.counters["environment_collision_checks"] = 0;
+    state.SetItemsProcessed(static_cast<std::int64_t>(totalCases));
+}
+
+void MoveJCompletion(benchmark::State& state)
+{
+    const auto cases = RuntimePathCases(static_cast<std::size_t>(state.range(0)));
+    std::uint64_t completed = 0;
+    std::uint64_t rejected = 0;
+    std::uint64_t runtimeFaults = 0;
+    std::uint64_t timeouts = 0;
+
+    for (auto _ : state)
+    {
+        for (const auto& testCase : cases)
+        {
+            SimRobotController controller(kHcr12a);
+            if (!controller.Connect())
+            {
+                state.SkipWithError("SimRobotController could not connect for MoveJ benchmark");
+                return;
+            }
+            const Result accepted = controller.MoveJoint({testCase.reachableTargetJoints, 1.0, 1.0});
+            if (!accepted)
+            {
+                ++rejected;
+                continue;
+            }
+
+            constexpr double fixedDeltaSeconds = 0.004;
+            constexpr std::size_t maxTicks = 5000;
+            std::size_t tick = 0;
+            for (; tick < maxTicks && controller.GetStateView().mode == RobotMode::Moving; ++tick)
+                controller.Update(fixedDeltaSeconds);
+            if (controller.GetStateView().mode == RobotMode::Idle)
+                ++completed;
+            else if (controller.GetStateView().mode == RobotMode::Fault)
+                ++runtimeFaults;
+            else
+                ++timeouts;
+            benchmark::DoNotOptimize(controller.GetStateView().jointPositionRadians.data());
+        }
+    }
+
+    const double totalCases = static_cast<double>(state.iterations() * cases.size());
+    state.counters["fk_generated_reachable_endpoints"] = totalCases;
+    state.counters["movej_completed"] = static_cast<double>(completed);
+    state.counters["movej_rejected"] = static_cast<double>(rejected);
+    state.counters["movej_runtime_faults"] = static_cast<double>(runtimeFaults);
+    state.counters["movej_timeouts"] = static_cast<double>(timeouts);
+    state.counters["movej_completion_rate"] = totalCases > 0.0 ? static_cast<double>(completed) / totalCases : 0.0;
+    state.counters["environment_collision_checks"] = 0;
+    state.SetItemsProcessed(static_cast<std::int64_t>(totalCases));
+}
+
+void JoltMoveJCollisionPath(benchmark::State& state)
+{
+    using grasplink::physics::BodyDescription;
+    using grasplink::physics::BodyMotionType;
+    using grasplink::physics::BoxBodyDescription;
+    using grasplink::physics::CollisionLayer;
+    using grasplink::physics::PhysicsWorld;
+    using grasplink::physics::Transform;
+
+    PhysicsWorld world;
+    BoxBodyDescription obstacle;
+    obstacle.halfExtentsMeters = {0.10F, 0.15F, 0.10F};
+    obstacle.transform.position = {0.0F, 0.5F, 0.0F};
+    obstacle.motionType = BodyMotionType::Static;
+    obstacle.collisionLayer = CollisionLayer::Environment;
+    world.CreateBox(obstacle);
+
+    BodyDescription proxyDescription;
+    grasplink::physics::CollisionShapeDescription proxyShape;
+    proxyShape.halfExtentsMeters = {0.035F, 0.06F, 0.035F};
+    proxyDescription.shapes.push_back(proxyShape);
+    proxyDescription.transform.position = {-0.20F, 0.5F, -0.20F};
+    proxyDescription.motionType = BodyMotionType::Kinematic;
+    proxyDescription.collisionLayer = CollisionLayer::Robot;
+    const auto proxy = world.CreateBody(proxyDescription);
+
+    JointVector start(kHcr12a.jointCount, 0.0);
+    JointVector goal = start;
+    start[0] = -1.0;
+    start[1] = -1.0;
+    goal[0] = 1.0;
+    goal[1] = 1.0;
+
+    std::uint64_t plannerRuns = 0;
+    std::uint64_t completed = 0;
+    std::uint64_t failed = 0;
+    std::uint64_t joltQueries = 0;
+    std::uint64_t plannerValidityChecks = 0;
+    std::uint64_t rrtIterations = 0;
+    std::uint64_t plannedWaypoints = 0;
+    JointPathPlannerOptions options;
+    options.maximumIterations = 2048;
+    options.maximumNodesPerTree = 1024;
+    options.maximumShortcutAttempts = 32;
+    options.randomSeed = 0x47524C4B;
+
+    for (auto _ : state)
+    {
+        StateValidityChecker checker = [&](const JointVector& joints)
+        {
+            ++joltQueries;
+            Transform candidate;
+            candidate.position = {
+                static_cast<float>(joints[0] * 0.20),
+                0.5F,
+                static_cast<float>(joints[1] * 0.20)};
+            return world.OverlapsEnvironmentAt(proxy, candidate)
+                ? JointStateInvalidity::EnvironmentCollision
+                : JointStateInvalidity::None;
+        };
+
+        JointPathPlanningJob job;
+        const Result begin = job.Begin(kHcr12a, start, goal, checker, options);
+        if (!begin)
+        {
+            state.SkipWithError("Jolt-backed MoveJ planner rejected valid benchmark endpoints");
+            return;
+        }
+        for (std::size_t work = 0;
+            work < options.maximumIterations + options.maximumShortcutAttempts + 16 &&
+            job.GetState() == JointPathPlanningState::Running;
+            ++work)
+            job.Advance(1);
+
+        ++plannerRuns;
+        if (job.GetState() != JointPathPlanningState::Completed)
+        {
+            ++failed;
+            continue;
+        }
+        ++completed;
+        plannerValidityChecks += job.GetPlan().validityChecks;
+        rrtIterations += job.GetPlan().iterations;
+        plannedWaypoints += job.GetPlan().points.size();
+        benchmark::DoNotOptimize(job.GetPlan().points.data());
+    }
+
+    state.counters["jolt_movej_planner_runs"] = static_cast<double>(plannerRuns);
+    state.counters["jolt_movej_completed"] = static_cast<double>(completed);
+    state.counters["jolt_movej_failed"] = static_cast<double>(failed);
+    state.counters["jolt_movej_success_rate"] = plannerRuns > 0
+        ? static_cast<double>(completed) / static_cast<double>(plannerRuns) : 0.0;
+    state.counters["jolt_environment_overlap_queries"] = static_cast<double>(joltQueries);
+    state.counters["jolt_overlap_queries_per_run"] = plannerRuns > 0
+        ? static_cast<double>(joltQueries) / static_cast<double>(plannerRuns) : 0.0;
+    state.counters["planner_validity_checks_per_completed_run"] = completed > 0
+        ? static_cast<double>(plannerValidityChecks) / static_cast<double>(completed) : 0.0;
+    state.counters["rrt_iterations_per_completed_run"] = completed > 0
+        ? static_cast<double>(rrtIterations) / static_cast<double>(completed) : 0.0;
+    state.counters["waypoints_per_completed_run"] = completed > 0
+        ? static_cast<double>(plannedWaypoints) / static_cast<double>(completed) : 0.0;
+    state.SetItemsProcessed(static_cast<std::int64_t>(plannerRuns));
+    if (failed != 0)
+        state.SkipWithError("Jolt-backed MoveJ benchmark failed to find the validated detour");
 }
 
 void RuntimeLinearPathStress(benchmark::State& state)
@@ -271,13 +848,17 @@ void RuntimeLinearPathStress(benchmark::State& state)
     std::uint64_t plannerJointLimitStatuses = 0;
     std::uint64_t plannerIkLimitStalls = 0;
     std::uint64_t plannerVerifiedJointLimitViolations = 0;
-    std::uint64_t rejectionsWithKnownReachableEndpoints = 0;
+    std::uint64_t rejectionsWithFkGeneratedReachableEndpoints = 0;
+    std::uint64_t rejectionsWithEndpointIkSuccessFromStart = 0;
+    std::uint64_t rejectionsWithJointLimitValidMovejSegments = 0;
     std::uint64_t runtimeFaults = 0;
     std::uint64_t runtimeIkFaults = 0;
     std::uint64_t timeouts = 0;
     std::uint64_t completed = 0;
     std::uint64_t stateValidityCallbackCalls = 0;
     std::string lastPlannerRejection;
+    double maximumTcpPositionErrorMeters = 0.0;
+    double maximumTcpOrientationErrorRadians = 0.0;
 
     for (auto _ : state)
     {
@@ -328,8 +909,9 @@ void RuntimeLinearPathStress(benchmark::State& state)
                     else if (accepted.message.find("SimRobotController: planned state exceeds a joint limit") != std::string::npos)
                         ++plannerVerifiedJointLimitViolations;
                 }
-                if (ValidateJointState(kHcr12a, testCase.reachableTargetJoints, {}) == JointStateInvalidity::None)
-                    ++rejectionsWithKnownReachableEndpoints;
+                ++rejectionsWithFkGeneratedReachableEndpoints;
+                rejectionsWithEndpointIkSuccessFromStart += testCase.endpointIkConvergedFromStart;
+                rejectionsWithJointLimitValidMovejSegments += testCase.directJointPathValid;
                 continue;
             }
 
@@ -349,6 +931,25 @@ void RuntimeLinearPathStress(benchmark::State& state)
             else if (result.mode == RobotMode::Idle)
             {
                 ++completed;
+                if (result.tcpPoseValid)
+                {
+                    const auto& actualPosition = result.tcpPose.positionMeters;
+                    const auto& targetPosition = testCase.targetPose.positionMeters;
+                    const double dx = actualPosition[0] - targetPosition[0];
+                    const double dy = actualPosition[1] - targetPosition[1];
+                    const double dz = actualPosition[2] - targetPosition[2];
+                    maximumTcpPositionErrorMeters = std::max(maximumTcpPositionErrorMeters,
+                        std::sqrt(dx * dx + dy * dy + dz * dz));
+
+                    const auto& actualOrientation = result.tcpPose.orientationXyzw;
+                    const auto& targetOrientation = testCase.targetPose.orientationXyzw;
+                    double quaternionDot = 0.0;
+                    for (std::size_t axis = 0; axis < actualOrientation.size(); ++axis)
+                        quaternionDot += actualOrientation[axis] * targetOrientation[axis];
+                    quaternionDot = std::clamp(std::abs(quaternionDot), 0.0, 1.0);
+                    maximumTcpOrientationErrorRadians = std::max(maximumTcpOrientationErrorRadians,
+                        2.0 * std::acos(quaternionDot));
+                }
             }
             else
             {
@@ -364,14 +965,26 @@ void RuntimeLinearPathStress(benchmark::State& state)
     state.counters["planner_joint_limit_statuses"] = static_cast<double>(plannerJointLimitStatuses);
     state.counters["planner_ik_limit_stalls"] = static_cast<double>(plannerIkLimitStalls);
     state.counters["planner_verified_joint_limit_violations"] = static_cast<double>(plannerVerifiedJointLimitViolations);
-    state.counters["rejections_with_known_reachable_endpoints"] = static_cast<double>(rejectionsWithKnownReachableEndpoints);
+    state.counters["moveL_rejections_with_fk_generated_reachable_endpoints"] =
+        static_cast<double>(rejectionsWithFkGeneratedReachableEndpoints);
+    state.counters["moveL_rejections_with_endpoint_ik_success_from_start_seed"] =
+        static_cast<double>(rejectionsWithEndpointIkSuccessFromStart);
+    state.counters["moveL_rejections_with_joint_limit_valid_movej_segments"] =
+        static_cast<double>(rejectionsWithJointLimitValidMovejSegments);
     state.counters["runtime_faults"] = static_cast<double>(runtimeFaults);
     state.counters["runtime_ik_faults"] = static_cast<double>(runtimeIkFaults);
     state.counters["timeouts"] = static_cast<double>(timeouts);
     state.counters["completed"] = static_cast<double>(completed);
+    state.counters["moveL_completed"] = static_cast<double>(completed);
+    state.counters["moveL_planning_accepted"] = static_cast<double>(totalCases) - static_cast<double>(plannerRejections);
+    state.counters["moveL_completion_rate"] = totalCases > 0.0 ? static_cast<double>(completed) / totalCases : 0.0;
+    state.counters["moveL_max_tcp_position_error_meters"] = maximumTcpPositionErrorMeters;
+    state.counters["moveL_max_tcp_orientation_error_radians"] = maximumTcpOrientationErrorRadians;
     state.counters["dummy_state_validity_callback_calls"] = static_cast<double>(stateValidityCallbackCalls);
     state.counters["dummy_state_validity_callback_calls_per_case"] = totalCases > 0.0 ?
         static_cast<double>(stateValidityCallbackCalls) / totalCases : 0.0;
+    state.counters["environment_collision_checks"] = 0;
+    state.counters["collision_benchmark_mode_dummy_always_valid"] = 1;
     if (!lastPlannerRejection.empty())
         state.SetLabel(lastPlannerRejection);
     state.SetItemsProcessed(static_cast<std::int64_t>(totalCases));
@@ -416,9 +1029,28 @@ int main(int argc, char** argv)
     auto* planner = benchmark::RegisterBenchmark("LinearPathPlanner", LinearPathPlanning);
     auto* incrementalPlanner = benchmark::RegisterBenchmark(
         "IncrementalLinearPathPlanner", IncrementalLinearPathPlanning);
+    benchmark::RegisterBenchmark("EndpointIkGeneratedReachable", EndpointIkGeneratedReachable)
+        ->Arg(64)
+        ->Arg(256);
+    benchmark::RegisterBenchmark("MoveJJointPathValidation", MoveJJointPathValidation)
+        ->Arg(64)
+        ->Arg(256);
+    benchmark::RegisterBenchmark("MoveJCompletion", MoveJCompletion)
+        ->Arg(64)
+        ->Arg(256);
+    benchmark::RegisterBenchmark("JoltMoveJCollisionPath", JoltMoveJCollisionPath)
+        ->Unit(benchmark::kNanosecond);
     benchmark::RegisterBenchmark("RuntimeLinearPathStress", RuntimeLinearPathStress)
         ->Arg(64)
         ->Arg(256);
+    benchmark::RegisterBenchmark("InteractiveLinearPathStress", InteractiveLinearPathStress)
+        ->Arg(64)
+        ->Iterations(1);
+    benchmark::RegisterBenchmark("PosePlanEndpointStress", PosePlanEndpointStress)
+        ->Arg(64)
+        ->Arg(256)
+        ->Iterations(1)
+        ->UseRealTime();
     if (iterations > 0)
     {
         fk->Iterations(iterations);

@@ -66,6 +66,31 @@ public:
             state.mode = RobotMode::Moving;
         return jointResult;
     }
+    Result MovePose(const CartesianPose& target, double, double) override
+    {
+        ++poseRequests;
+        if (poseRequests == rejectedPoseRequestNumber)
+            return rejectedPoseResult;
+        if (!poseResult)
+            return poseResult;
+        state.tcpPose = target;
+        state.mode = completeMovesImmediately_ ? RobotMode::Idle : RobotMode::Moving;
+        return poseResult;
+    }
+    Result BeginPosePlanning(const CartesianPose& target, double velocityScale, double accelerationScale) override
+    {
+        if (!deferPosePlanning || poseRequests + 1 != deferredPosePlanningRequest)
+            return MovePose(target, velocityScale, accelerationScale);
+        ++poseRequests;
+        if (poseRequests == rejectedPoseRequestNumber)
+            return rejectedPoseResult;
+        if (!poseResult)
+            return poseResult;
+        planning = true;
+        state.mode = RobotMode::Planning;
+        deferredPoseTarget = target;
+        return {};
+    }
     Result MoveLinear(const LinearMoveCommand& command) override
     {
         ++linearRequests;
@@ -134,24 +159,42 @@ public:
 
     RobotState state;
     Result jointResult{};
+    Result poseResult{};
+    Result rejectedPoseResult{ErrorCode::Unsupported, "pose execution unavailable"};
     Result linearResult{};
     Result pathResult{};
     Result stopResult{};
     int jointRequests = 0;
+    int poseRequests = 0;
     int linearRequests = 0;
     int pathRequests = 0;
     int stopRequests = 0;
     bool deferPathPlanning = false;
+    bool deferPosePlanning = false;
+    int deferredPosePlanningRequest = 0;
+    int rejectedPoseRequestNumber = 0;
     bool expectPathRequest = false;
     bool planning = false;
     bool planningResultReady = false;
     Result planningResult{};
+    CartesianPose deferredPoseTarget{};
 
     void CompletePathPlanning(Result result = {})
     {
         planning = false;
         planningResult = std::move(result);
         planningResultReady = true;
+        state.mode = planningResult ? RobotMode::Moving : RobotMode::Idle;
+        state.errorCode = planningResult.code;
+    }
+
+    void CompletePosePlanning(Result result = {})
+    {
+        planning = false;
+        planningResult = std::move(result);
+        planningResultReady = true;
+        if (planningResult)
+            state.tcpPose = deferredPoseTarget;
         state.mode = planningResult ? RobotMode::Moving : RobotMode::Idle;
         state.errorCode = planningResult.code;
     }
@@ -251,6 +294,108 @@ TEST(PickPlaceMissionTests, AcceptedCommandWaitsForControllerToBecomeIdle)
     EXPECT_EQ(controller.linearRequests, 0);
 }
 
+TEST(PickPlaceMissionTests, UsesJointSpacePoseForLongApproachAndLinearMotionForPickupDescent)
+{
+    FakeRobotController controller(models::hanwha::kHcr12a, true);
+    StubGripper gripper;
+    grasplink::application::PickPlaceMission mission(models::hanwha::kHcr12a);
+    CartesianPose box{};
+    box.positionMeters = controller.state.tcpPose.positionMeters;
+    box.positionMeters[1] -= 0.25;
+
+    mission.Update(controller.state, controller, gripper, false, box, box);
+    mission.ApplyActions({true, false, false}, controller.state, controller, false, box);
+    mission.Update(controller.state, controller, gripper, false, box, box);
+
+    EXPECT_EQ(mission.Snapshot().stageLabel, "Moving above the box");
+    EXPECT_EQ(controller.poseRequests, 1);
+    EXPECT_EQ(controller.linearRequests, 0);
+    EXPECT_EQ(controller.pathRequests, 0);
+
+    mission.Update(controller.state, controller, gripper, false, box, box);
+    EXPECT_EQ(mission.Snapshot().stageLabel, "Aligning over the box");
+    mission.Update(controller.state, controller, gripper, false, box, box);
+
+    EXPECT_EQ(mission.Snapshot().stageLabel, "Lowering to the box");
+    EXPECT_EQ(controller.poseRequests, 1);
+    EXPECT_EQ(controller.linearRequests, 1);
+}
+
+TEST(PickPlaceMissionTests, JointSpacePoseRejectionFailsWithoutLinearFallback)
+{
+    FakeRobotController controller(models::hanwha::kHcr12a, true);
+    controller.poseResult = {ErrorCode::Unsupported, "joint-space pose motion unavailable"};
+    StubGripper gripper;
+    grasplink::application::PickPlaceMission mission(models::hanwha::kHcr12a);
+    CartesianPose box{};
+    box.positionMeters = controller.state.tcpPose.positionMeters;
+    box.positionMeters[1] -= 0.25;
+
+    mission.Update(controller.state, controller, gripper, false, box, box);
+    mission.ApplyActions({true, false, false}, controller.state, controller, false, box);
+    mission.Update(controller.state, controller, gripper, false, box, box);
+
+    const auto snapshot = mission.Snapshot();
+    EXPECT_EQ(snapshot.stageLabel, "Failed");
+    EXPECT_EQ(snapshot.lastMessage, "joint-space pose motion unavailable");
+    EXPECT_EQ(controller.poseRequests, 1);
+    EXPECT_EQ(controller.linearRequests, 0);
+}
+
+TEST(PickPlaceMissionTests, WaitsForIncrementalJointSpacePosePlanning)
+{
+    FakeRobotController controller;
+    controller.deferPosePlanning = true;
+    controller.deferredPosePlanningRequest = 1;
+    StubGripper gripper;
+    grasplink::application::PickPlaceMission mission(models::hanwha::kHcr12a);
+    CartesianPose box{};
+    box.positionMeters = controller.state.tcpPose.positionMeters;
+    box.positionMeters[1] -= 0.25;
+
+    mission.Update(controller.state, controller, gripper, false, box, box);
+    mission.ApplyActions({true, false, false}, controller.state, controller, false, box);
+    controller.state.mode = RobotMode::Idle;
+    mission.Update(controller.state, controller, gripper, false, box, box);
+
+    ASSERT_EQ(mission.Snapshot().stageLabel, "Planning motion");
+    EXPECT_EQ(controller.poseRequests, 1);
+    EXPECT_EQ(controller.linearRequests, 0);
+    mission.Update(controller.state, controller, gripper, false, box, box);
+    EXPECT_EQ(mission.Snapshot().stageLabel, "Planning motion");
+
+    controller.CompletePosePlanning();
+    mission.Update(controller.state, controller, gripper, false, box, box);
+    EXPECT_EQ(mission.Snapshot().stageLabel, "Moving above the box");
+    EXPECT_EQ(controller.poseRequests, 1);
+    EXPECT_EQ(controller.linearRequests, 0);
+}
+
+TEST(PickPlaceMissionTests, SimulationPosePlanningAdvancesIkAndJointPathInBoundedWork)
+{
+    using grasplink::robotics::backends::simulation::SimRobotController;
+    SimRobotController controller(models::hanwha::kHcr12a);
+    ASSERT_TRUE(static_cast<bool>(controller.Connect()));
+    const CartesianPose target = controller.GetState().tcpPose;
+
+    ASSERT_TRUE(static_cast<bool>(controller.BeginPosePlanning(target)));
+    ASSERT_TRUE(controller.IsMotionPlanning());
+    EXPECT_EQ(controller.GetState().mode, RobotMode::Planning);
+
+    controller.AdvanceMotionPlanning(1);
+    EXPECT_EQ(controller.GetState().mode, RobotMode::Planning);
+    EXPECT_TRUE(controller.IsMotionPlanning());
+
+    for (std::size_t slice = 0; slice < 500 && controller.IsMotionPlanning(); ++slice)
+        controller.AdvanceMotionPlanning(1);
+    EXPECT_FALSE(controller.IsMotionPlanning());
+    const auto result = controller.TakeMotionPlanningResult();
+    ASSERT_TRUE(result.has_value());
+    EXPECT_TRUE(static_cast<bool>(*result)) << result->message;
+    EXPECT_TRUE(controller.GetState().mode == RobotMode::Moving ||
+        controller.GetState().mode == RobotMode::Idle);
+}
+
 TEST(PickPlaceMissionTests, EnvironmentContactRequestsRetreat)
 {
     FakeRobotController controller;
@@ -271,7 +416,8 @@ TEST(PickPlaceMissionTests, EnvironmentContactRequestsRetreat)
     mission.Update(controller.state, controller, gripper, false, box, {});
 
     EXPECT_EQ(mission.Snapshot().stageLabel, "Retracting after collision");
-    EXPECT_EQ(controller.linearRequests, 2);
+    EXPECT_EQ(controller.poseRequests, 1);
+    EXPECT_EQ(controller.linearRequests, 1);
     EXPECT_TRUE(mission.Snapshot().lastRequestAccepted);
 }
 
@@ -293,7 +439,8 @@ TEST(PickPlaceMissionTests, UnrelatedControllerErrorDoesNotTriggerCollisionRecov
     mission.Update(controller.state, controller, gripper, false, box, {});
 
     EXPECT_EQ(mission.Snapshot().stageLabel, "Moving above the box");
-    EXPECT_EQ(controller.linearRequests, 1);
+    EXPECT_EQ(controller.poseRequests, 1);
+    EXPECT_EQ(controller.linearRequests, 0);
 }
 
 TEST(PickPlaceMissionTests, RejectedStopDoesNotPauseMission)
@@ -394,10 +541,11 @@ TEST(PickPlaceMissionTests, GripperMissReleasesAndFailsWithoutSuccessEvent)
     EXPECT_FALSE(mission.ConsumeSuccessEvent());
 }
 
-TEST(PickPlaceMissionTests, RejectedTransitPathPreservesControllerError)
+TEST(PickPlaceMissionTests, RejectedMoveJTransitPreservesControllerError)
 {
     FakeRobotController controller(models::hanwha::kHcr12a, true);
-    controller.pathResult = {ErrorCode::Unsupported, "path execution unavailable"};
+    controller.rejectedPoseRequestNumber = 2;
+    controller.rejectedPoseResult = {ErrorCode::Unsupported, "joint-space transit unavailable"};
     StubGripper gripper;
     grasplink::application::PickPlaceMission mission(models::hanwha::kHcr12a);
     CartesianPose box{};
@@ -411,21 +559,21 @@ TEST(PickPlaceMissionTests, RejectedTransitPathPreservesControllerError)
         mission.Snapshot().stageLabel != "Failed"; ++tick)
     {
         boxGrasped = mission.Snapshot().stageLabel == "Closing gripper" || boxGrasped;
-        controller.expectPathRequest = mission.Snapshot().stageLabel == "Planning path to goal";
         mission.Update(controller.state, controller, gripper, boxGrasped, box, box);
     }
 
     const auto snapshot = mission.Snapshot();
     EXPECT_EQ(snapshot.stageLabel, "Failed");
-    EXPECT_EQ(snapshot.lastMessage, "path execution unavailable");
-    EXPECT_EQ(controller.pathRequests, 1);
+    EXPECT_EQ(snapshot.lastMessage, "joint-space transit unavailable");
+    EXPECT_EQ(controller.poseRequests, 2);
     EXPECT_FALSE(snapshot.missionSucceeded);
 }
 
-TEST(PickPlaceMissionTests, WaitsForIncrementalTransitPlanningBeforeMovingToPlacement)
+TEST(PickPlaceMissionTests, WaitsForIncrementalMoveJTransitPlanningBeforeMovingToPlacement)
 {
     FakeRobotController controller(models::hanwha::kHcr12a, true);
-    controller.deferPathPlanning = true;
+    controller.deferPosePlanning = true;
+    controller.deferredPosePlanningRequest = 2;
     StubGripper gripper;
     grasplink::application::PickPlaceMission mission(models::hanwha::kHcr12a);
     CartesianPose box{};
@@ -439,24 +587,23 @@ TEST(PickPlaceMissionTests, WaitsForIncrementalTransitPlanningBeforeMovingToPlac
         mission.Snapshot().stageLabel != "Failed"; ++tick)
     {
         boxGrasped = boxGrasped || mission.Snapshot().stageLabel == "Closing gripper";
-        controller.expectPathRequest = mission.Snapshot().stageLabel == "Planning path to goal";
         mission.Update(controller.state, controller, gripper, boxGrasped, box, box);
     }
     ASSERT_EQ(mission.Snapshot().stageLabel, "Planning motion");
     ASSERT_TRUE(controller.IsMotionPlanning());
-    ASSERT_EQ(controller.pathRequests, 1);
+    ASSERT_EQ(controller.poseRequests, 2);
     const int linearRequestsBeforePlanning = controller.linearRequests;
 
     for (int frame = 0; frame < 4; ++frame)
         mission.Update(controller.state, controller, gripper, true, box, box);
     EXPECT_EQ(mission.Snapshot().stageLabel, "Planning motion");
-    EXPECT_EQ(controller.pathRequests, 1);
+    EXPECT_EQ(controller.poseRequests, 2);
     EXPECT_EQ(controller.linearRequests, linearRequestsBeforePlanning)
-        << "the mission does not submit the next pose while path planning is pending";
+        << "the mission does not submit another command while MoveJ planning is pending";
 
-    controller.CompletePathPlanning();
+    controller.CompletePosePlanning();
     mission.Update(controller.state, controller, gripper, true, box, box);
-    EXPECT_EQ(mission.Snapshot().stageLabel, "Moving to goal");
+    EXPECT_EQ(mission.Snapshot().stageLabel, "Moving above the goal");
     EXPECT_EQ(controller.linearRequests, linearRequestsBeforePlanning);
     mission.Update(controller.state, controller, gripper, true, box, box);
     EXPECT_EQ(controller.linearRequests, linearRequestsBeforePlanning)
@@ -464,7 +611,9 @@ TEST(PickPlaceMissionTests, WaitsForIncrementalTransitPlanningBeforeMovingToPlac
 
     controller.state.mode = RobotMode::Idle;
     mission.Update(controller.state, controller, gripper, true, box, box);
-    EXPECT_EQ(controller.linearRequests, linearRequestsBeforePlanning + 1);
+    EXPECT_EQ(controller.linearRequests, linearRequestsBeforePlanning);
+    EXPECT_EQ(controller.poseRequests, 3)
+        << "the compensated wrist-only fallback uses a second MoveJ request after transit";
 }
 
 TEST(PickPlaceMissionTests, RuntimeControllerFaultFailsActiveMission)
@@ -478,13 +627,9 @@ TEST(PickPlaceMissionTests, RuntimeControllerFaultFailsActiveMission)
 
     mission.Update(controller.state, controller, gripper, false, box, box);
     mission.ApplyActions({true, false, false}, controller.state, controller, false, box);
-    bool boxGrasped = false;
-    for (int tick = 0; tick < 20 && mission.Snapshot().stageLabel != "Moving to goal"; ++tick)
-    {
-        boxGrasped = boxGrasped || mission.Snapshot().stageLabel == "Closing gripper";
-        mission.Update(controller.state, controller, gripper, boxGrasped, box, box);
-    }
-    ASSERT_EQ(mission.Snapshot().stageLabel, "Moving to goal");
+    controller.state.mode = RobotMode::Idle;
+    mission.Update(controller.state, controller, gripper, false, box, box);
+    ASSERT_EQ(mission.Snapshot().stageLabel, "Moving above the box");
 
     controller.state.mode = RobotMode::Fault;
     controller.state.errorCode = ErrorCode::IkDidNotConverge;

@@ -84,6 +84,7 @@ target_link_libraries(grasplink_diagnostics PUBLIC Threads::Threads)
 add_library(grasplink_robotics STATIC
   modules/robotics/src/backends/simulation/SimRobotController.cpp
   modules/robotics/src/planning/LinearPathPlanner.cpp
+  modules/robotics/src/planning/JointPathPlanner.cpp
   modules/robotics/src/backends/simulation/SimGripperController.cpp
   modules/robotics/src/kinematics/RobotKinematics.cpp
   modules/robotics/src/kinematics/RobotInverseKinematics.cpp
@@ -163,6 +164,7 @@ if(BUILD_TESTING)
   grasplink_add_test(grasplink_inverse_kinematics_tests RobotInverseKinematics tests/RobotInverseKinematicsTests.cpp grasplink_robotics GTEST_DISCOVERY)
   grasplink_add_test(grasplink_robot_motion_tests RobotMotion tests/RobotMotionTests.cpp grasplink_robotics GTEST_DISCOVERY)
   grasplink_add_test(grasplink_linear_path_planner_tests LinearPathPlanner tests/LinearPathPlannerTests.cpp grasplink_robotics GTEST_DISCOVERY)
+  grasplink_add_test(grasplink_joint_path_planner_tests JointPathPlanner tests/JointPathPlannerTests.cpp grasplink_robotics GTEST_DISCOVERY)
   grasplink_add_test(grasplink_robot_panel_motion_tests RobotPanelMotion tests/RobotPanelMotionTests.cpp grasplink_robotics GTEST_DISCOVERY)
   grasplink_add_test(grasplink_gripper_runtime_tests GripperRuntime tests/GripperRuntimeTests.cpp grasplink_robotics GTEST_DISCOVERY)
   grasplink_add_test(grasplink_gripper_kinematics_tests GripperKinematics tests/GripperKinematicsTests.cpp grasplink_robotics GTEST_DISCOVERY)
@@ -422,12 +424,13 @@ if(GRASPLINK_BUILD_BENCHMARKS)
   add_executable(grasplink_robotics_benchmarks benchmarks/RoboticsBenchmarks.cpp)
   target_link_libraries(grasplink_robotics_benchmarks PRIVATE
     grasplink_robotics
+    grasplink_physics
     benchmark::benchmark
   )
   if(BUILD_TESTING)
     add_test(NAME RoboticsBenchmarks COMMAND grasplink_robotics_benchmarks
       --benchmark_min_time=0.01s
-      "--benchmark_filter=^(FK|DLS_IK|LinearPathPlanner)$")
+      "--benchmark_filter=^(FK|DLS_IK|LinearPathPlanner|JoltMoveJCollisionPath)$")
     set_tests_properties(RoboticsBenchmarks PROPERTIES
       WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
       TIMEOUT 30

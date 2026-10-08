@@ -276,7 +276,7 @@ software Stop
 ### 아직 미구현/후순위
 
 ```text
-관절 공간 `MoveJoint` 가속도 제한(미구현, Cartesian 경로 가속도 제한은 구현됨)
+관절 공간 `MoveJoint`와 Cartesian 경로의 Simulation 가속도 제한 구현됨
 Hardware Robot backend
 Hardware Gripper backend
 Gripper force / current
@@ -372,7 +372,7 @@ Collider hulls are approximations of the source mesh geometry; thin or small fea
 
 2F-85에는 현재 `IGripperController` contract와 model specification, 자유공간 Simulation controller·기구학·GLB adapter 및
 메시 기반 gripper Collider proxy가 있다. force는 raw 범위만 검사하고 전류는 제공하지 않는다.
-관절 공간 `MoveJoint` 가속도 제한은 구현되지 않았고, Cartesian 경로 가속도 제한은 구현되어 있다.
+관절 공간 `MoveJoint`와 Cartesian 경로 모두 Simulation 가속도 제한을 적용한다. 관절 ramp의 기본값은 최대 각속도까지 0.20초이며 제조사 가속도 사양이 아니다.
 angle이며 실제 motor shaft angle이나 접촉 후 finger 자세를 뜻하지 않는다.
 
 Physics/Flecs 설정, ownership, fixed-step 및 좌표 변환은 [`PHYSICS_ECS_INTEGRATION.md`](PHYSICS_ECS_INTEGRATION.md)에 정리한다.

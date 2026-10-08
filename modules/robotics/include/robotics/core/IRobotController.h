@@ -46,6 +46,32 @@ public:
     virtual Result MoveJoint(const JointMoveCommand& command) = 0;
 
     /**
+     * @brief 목표 TCP 자세에 대응하는 관절각을 찾아 관절 공간 경로로 이동하도록 요청한다.
+     * @param targetInBase Robot base 기준 TCP 위치 [m]와 방향 quaternion [x,y,z,w]다.
+     * @param velocityScale 관절 최대 속도에 적용할 구현별 비율이다.
+     * @param accelerationScale 관절 가속도 설정에 적용할 구현별 비율이다.
+     * @return 요청 수락 여부와 IK 또는 경로 검증 실패 분류다.
+     * @details 목표점만 역기구학으로 계산하므로 TCP가 직선을 따라간다고 보장하지 않는다.
+     * 장거리 자유 공간 이동에 사용하고, 직선 접근이 필요하면 MoveLinear을 사용한다.
+     * 구현은 이 기능을 지원하지 않으면 Unsupported를 반환할 수 있다.
+     */
+    virtual Result MovePose(const CartesianPose& targetInBase,
+        double velocityScale = 1.0, double accelerationScale = 1.0)
+    {
+        (void)targetInBase;
+        (void)velocityScale;
+        (void)accelerationScale;
+        return {ErrorCode::Unsupported, "IRobotController: joint-space pose motion is not supported"};
+    }
+
+    /** @brief 관절 공간 목표 자세 계획을 시작하며, 증분 실행이 없으면 MovePose를 호출한다. */
+    virtual Result BeginPosePlanning(const CartesianPose& targetInBase,
+        double velocityScale = 1.0, double accelerationScale = 1.0)
+    {
+        return MovePose(targetInBase, velocityScale, accelerationScale);
+    }
+
+    /**
      * @brief TCP가 목표 위치와 방향에 이르도록 직선 경로 이동을 요청한다.
      * @param command TCP 위치 [m], quaternion [x,y,z,w], 선속도 [m/s], 각속도 [rad/s], 선가속도 [m/s²], 각가속도 [rad/s²] 상한이다.
      * @return 요청 수락 여부와 실패 분류다. 기능이 없으면 Unsupported를 반환할 수 있다.

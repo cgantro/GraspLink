@@ -68,6 +68,17 @@ const glm::mat4* FindWorldTransform(
             return &candidate.worldTransform;
     return nullptr;
 }
+
+std::string DescribeIdentity(SelfCollisionIdentity identity)
+{
+    switch (identity.part)
+    {
+    case SelfCollisionPart::Base: return "Base";
+    case SelfCollisionPart::Link: return "Link" + std::to_string(identity.linkIndex + 1);
+    case SelfCollisionPart::GripperBody: return "GripperBody";
+    }
+    return "Unknown";
+}
 }
 
 RobotEnvironmentCollisionGuard::RobotEnvironmentCollisionGuard(
@@ -180,11 +191,16 @@ RobotEnvironmentCollisionGuard::RobotEnvironmentCollisionGuard(
     {
         return ValidateCandidatePose(candidateJoints);
     });
+    m_RobotController.SetJointStateValidityDiagnosticProvider([this]
+    {
+        return DescribeSelfCollision();
+    });
 }
 
 RobotEnvironmentCollisionGuard::~RobotEnvironmentCollisionGuard()
 {
     m_RobotController.SetJointStateValidityChecker({});
+    m_RobotController.SetJointStateValidityDiagnosticProvider({});
 }
 
 void RobotEnvironmentCollisionGuard::CaptureSafeJointPose()
@@ -209,13 +225,20 @@ void RobotEnvironmentCollisionGuard::RestoreSafePoseIfOverlapping()
 grasplink::robotics::planning::JointStateInvalidity RobotEnvironmentCollisionGuard::ValidateCandidatePose(
     const grasplink::robotics::JointVector& candidateJoints)
 {
+    m_LastSelfCollisionDescription.clear();
     m_CandidateState.jointPositionRadians = candidateJoints;
     const auto& robotState = m_RobotKinematics.Update(m_CandidateState);
     BuildCandidateProxyTransforms(robotState);
     if (RobotAssemblyOverlapsEnvironment(m_CandidateCollisionTransforms))
         return grasplink::robotics::planning::JointStateInvalidity::EnvironmentCollision;
     if (RobotAssemblyHasSelfCollision(m_CandidateSelfCollisionTransforms))
+    {
+        m_LastSelfCollisionDescription += " at joints [deg]";
+        for (const double angle : candidateJoints)
+            m_LastSelfCollisionDescription += " " + std::to_string(angle * 180.0 / 3.14159265358979323846);
         return grasplink::robotics::planning::JointStateInvalidity::SelfCollision;
+    }
+    m_LastSelfCollisionDescription.clear();
     return grasplink::robotics::planning::JointStateInvalidity::None;
 }
 
@@ -278,7 +301,10 @@ bool RobotEnvironmentCollisionGuard::RobotAssemblyHasSelfCollision(
         const SelfCollisionProxy& first = m_SelfCollisionProxies[firstIndex];
         const auto firstBody = m_PhysicsSystem.GetBodyHandle(first.entity);
         if (!firstBody.IsValid())
+        {
+            m_LastSelfCollisionDescription = DescribeIdentity(first.identity) + " has no physics body";
             return true;
+        }
 
         for (std::size_t secondIndex = firstIndex + 1;
             secondIndex < m_SelfCollisionProxies.size();
@@ -289,13 +315,28 @@ bool RobotEnvironmentCollisionGuard::RobotAssemblyHasSelfCollision(
                 continue;
 
             const auto secondBody = m_PhysicsSystem.GetBodyHandle(second.entity);
-            if (!secondBody.IsValid() || m_PhysicsWorld.OverlapsBodiesAt(
+            if (!secondBody.IsValid())
+            {
+                m_LastSelfCollisionDescription = DescribeIdentity(first.identity) + " / " +
+                    DescribeIdentity(second.identity) + " has no physics body";
+                return true;
+            }
+            if (m_PhysicsWorld.OverlapsBodiesAt(
                     firstBody, candidateTransforms[firstIndex],
                     secondBody, candidateTransforms[secondIndex]))
+            {
+                m_LastSelfCollisionDescription = DescribeIdentity(first.identity) + " / " +
+                    DescribeIdentity(second.identity);
                 return true;
+            }
         }
     }
     return false;
+}
+
+std::string RobotEnvironmentCollisionGuard::DescribeSelfCollision() const
+{
+    return m_LastSelfCollisionDescription;
 }
 
 void RobotEnvironmentCollisionGuard::BuildCandidateProxyTransforms(

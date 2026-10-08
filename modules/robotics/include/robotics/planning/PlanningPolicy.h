@@ -17,7 +17,7 @@ struct PlanningPolicy final
     double linearPositionSampleSpacingMeters = 0.01;
     double linearOrientationSampleSpacingRadians = 0.05;
     std::size_t maximumPathIntervals = 4096;
-    std::size_t maximumIkCandidatesPerSample = 4;
+    std::size_t maximumIkCandidatesPerSample = 8;
     std::size_t maximumIkSeedAttemptsPerSample = 16;
     // Cartesian 구간 하나가 오차를 만족하도록 허용하는 최대 이분 세분화 깊이다.
     std::size_t maximumTcpRefinementPasses = 12;
@@ -26,5 +26,18 @@ struct PlanningPolicy final
 };
 
 inline constexpr PlanningPolicy kDefaultPlanningPolicy{};
+
+/**
+ * @brief MoveL의 각 TCP 표본에서 IK 시작 자세를 최대 12개까지 검사한다.
+ * @details 첫 시드의 연속 해가 관절 한계나 충돌로 막히면 다른 관절 구성을 찾을 수 있도록
+ * 탐색 폭을 확보한다. Viewer는 계획 계산을 프레임별 작업량으로 나누므로 이 상한을 유지하면서
+ * 한 프레임의 긴 정지를 막는다. 오프라인 계획은 별도 정책으로 더 넓은 탐색을 지정할 수 있다.
+ */
+inline constexpr PlanningPolicy kInteractivePlanningPolicy = []
+{
+    PlanningPolicy policy{};
+    policy.maximumIkSeedAttemptsPerSample = 12;
+    return policy;
+}();
 
 } // namespace grasplink::robotics::planning

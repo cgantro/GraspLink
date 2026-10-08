@@ -290,6 +290,27 @@ void CheckMoveJointRejectsInvalidPath()
     ASSERT_NEAR(controller.GetState().jointPositionRadians[0], 0.0, 1e-12) << "rejected path leaves the current joints unchanged";
 }
 
+void CheckSelfCollisionFailureIncludesPairDiagnostic()
+{
+    SimRobotController controller(models::hanwha::kHcr12a);
+    ASSERT_TRUE(static_cast<bool>(controller.Connect())) << "controller connects before diagnostic validation";
+    controller.SetJointStateValidityChecker([](const JointVector&)
+    {
+        return JointStateInvalidity::SelfCollision;
+    });
+    controller.SetJointStateValidityDiagnosticProvider([]
+    {
+        return std::string{"Link2 / Link5 at joints [deg] 0 0 0 0 0 0"};
+    });
+
+    JointVector target = controller.GetStateView().jointPositionRadians;
+    target[0] = 0.2;
+    const Result result = controller.MoveJoint({target, 1.0, 1.0});
+    EXPECT_EQ(result.code, ErrorCode::SelfCollision);
+    EXPECT_NE(result.message.find("Link2 / Link5"), std::string::npos);
+    EXPECT_NE(result.message.find("joints [deg]"), std::string::npos);
+}
+
 void CheckMoveJointExecutesTheValidatedJointPath()
 {
     SimRobotController controller(models::hanwha::kHcr12a);
@@ -1067,6 +1088,7 @@ TEST(RobotMotion, ExplicitWristUnwindPreservesZeroRepresentation) { CheckExplici
 TEST(RobotMotion, HomeSeedReachesFoldedValidPosture) { CheckHomeSeedCanReachFoldedButValidPosture(); }
 TEST(RobotMotion, JointStateValidityReasons) { CheckJointStateValidityReasons(); }
 TEST(RobotMotion, MoveJointRejectsInvalidPath) { CheckMoveJointRejectsInvalidPath(); }
+TEST(RobotMotion, SelfCollisionFailureIncludesPairDiagnostic) { CheckSelfCollisionFailureIncludesPairDiagnostic(); }
 TEST(RobotMotion, MoveJointExecutesTheValidatedJointPath) { CheckMoveJointExecutesTheValidatedJointPath(); }
 TEST(RobotMotion, MoveJointAccelerationAndRetargetContinuity) { CheckMoveJointAccelerationAndRetargetContinuity(); }
 TEST(RobotMotion, ShortJointMoveAndRejectedRetarget) { CheckShortJointMoveAndRejectedRetarget(); }
@@ -1121,6 +1143,45 @@ TEST(RobotMotion, IncrementalLinearPlanningDoesNotCommitBeforePathValidation)
     EXPECT_EQ(controller.GetStateView().mode, RobotMode::Moving);
     EXPECT_EQ(controller.GetStateView().jointPositionRadians, initial)
         << "a validated path commits without teleporting the robot";
+}
+
+TEST(RobotMotion, PosePlanningFindsKnownReachableEndpointAfterLimitStall)
+{
+    const auto& specification = grasplink::robotics::models::hanwha::kHcr12a;
+    SimRobotController controller(specification);
+    ASSERT_TRUE(controller.Connect());
+    DampedLeastSquaresIk inverse(specification);
+    constexpr double degreesToRadians = 3.14159265358979323846 / 180.0;
+    const JointVector knownReachableJoints{
+        119.776553 * degreesToRadians,
+        73.182887 * degreesToRadians,
+        -46.491438 * degreesToRadians,
+        28.083620 * degreesToRadians,
+        95.159352 * degreesToRadians,
+        -72.352759 * degreesToRadians};
+    const CartesianPose target = inverse.EvaluateTcp(knownReachableJoints);
+
+    ASSERT_TRUE(controller.BeginPosePlanning(target));
+    for (std::size_t frame = 0; frame < 1000 && controller.IsMotionPlanning(); ++frame)
+        controller.AdvanceMotionPlanning(64);
+
+    ASSERT_FALSE(controller.IsMotionPlanning());
+    const auto result = controller.TakeMotionPlanningResult();
+    ASSERT_TRUE(result.has_value());
+    ASSERT_TRUE(*result) << result->message;
+    EXPECT_GT(controller.GetLastPoseIkSeedAttemptCount(), 1u)
+        << "the primary seed stalls on this deterministic endpoint, so a bounded fallback must solve it";
+
+    for (std::size_t tick = 0; tick < 10000 &&
+        controller.GetStateView().mode == RobotMode::Moving; ++tick)
+        controller.Update(0.004);
+    const auto& state = controller.GetStateView();
+    ASSERT_EQ(state.mode, RobotMode::Idle);
+    ASSERT_TRUE(state.tcpPoseValid);
+    EXPECT_LT(PositionDistance(state.tcpPose, target), 1e-3);
+    EXPECT_LT(OrientationDistance(state.tcpPose, target), 1e-3);
+    EXPECT_EQ(ValidateJointState(specification, state.jointPositionRadians, {}),
+        JointStateInvalidity::None);
 }
 
 TEST(RobotMotion, ReplacingValidityCheckerCancelsInFlightPlan)

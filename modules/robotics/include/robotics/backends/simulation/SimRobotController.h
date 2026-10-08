@@ -1,12 +1,15 @@
 #pragma once
 
 #include "robotics/core/IRobotController.h"
+#include "robotics/planning/JointPathPlanner.h"
 #include "robotics/planning/LinearPathPlanner.h"
 #include "robotics/kinematics/RobotInverseKinematics.h"
 #include "robotics/models/RobotSpecification.h"
 
 #include <functional>
 #include <optional>
+#include <string>
+#include <vector>
 
 namespace grasplink::robotics::backends::simulation
 {
@@ -22,7 +25,8 @@ struct SimRobotControllerTestAccess;
  * 각 관절은 모델 최대 각속도에 velocityScale을 곱한 한계를 넘지 않는다.
  * MoveJoint 가속도는 모델 사양에 없는 값을 장비 한계로 간주하지 않고, 최대 속도에 0.20초 동안 도달하는 Simulation 정책으로 제한한다.
  * 역기구학(IK)은 목표 TCP 위치에서 이를 만드는 관절각을 찾는 계산이다.
- * MovePose는 IK 결과를 MoveJoint에 보내며, 충돌 검사 함수를 등록하면 다른 시작각도 시험해 안전한 관절 해를 고른다.
+ * MovePose는 IK 결과를 MoveJoint에 보내는 동기 호출이고, 충돌 검사 함수가 있으면 대체 해도 시험한다.
+ * BeginPosePlanning은 직전 관절각을 먼저 IK 시작값으로 사용하고, 해당 분기가 실패할 때만 제한된 대체 자세를 시험한다.
  * MoveLinear은 TCP 직선 위치와 최단 회전 경로의 IK를 계산하고 각 경로 표본에서 안전한 해를 찾는다.
  * TCP는 모델 ToolFrame에 생성자에서 정한 고정 변환을 더한 작업 기준점이며 기본 변환은 항등이다.
  * 목표와 tcpPose feedback은 Robot base 기준이고 Scene의 robotRoot World 변환을 포함하지 않는다.
@@ -50,6 +54,8 @@ public:
      * 빈 함수를 등록하면 환경 충돌 검사를 생략한다.
      */
     void SetJointStateValidityChecker(planning::StateValidityChecker checker);
+    /** @brief 유효성 검사 실패 원인을 UI에 함께 표시할 설명 함수를 등록한다. */
+    void SetJointStateValidityDiagnosticProvider(std::function<std::string()> provider);
 
     /** @brief 관절각과 속도를 0으로 한 유효한 Simulation 상태로 연결한다.
      * @return 성공하며 ToolFrame이 있으면 설정된 TCP의 모델 FK feedback을 제공한다.
@@ -86,7 +92,16 @@ public:
      * 검사에 통과한 첫 해를 사용하며 모든 가능한 IK 해를 열거하지는 않는다.
      * 충돌 검사 함수가 없으면 현재 관절각을 시작점으로 구한 해를 사용한다. TCP 이동 경로는 관절 이동에 따른 곡선일 수 있다.
      */
-    Result MovePose(const CartesianPose& targetInBase, double velocityScale = 1.0, double accelerationScale = 1.0);
+    Result MovePose(const CartesianPose& targetInBase, double velocityScale = 1.0,
+        double accelerationScale = 1.0) override;
+    /**
+     * @brief 목표 TCP 자세의 관절 경로를 계산하고 검증하는 작업을 시작한다.
+     * @details IK 반복, RRT-Connect 우회 탐색, 관절 경로 충돌 검사를 작은 작업 단위로 나누어 AdvanceMotionPlanning에서 진행한다.
+     * 검증 callback은 이 Controller를 진행하는 호출 스레드에서 실행하므로 Viewer의 Jolt/ECS 객체를 다른 thread에서 호출하지 않는다.
+     * 결과는 경로가 검증된 뒤 MoveJoint 궤적으로 실행하며 관절 waypoint마다 멈춘다. TCP 직선 경로는 보장하지 않는다.
+     */
+    Result BeginPosePlanning(const CartesianPose& targetInBase, double velocityScale = 1.0,
+        double accelerationScale = 1.0) override;
 
     /**
      * @brief TCP 목표까지 직선 이동을 요청한다.
@@ -105,6 +120,8 @@ public:
     Result MoveLinearPath(const LinearPathMoveCommand& command) override;
     Result BeginLinearPathPlanning(const LinearPathMoveCommand& command) override;
     void AdvanceMotionPlanning(std::size_t workBudget) override;
+    /** @brief 마지막 MovePose 요청에서 시험한 서로 다른 IK 시작 자세 수를 반환한다. */
+    [[nodiscard]] std::size_t GetLastPoseIkSeedAttemptCount() const noexcept;
     [[nodiscard]] bool IsMotionPlanning() const noexcept override;
     std::optional<Result> TakeMotionPlanningResult() override;
 
@@ -164,6 +181,9 @@ private:
     using LinearPathPoint = planning::LinearPathPoint;
 
     Result MoveJointImpl(const JointMoveCommand& command, bool validatePath);
+    void FinishPosePlanning(Result result);
+    [[nodiscard]] bool StartNextPoseIkSeed();
+    Result StartPosePathSegment();
     void ConfigureJointMove(JointVector target, double velocityScale, double accelerationScale);
     void RefreshTcp();
     void UpdateLinear(double dtSeconds);
@@ -207,9 +227,22 @@ private:
     // IK 계산기는 같은 사양을 빌리며 모델 ToolFrame에 고정 공구 변환을 적용해 TCP를 계산한다.
     kinematics::DampedLeastSquaresIk inverse_;
     planning::StateValidityChecker jointStateValidityChecker_;
+    std::function<std::string()> jointStateValidityDiagnosticProvider_;
     planning::LinearPathPlanningJob linearPathPlanningJob_;
     LinearPathMoveCommand pendingLinearPathCommand_;
     std::optional<Result> linearPathPlanningResult_;
+    enum class PosePlanningPhase { None, Ik, JointPath };
+    PosePlanningPhase posePlanningPhase_ = PosePlanningPhase::None;
+    kinematics::DampedLeastSquaresIk::SessionId poseIkSession_ = 0;
+    CartesianPose poseTarget_{};
+    std::vector<JointVector> poseAlternativeSeeds_;
+    std::size_t poseAlternativeSeedIndex_ = 0;
+    std::size_t poseIkSeedAttempts_ = 0;
+    Result posePathFailure_{};
+    JointMoveCommand pendingPoseMove_;
+    planning::JointPathPlanningJob poseJointPathPlanningJob_;
+    std::vector<JointVector> posePathPoints_;
+    std::size_t posePathSegment_ = 0;
     std::vector<LinearPathPoint> linearPath_;
     std::size_t linearSegment_ = 1;
     double linearSegmentFraction_ = 0.0;

@@ -6,11 +6,69 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <utility>
 #include <vector>
 
 namespace grasplink::robotics::kinematics::detail
 {
+inline double HaltonValue(std::size_t index, std::size_t base)
+{
+    double value = 0.0;
+    double scale = 1.0;
+    while (index > 0)
+    {
+        scale /= static_cast<double>(base);
+        value += scale * static_cast<double>(index % base);
+        index /= base;
+    }
+    return value;
+}
+
+inline void BuildIkRestartSeed(std::size_t sample, const JointVector& start,
+    const models::RobotSpecification& specification, JointVector& seed)
+{
+    constexpr std::array<std::size_t, 6> primeBases{2, 3, 5, 7, 11, 13};
+    for (std::size_t jointIndex = 0; jointIndex < seed.size(); ++jointIndex)
+    {
+        const auto& joint = specification.joints[jointIndex];
+        const double range = joint.maxPositionRadians - joint.minPositionRadians;
+        if (range <= 1e-12)
+        {
+            seed[jointIndex] = start[jointIndex];
+            continue;
+        }
+        const double startFraction = (start[jointIndex] - joint.minPositionRadians) / range;
+        const double shiftedFraction = HaltonValue(sample,
+            primeBases[jointIndex % primeBases.size()]) + startFraction - 0.5;
+        seed[jointIndex] = joint.minPositionRadians +
+            (shiftedFraction - std::floor(shiftedFraction)) * range;
+    }
+}
+
+inline void AppendIkRestartSeeds(std::vector<JointVector>& seeds,
+    const JointVector& start, const models::RobotSpecification& specification,
+    std::size_t maximumCount)
+{
+    const std::size_t maximumSamples = maximumCount * 8;
+    for (std::size_t sample = 1; seeds.size() < maximumCount && sample <= maximumSamples; ++sample)
+    {
+        JointVector candidate(start.size());
+        BuildIkRestartSeed(sample, start, specification, candidate);
+        const bool duplicate = std::any_of(seeds.begin(), seeds.end(), [&](const JointVector& existing)
+        {
+            for (std::size_t joint = 0; joint < candidate.size(); ++joint)
+            {
+                if (std::abs(existing[joint] - candidate[joint]) > 1e-8)
+                    return false;
+            }
+            return true;
+        });
+        if (!duplicate)
+            seeds.push_back(std::move(candidate));
+    }
+}
+
 /**
  * @brief 현재 관절각에서 J1·J3·J5를 반사한 대체 IK 시작각을 만든다.
  * @details 관절 허용 범위의 중간을 기준으로 반사한 여덟 분기 조합 중 현재 각도와 같은 조합은 제외한다.

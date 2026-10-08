@@ -1,7 +1,7 @@
 # GraspLink
 
 C++17/OpenGL/Flecs 기반 HCR-12A + 2F-85 로봇 시뮬레이터 프로젝트다.
-Controller가 관절 상태를 갱신하면 공통 FK 결과를 Viewer의 J1~J6 변환과 Jolt Kinematic 충돌 프록시에 반영한다. Damped Least Squares IK는 `MovePose`와 사전 계획 방식의 `MoveLinearPath`를 지원한다. Cartesian 경로에는 TCP 기준 가속·감속 프로파일을, 관절 이동에는 최대 속도까지 0.20초를 기본값으로 하는 Simulation 가속 프로파일을 적용한다. 이 관절 ramp는 조정 가능한 시뮬레이터 정책이며 HCR-12A 제조사 가속도 사양이 아니다. 2F-85는 연속 개폐를 지원하며, 양쪽 손끝이 같은 Dynamic 물체의 반대 면에 닿으면 고정 constraint를 만들어 운반한다. 실제 힘 계산과 개별 손가락 적응은 구현하지 않았다. FK ToolFrame과 backend TCP feedback은 별도다.
+Controller가 관절 상태를 갱신하면 공통 FK 결과를 Viewer의 J1~J6 변환과 Jolt Kinematic 충돌 프록시에 반영한다. Damped Least Squares IK는 관절 공간 목표 이동(MoveJ)과 TCP 직선 경로(MoveL)를 지원한다. 장거리 Pick-and-Place 이동은 충돌 검사와 제한된 RRT-Connect를 사용하는 MoveJ로 계획하고, 물체 주변 접근·하강·들기에는 MoveL을 사용한다. UI 계획은 프레임 단위로 나뉘어 진행한다. Cartesian 경로에는 TCP 기준 가속·감속 프로파일을, 관절 이동에는 최대 속도까지 0.20초를 기본값으로 하는 Simulation 가속 프로파일을 적용한다. 이 관절 ramp는 조정 가능한 시뮬레이터 정책이며 HCR-12A 제조사 가속도 사양이 아니다. 2F-85는 연속 개폐를 지원하며, 양쪽 손끝이 같은 Dynamic 물체의 반대 면에 닿으면 고정 constraint를 만들어 운반한다. 실제 힘 계산과 개별 손가락 적응은 구현하지 않았다. FK ToolFrame과 backend TCP feedback은 별도다.
 
 ## 디렉터리
 
