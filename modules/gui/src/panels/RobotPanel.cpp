@@ -10,6 +10,19 @@ namespace grasplink::gui
 {
 namespace
 {
+const char* RobotModeName(robotics::RobotMode mode)
+{
+    switch (mode)
+    {
+    case robotics::RobotMode::Disconnected: return "Disconnected";
+    case robotics::RobotMode::Idle: return "Idle";
+    case robotics::RobotMode::Moving: return "Moving";
+    case robotics::RobotMode::Stopped: return "Stopped";
+    case robotics::RobotMode::Fault: return "Fault";
+    }
+    return "Unknown";
+}
+
 double YawDegrees(const std::array<double, 4>& xyzw)
 {
     const glm::dquat rotation = glm::normalize(glm::dquat{xyzw[3], xyzw[0], xyzw[1], xyzw[2]});
@@ -73,8 +86,7 @@ RobotPanelActions RobotPanel::DrawContents(const RobotPanelView& view)
             actions.stop = true;
     }
     ImGui::Text("Task: %s", view.mission.paused ? "Paused" : view.mission.stageLabel.data());
-    if (state.mode == robotics::RobotMode::Fault)
-        ImGui::Text("Controller: Fault");
+    ImGui::Text("Controller: %s", RobotModeName(state.mode));
     if (view.mission.paused)
         ImGui::Text("Paused at: %s", view.mission.stageLabel.data());
     ImGui::Text("Mission success: %s", view.mission.missionSucceeded ? "YES" : "NO");
@@ -84,7 +96,8 @@ RobotPanelActions RobotPanel::DrawContents(const RobotPanelView& view)
         ImGui::TextWrapped("A collision stopped the arm at its last safe pose. The task is retracting to the previous safe height.");
     if (view.mission.hasResult)
     {
-        ImGui::Text("Last request: %s", view.mission.lastRequestAccepted ? "accepted" : "failed");
+        ImGui::Text("Last command: %s", view.mission.lastRequestAccepted ? "accepted" : "failed");
+        ImGui::TextWrapped("Accepted means the controller received the command; the mode above shows whether it is still moving.");
         if (!view.mission.lastMessage.empty())
             ImGui::TextWrapped("%.*s", static_cast<int>(view.mission.lastMessage.size()), view.mission.lastMessage.data());
     }
