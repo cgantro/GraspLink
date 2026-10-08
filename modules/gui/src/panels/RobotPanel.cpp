@@ -73,6 +73,8 @@ RobotPanelActions RobotPanel::DrawContents(const RobotPanelView& view)
             actions.stop = true;
     }
     ImGui::Text("Task: %s", view.mission.paused ? "Paused" : view.mission.stageLabel.data());
+    if (state.mode == robotics::RobotMode::Fault)
+        ImGui::Text("Controller: Fault");
     if (view.mission.paused)
         ImGui::Text("Paused at: %s", view.mission.stageLabel.data());
     ImGui::Text("Mission success: %s", view.mission.missionSucceeded ? "YES" : "NO");

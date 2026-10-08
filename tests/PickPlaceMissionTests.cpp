@@ -367,3 +367,34 @@ TEST(PickPlaceMissionTests, RejectedTransitPathPreservesControllerError)
     EXPECT_EQ(controller.pathRequests, 1);
     EXPECT_FALSE(snapshot.missionSucceeded);
 }
+
+TEST(PickPlaceMissionTests, RuntimeControllerFaultFailsActiveMission)
+{
+    FakeRobotController controller(models::hanwha::kHcr12a, true);
+    StubGripper gripper;
+    grasplink::application::PickPlaceMission mission(models::hanwha::kHcr12a);
+    CartesianPose box{};
+    box.positionMeters = controller.state.tcpPose.positionMeters;
+    box.positionMeters[1] -= 0.25;
+
+    mission.Update(controller.state, controller, gripper, false, box, box);
+    mission.ApplyActions({true, false, false}, controller.state, controller, false, box);
+    bool boxGrasped = false;
+    for (int tick = 0; tick < 20 && mission.Snapshot().stageLabel != "Moving to goal"; ++tick)
+    {
+        boxGrasped = boxGrasped || mission.Snapshot().stageLabel == "Closing gripper";
+        mission.Update(controller.state, controller, gripper, boxGrasped, box, box);
+    }
+    ASSERT_EQ(mission.Snapshot().stageLabel, "Moving to goal");
+
+    controller.state.mode = RobotMode::Fault;
+    controller.state.errorCode = ErrorCode::IkDidNotConverge;
+    mission.Update(controller.state, controller, gripper, true, box, box);
+
+    const auto snapshot = mission.Snapshot();
+    EXPECT_EQ(snapshot.stageLabel, "Failed");
+    EXPECT_FALSE(snapshot.lastRequestAccepted);
+    EXPECT_FALSE(snapshot.autoRepeat);
+    EXPECT_FALSE(snapshot.missionSucceeded);
+    EXPECT_NE(snapshot.lastMessage.find("runtime IK did not converge"), std::string_view::npos);
+}

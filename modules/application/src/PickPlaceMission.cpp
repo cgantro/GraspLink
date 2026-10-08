@@ -77,6 +77,19 @@ bool BoxCornersFitPlacement(const robotics::CartesianPose& boxPose,
     return true;
 }
 
+const char* RuntimeFaultReason(robotics::ErrorCode errorCode)
+{
+    switch (errorCode)
+    {
+    case robotics::ErrorCode::IkDidNotConverge: return "runtime IK did not converge";
+    case robotics::ErrorCode::JointLimitReached: return "a joint reached its limit";
+    case robotics::ErrorCode::EnvironmentContact: return "the robot contacted the environment";
+    case robotics::ErrorCode::SelfCollision: return "the robot self-collided";
+    case robotics::ErrorCode::AttachedObjectCollision: return "the attached object collided";
+    default: return "the robot controller reported a fault";
+    }
+}
+
 bool ChordEntersBaseExclusion(const robotics::CartesianPose& start,
     const robotics::CartesianPose& end)
 {
@@ -252,6 +265,17 @@ void PickPlaceMission::Update(const robotics::RobotState& state, robotics::IRobo
     const robotics::CartesianPose& placementPoseInBase)
 {
     const bool idle = state.mode == robotics::RobotMode::Idle;
+    const bool activeMission = stage_ != Stage::Ready && stage_ != Stage::Complete && stage_ != Stage::Failed;
+    if (!taskPaused_ && activeMission && state.mode == robotics::RobotMode::Fault)
+    {
+        const auto errorCode = state.errorCode == robotics::ErrorCode::None
+            ? robotics::ErrorCode::Fault : state.errorCode;
+        SetResult({errorCode, std::string{"RobotPanel: motion fault: "} + RuntimeFaultReason(errorCode)});
+        taskSucceeded_ = false;
+        stage_ = Stage::Failed;
+        autoLoopEnabled_ = false;
+        return;
+    }
     bool gripperCloseFinished = false;
     if (!taskPaused_ && stage_ == Stage::Closing && !boxGrasped)
     {
