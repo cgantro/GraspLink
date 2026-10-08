@@ -2,8 +2,10 @@
 
 #include "robotics/kinematics/RobotKinematics.h"
 
+#include <array>
 #include <cstddef>
 #include <string>
+#include <vector>
 
 namespace grasplink::robotics::kinematics
 {
@@ -95,6 +97,10 @@ private:
     const models::RobotSpecification& specification_;
     RobotKinematics forward_;
     models::Pose3 tcpInToolFrame_;
+    JointVector anglesScratch_;
+    JointVector jointStepScratch_;
+    JointVector candidateScratch_;
+    std::vector<std::array<double, 6>> jacobianColumnsScratch_;
     double maximumReachMeters_ = 0.0;
 };
 }

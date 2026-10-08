@@ -94,7 +94,8 @@ void CheckHomeSeedCanReachFoldedButValidPosture()
     ASSERT_TRUE((static_cast<bool>(controller.Connect()))) << "home-seed controller connects without a collision filter";
     const JointVector reachableJoints{0.0, -0.8, -0.1, 0.5, -0.4, 0.2};
     const CartesianPose target = ik.EvaluateTcp(reachableJoints);
-    ASSERT_TRUE((static_cast<bool>(controller.MovePose(target)))) << "controller runs bounded IK branch recovery when no environment validator is registered";
+    const Result moveResult = controller.MovePose(target);
+    ASSERT_TRUE((static_cast<bool>(moveResult))) << "controller runs bounded IK branch recovery when no environment validator is registered: " + moveResult.message;
     ASSERT_TRUE(AdvanceUntilIdle(controller, 0.004)) << "motion reaches target within bounded updates";
     ASSERT_TRUE((PositionDistance(controller.GetState().tcpPose, target) < 2e-5)) << "home-seed recovery reaches the reachable target position";
     ASSERT_TRUE((OrientationDistance(controller.GetState().tcpPose, target) < 2e-4)) << "home-seed recovery reaches the reachable target orientation";
@@ -680,6 +681,33 @@ void CheckLinearPathKeepsJ1BranchContinuous()
     ASSERT_TRUE((OrientationDistance(finalState.tcpPose, target) < 2e-4)) << "continuous J1 branch still reaches the target TCP orientation";
 }
 
+void CheckLinearPathRestartsAfterLocalIkStall()
+{
+    constexpr double radiansPerDegree = 3.14159265358979323846 / 180.0;
+    const JointVector targetJoints{
+        58.5 * radiansPerDegree, -129.0 * radiansPerDegree, -61.1 * radiansPerDegree,
+        16.5 * radiansPerDegree, 60.7 * radiansPerDegree, -9.6 * radiansPerDegree};
+    DampedLeastSquaresIk inverse(models::hanwha::kHcr12a);
+    SimRobotController controller(models::hanwha::kHcr12a);
+    ASSERT_TRUE((static_cast<bool>(controller.Connect()))) << "seed-restart line-path fixture connects at home";
+
+    LinearPathMoveCommand command;
+    command.targetPoses.push_back(inverse.EvaluateTcp(targetJoints));
+    command.maxLinearVelocityMetersPerSecond = 2.0;
+    command.maxAngularVelocityRadiansPerSecond = 8.0;
+    command.maxLinearAccelerationMetersPerSecondSquared = 30.0;
+    command.maxAngularAccelerationRadiansPerSecondSquared = 120.0;
+    const Result accepted = controller.MoveLinearPath(command);
+    ASSERT_TRUE((static_cast<bool>(accepted))) << "deterministic restart seeds recover a reachable line-path sample: " + accepted.message;
+    ASSERT_TRUE(AdvanceUntilIdle(controller, 0.004)) << "restarted IK plan finishes without a runtime fault";
+    const RobotState finalState = controller.GetState();
+    ASSERT_TRUE(finalState.tcpPoseValid) << "completed line path reports a valid TCP pose";
+    ASSERT_LT(PositionDistance(finalState.tcpPose, command.targetPoses.back()), 2e-5)
+        << "restarted IK plan reaches its target position";
+    ASSERT_LT(OrientationDistance(finalState.tcpPose, command.targetPoses.back()), 2e-4)
+        << "restarted IK plan reaches its target orientation";
+}
+
 void CheckStopRetargetAndDisconnect()
 {
     const models::Pose3 tcpOffset{{0.04, 0.0, 0.0}, {}};
@@ -780,6 +808,7 @@ TEST(RobotMotion, MultiWaypointUsesOneMotionProfile) { CheckMultiWaypointUsesOne
 TEST(RobotMotion, JointLimitsSetLinearPathSpeed) { CheckJointLimitsSetLinearPathSpeed(); }
 TEST(RobotMotion, LinearPathFromHomeNearWristSingularity) { CheckLinearPathFromHomeNearWristSingularity(); }
 TEST(RobotMotion, LinearPathKeepsJ1BranchContinuous) { CheckLinearPathKeepsJ1BranchContinuous(); }
+TEST(RobotMotion, LinearPathRestartsAfterLocalIkStall) { CheckLinearPathRestartsAfterLocalIkStall(); }
 TEST(RobotMotion, StopRetargetAndDisconnect) { CheckStopRetargetAndDisconnect(); }
 TEST(RobotMotion, ModelWithoutToolFrame) { CheckModelWithoutToolFrame(); }
 TEST(RobotMotion, UnreachableLineInteriorPreservesActiveJointMotion) { CheckUnreachableLineInteriorPreservesActiveJointMotion(); }

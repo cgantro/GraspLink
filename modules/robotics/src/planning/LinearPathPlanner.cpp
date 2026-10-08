@@ -4,6 +4,7 @@
 #include "robotics/kinematics/detail/AlternativeIkSeeds.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <string>
@@ -14,6 +15,32 @@ namespace grasplink::robotics::planning
 namespace
 {
 constexpr double kFullTurnRadians = 2.0 * 3.14159265358979323846;
+constexpr std::size_t kIkRestartSeedCount = 16;
+constexpr std::array<std::size_t, 6> kRestartPrimeBases{2, 3, 5, 7, 11, 13};
+
+double HaltonValue(std::size_t index, std::size_t base)
+{
+    double value = 0.0;
+    double scale = 1.0;
+    while (index > 0)
+    {
+        scale /= static_cast<double>(base);
+        value += scale * static_cast<double>(index % base);
+        index /= base;
+    }
+    return value;
+}
+
+void BuildRestartSeed(std::size_t sample, const models::RobotSpecification& specification, JointVector& seed)
+{
+    for (std::size_t joint = 0; joint < seed.size(); ++joint)
+    {
+        const auto& limits = specification.joints[joint];
+        const double fraction = HaltonValue(sample, kRestartPrimeBases[joint % kRestartPrimeBases.size()]);
+        seed[joint] = limits.minPositionRadians +
+            fraction * (limits.maxPositionRadians - limits.minPositionRadians);
+    }
+}
 
 Result AddPathSampleContext(Result failure, std::size_t sample, std::size_t sampleCount,
     const models::RobotSpecification& specification, const CartesianPose& target,
@@ -24,24 +51,31 @@ Result AddPathSampleContext(Result failure, std::size_t sample, std::size_t samp
         std::to_string(target.positionMeters[0]) + ", " +
         std::to_string(target.positionMeters[1]) + ", " +
         std::to_string(target.positionMeters[2]) + ") m";
-    if (ikFailure && ikFailure->status == kinematics::IkStatus::JointLimitReached)
+    if (ikFailure)
     {
-        for (std::size_t joint = 0; joint < ikFailure->jointPositionRadians.size(); ++joint)
+        if (ikFailure->status == kinematics::IkStatus::JointLimitReached)
         {
-            const auto& limits = specification.joints[joint];
-            const double tolerance = std::max(1e-8,
-                (limits.maxPositionRadians - limits.minPositionRadians) * 1e-8);
-            const double position = ikFailure->jointPositionRadians[joint];
-            if (std::abs(position - limits.minPositionRadians) <= tolerance ||
-                std::abs(position - limits.maxPositionRadians) <= tolerance)
+            for (std::size_t joint = 0; joint < ikFailure->jointPositionRadians.size(); ++joint)
             {
-                context += "; IK candidate reached " + std::string(limits.name) + " limit";
-                break;
+                const auto& limits = specification.joints[joint];
+                const double tolerance = std::max(1e-8,
+                    (limits.maxPositionRadians - limits.minPositionRadians) * 1e-8);
+                const double position = ikFailure->jointPositionRadians[joint];
+                if (std::abs(position - limits.minPositionRadians) <= tolerance ||
+                    std::abs(position - limits.maxPositionRadians) <= tolerance)
+                {
+                    context += "; IK candidate reached " + std::string(limits.name) + " limit";
+                    break;
+                }
             }
         }
         context += "; IK residual " + std::to_string(ikFailure->positionErrorMeters) +
             " m / " + std::to_string(ikFailure->orientationErrorRadians) +
-            " rad after " + std::to_string(ikFailure->iterations) + " iterations";
+            " rad after " + std::to_string(ikFailure->iterations) + " iterations; candidate_deg=[";
+        for (std::size_t joint = 0; joint < ikFailure->jointPositionRadians.size(); ++joint)
+            context += (joint == 0 ? "" : ",") + std::to_string(
+                ikFailure->jointPositionRadians[joint] * 360.0 / (2.0 * 3.14159265358979323846));
+        context += "]";
     }
     failure.message = std::move(context) + ": " + failure.message;
     return failure;
@@ -168,18 +202,35 @@ std::optional<kinematics::IkResult> SolveCollisionFreeIk(
         invalidity = pathInvalidity;
     }
     else
+    {
         ikFailure = preferred;
+        if (preferred.status != kinematics::IkStatus::DidNotConverge &&
+            preferred.status != kinematics::IkStatus::JointLimitReached)
+            return std::nullopt;
+    }
 
     // 해는 있지만 모든 해의 경로가 막힌 경우와 목표 자체에 IK 해가 없는 경우를 구분한다.
     std::optional<kinematics::IkResult> bestSolution;
     double bestNormalizedDistance = std::numeric_limits<double>::infinity();
-    for (const auto& seed : kinematics::detail::BuildAlternativeIkSeeds(start, specification))
+    const auto residual = [&](const kinematics::IkResult& result)
     {
-        auto solution = inverse.SolveSingleSeed(target, seed, options);
+        return result.positionErrorMeters + options.orientationWeightMetersPerRadian *
+            result.orientationErrorRadians;
+    };
+    double bestFailureResidual = ikFailure.message.empty()
+        ? std::numeric_limits<double>::infinity()
+        : residual(ikFailure);
+    const auto considerSolution = [&](kinematics::IkResult solution)
+    {
         if (!solution)
         {
-            ikFailure = std::move(solution);
-            continue;
+            const double candidateResidual = residual(solution);
+            if (candidateResidual < bestFailureResidual)
+            {
+                bestFailureResidual = candidateResidual;
+                ikFailure = std::move(solution);
+            }
+            return;
         }
 
         AlignEquivalentJointAngles(solution.jointPositionRadians, start, specification);
@@ -189,7 +240,7 @@ std::optional<kinematics::IkResult> SolveCollisionFreeIk(
         {
             if (invalidity == JointStateInvalidity::None)
                 invalidity = pathInvalidity;
-            continue;
+            return;
         }
 
         double normalizedDistance = 0.0;
@@ -205,6 +256,20 @@ std::optional<kinematics::IkResult> SolveCollisionFreeIk(
             bestNormalizedDistance = normalizedDistance;
             bestSolution = std::move(solution);
         }
+    };
+
+    for (const auto& seed : kinematics::detail::BuildAlternativeIkSeeds(start, specification))
+        considerSolution(inverse.SolveSingleSeed(target, seed, options));
+
+    if (bestSolution)
+        return bestSolution;
+
+    // 기존 자세 주변의 seed로 해를 찾지 못했을 때만 관절 범위 전체에 퍼진 재시작 자세를 시험한다.
+    JointVector restartSeed(start.size());
+    for (std::size_t sample = 1; sample <= kIkRestartSeedCount; ++sample)
+    {
+        BuildRestartSeed(sample, specification, restartSeed);
+        considerSolution(inverse.SolveSingleSeed(target, restartSeed, options));
     }
 
     if (bestSolution)

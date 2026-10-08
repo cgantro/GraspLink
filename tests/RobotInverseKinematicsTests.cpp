@@ -127,7 +127,7 @@ TEST(RobotInverseKinematicsTests, RoundTripsReachablePoseAndIgnoresQuaternionSig
 
     // 순기구학(FK)은 관절각에서 TCP 자세를 계산하고 역기구학(IK)은 그 자세에서 관절각을 찾는다. 여기서는 같은 로봇 모델의 FK가 만든 목표를 넣어 IK 출력도 FK로 다시 검사한다.
     const IkResult result = inverse.Solve(target, currentSeed);
-    ASSERT_EQ(result.status, IkStatus::Success) << "FK-generated reachable target converges";
+    ASSERT_EQ(result.status, IkStatus::Success) << "FK-generated reachable target converges: " + result.message;
     const CartesianPose recovered = inverse.EvaluateTcp(result.jointPositionRadians);
     EXPECT_LT(PositionDistance(recovered, target), 2e-5) << "round-trip TCP position error";
     EXPECT_LT(OrientationDistance(recovered, target), 2e-4) << "round-trip TCP orientation error";

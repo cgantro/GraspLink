@@ -1,4 +1,4 @@
-﻿#include "robotics/planning/LinearPathPlanner.h"
+#include "robotics/planning/LinearPathPlanner.h"
 #include "robotics/backends/simulation/SimRobotController.h"
 #include "robotics/kinematics/RobotInverseKinematics.h"
 #include "robotics/kinematics/RobotKinematics.h"
@@ -10,8 +10,8 @@
 #include <cstdint>
 #include <iomanip>
 #include <iostream>
-#include <random>
 #include <optional>
+#include <random>
 #include <sstream>
 #include <string_view>
 #include <utility>
@@ -166,7 +166,7 @@ void RuntimeLinearPathStress(benchmark::State& state)
             if (!accepted)
             {
                 std::ostringstream details;
-                details << "case " << caseIndex << " start_deg=[" << std::fixed << std::setprecision(1);
+                details << "case " << caseIndex << " start_deg=[" << std::fixed << std::setprecision(6);
                 for (std::size_t joint = 0; joint < startJoints.size(); ++joint)
                     details << (joint == 0 ? "" : ",") << startJoints[joint] * 180.0 / 3.14159265358979323846;
                 details << "] endpoint_seed_deg=[";

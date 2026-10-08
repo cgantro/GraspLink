@@ -86,7 +86,9 @@ Error Measure(const Pose3& target, const Pose3& current, double weight)
 }
 
 DampedLeastSquaresIk::DampedLeastSquaresIk(const models::RobotSpecification& specification, models::Pose3 tcpInToolFrame)
-    : specification_(specification), forward_(specification), tcpInToolFrame_(tcpInToolFrame)
+    : specification_(specification), forward_(specification), tcpInToolFrame_(tcpInToolFrame),
+      anglesScratch_(specification.jointCount), jointStepScratch_(specification.jointCount),
+      candidateScratch_(specification.jointCount), jacobianColumnsScratch_(specification.jointCount)
 {
     if (!Finite(tcpInToolFrame_.positionMeters))
         throw std::invalid_argument("DampedLeastSquaresIk: invalid TCP offset");
@@ -142,15 +144,21 @@ IkResult DampedLeastSquaresIk::SolveSingleSeed(const CartesianPose& targetInBase
         return fail(IkStatus::MissingToolFrame, "IK: robot specification has no ToolFrame");
     const double targetRadius = Length(Subtract(target.positionMeters, specification_.joints[0].bindPivotMeters));
     if (!std::isfinite(targetRadius) || targetRadius > maximumReachMeters_ + options.positionToleranceMeters)
-        return fail(IkStatus::Unreachable, "IK: target beyond conservative robot reach");
+    {
+        result.status = IkStatus::Unreachable;
+        result.message = "IK: target radius " + std::to_string(targetRadius) +
+            " m exceeds conservative robot reach " + std::to_string(maximumReachMeters_) + " m";
+        return result;
+    }
 
-    JointVector angles = currentSeed;
-    JointVector jointStep(angles.size(), 0.0);
-    JointVector candidate(angles.size());
+    auto& angles = anglesScratch_;
+    std::copy(currentSeed.begin(), currentSeed.end(), angles.begin());
+    auto& jointStep = jointStepScratch_;
+    auto& candidate = candidateScratch_;
     const double weight = options.orientationWeightMetersPerRadian;
     double damping = options.damping;
     bool boundaryBlocked = false;
-    std::vector<SixVector> columns(specification_.jointCount);
+    auto& columns = jacobianColumnsScratch_;
     for (std::size_t iteration = 0; iteration <= options.maxIterations; ++iteration)
     {
         const auto& state = forward_.Update(angles);
