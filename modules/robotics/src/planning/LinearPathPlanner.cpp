@@ -16,10 +16,14 @@ namespace
 constexpr double kFullTurnRadians = 2.0 * 3.14159265358979323846;
 
 Result AddPathSampleContext(Result failure, std::size_t sample, std::size_t sampleCount,
-    const models::RobotSpecification& specification, const kinematics::IkResult* ikFailure = nullptr)
+    const models::RobotSpecification& specification, const CartesianPose& target,
+    const kinematics::IkResult* ikFailure = nullptr)
 {
     std::string context = "SimRobotController: TCP path sample " + std::to_string(sample) + "/" +
-        std::to_string(sampleCount) + " failed";
+        std::to_string(sampleCount) + " failed at (" +
+        std::to_string(target.positionMeters[0]) + ", " +
+        std::to_string(target.positionMeters[1]) + ", " +
+        std::to_string(target.positionMeters[2]) + ") m";
     if (ikFailure && ikFailure->status == kinematics::IkStatus::JointLimitReached)
     {
         for (std::size_t joint = 0; joint < ikFailure->jointPositionRadians.size(); ++joint)
@@ -35,6 +39,9 @@ Result AddPathSampleContext(Result failure, std::size_t sample, std::size_t samp
                 break;
             }
         }
+        context += "; IK residual " + std::to_string(ikFailure->positionErrorMeters) +
+            " m / " + std::to_string(ikFailure->orientationErrorRadians) +
+            " rad after " + std::to_string(ikFailure->iterations) + " iterations";
     }
     failure.message = std::move(context) + ": " + failure.message;
     return failure;
@@ -288,10 +295,12 @@ Result BuildLinearPath(
                 if (invalidity == JointStateInvalidity::EnvironmentCollision)
                     return AddPathSampleContext(
                         {ErrorCode::EnvironmentContact, "SimRobotController: no collision-free IK solution"},
-                        i, count, specification);
+                        i, count, specification, ToCartesian(targetPose));
                 if (invalidity != JointStateInvalidity::None)
-                    return AddPathSampleContext(MapJointStateInvalidity(invalidity), i, count, specification);
-                return AddPathSampleContext(MapIkFailure(ikFailure), i, count, specification, &ikFailure);
+                    return AddPathSampleContext(MapJointStateInvalidity(invalidity), i, count,
+                        specification, ToCartesian(targetPose));
+                return AddPathSampleContext(MapIkFailure(ikFailure), i, count, specification,
+                    ToCartesian(targetPose), &ikFailure);
             }
 
             double duration = std::max(

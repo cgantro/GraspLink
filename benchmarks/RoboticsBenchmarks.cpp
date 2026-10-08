@@ -8,9 +8,11 @@
 
 #include <charconv>
 #include <cstdint>
+#include <iomanip>
 #include <iostream>
 #include <random>
 #include <optional>
+#include <sstream>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -143,8 +145,9 @@ void RuntimeLinearPathStress(benchmark::State& state)
 
     for (auto _ : state)
     {
-        for (const auto& testCase : cases)
+        for (std::size_t caseIndex = 0; caseIndex < cases.size(); ++caseIndex)
         {
+            const auto& testCase = cases[caseIndex];
             SimRobotController controller(kHcr12a);
             if (!controller.Connect())
             {
@@ -158,10 +161,20 @@ void RuntimeLinearPathStress(benchmark::State& state)
             command.maxAngularVelocityRadiansPerSecond = 8.0;
             command.maxLinearAccelerationMetersPerSecondSquared = 30.0;
             command.maxAngularAccelerationRadiansPerSecondSquared = 120.0;
+            const JointVector startJoints = controller.GetStateView().jointPositionRadians;
             const auto accepted = controller.MoveLinearPath(command);
             if (!accepted)
             {
-                lastPlannerRejection = accepted.message;
+                std::ostringstream details;
+                details << "case " << caseIndex << " start_deg=[" << std::fixed << std::setprecision(1);
+                for (std::size_t joint = 0; joint < startJoints.size(); ++joint)
+                    details << (joint == 0 ? "" : ",") << startJoints[joint] * 180.0 / 3.14159265358979323846;
+                details << "] endpoint_seed_deg=[";
+                for (std::size_t joint = 0; joint < testCase.reachableTargetJoints.size(); ++joint)
+                    details << (joint == 0 ? "" : ",") <<
+                        testCase.reachableTargetJoints[joint] * 180.0 / 3.14159265358979323846;
+                details << "]; " << accepted.message;
+                lastPlannerRejection = details.str();
                 ++plannerRejections;
                 if (accepted.code == ErrorCode::IkDidNotConverge)
                     ++plannerIkRejections;

@@ -145,6 +145,8 @@ IkResult DampedLeastSquaresIk::SolveSingleSeed(const CartesianPose& targetInBase
         return fail(IkStatus::Unreachable, "IK: target beyond conservative robot reach");
 
     JointVector angles = currentSeed;
+    JointVector jointStep(angles.size(), 0.0);
+    JointVector candidate(angles.size());
     const double weight = options.orientationWeightMetersPerRadian;
     double damping = options.damping;
     bool boundaryBlocked = false;
@@ -199,7 +201,7 @@ IkResult DampedLeastSquaresIk::SolveSingleSeed(const CartesianPose& targetInBase
                 damping *= kSingularSystemDampingGrowth;
                 continue;
             }
-            JointVector jointStep(angles.size(), 0.0);
+            std::fill(jointStep.begin(), jointStep.end(), 0.0);
             double largest = 0.0;
             for (std::size_t i = 0; i < angles.size(); ++i)
             {
@@ -213,7 +215,7 @@ IkResult DampedLeastSquaresIk::SolveSingleSeed(const CartesianPose& targetInBase
             for (std::size_t line = 0; line < kMaximumLineSearchSteps && !improved; ++line)
             {
                 const double fraction = stepScale * std::ldexp(1.0, -line);
-                JointVector candidate = angles;
+                std::copy(angles.begin(), angles.end(), candidate.begin());
                 bool clippedAtActiveLimit = false;
                 for (std::size_t i = 0; i < angles.size(); ++i)
                 {
@@ -230,7 +232,7 @@ IkResult DampedLeastSquaresIk::SolveSingleSeed(const CartesianPose& targetInBase
                 const Error next = Measure(target, Compose(forward_.Update(candidate).toolFrameInBaseFrame, tcpInToolFrame_), weight);
                 if (next.cost < error.cost)
                 {
-                    angles = std::move(candidate);
+                    angles.swap(candidate);
                     // 오차가 실제로 줄었으면 damping을 낮춰 특이 자세 근처의 작은 변화율도 더 정확히 따른다.
                     // 초기값을 항상 하한으로 쓰면 홈 자세의 손목처럼 거의 겹친 축에서 필요한 관절 변화가 지나치게 억제되어 도달 가능한 목표도 반복 한도에 막힐 수 있다.
                     // 초기값의 1%를 하한으로 남기고 maxJointStepRadians와 오차 감소 검사를 유지해 큰 관절 변화는 계속 제한한다.
