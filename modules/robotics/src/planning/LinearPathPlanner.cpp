@@ -135,7 +135,9 @@ JointStateInvalidity ValidateJointPath(
         const double fraction = static_cast<double>(step) / static_cast<double>(intervals);
         for (std::size_t joint = 0; joint < start.size(); ++joint)
             sample[joint] = start[joint] + (end[joint] - start[joint]) * fraction;
-        const auto invalidity = ValidateJointState(specification, sample, stateValidityChecker);
+        // 양 끝 관절각이 유한하고 한계 안에 있으면 선형 보간한 중간 각도도 그 범위 안에 있다. 따라서 매 표본에서는 비용이 큰 충돌 검사만 수행한다.
+        const auto invalidity = stateValidityChecker ?
+            stateValidityChecker(sample) : JointStateInvalidity::None;
         if (invalidity != JointStateInvalidity::None)
             return invalidity;
     }
@@ -250,7 +252,7 @@ std::optional<kinematics::IkResult> SolveCollisionFreeIk(
     double bestFailureResidual = ikFailure.message.empty()
         ? std::numeric_limits<double>::infinity()
         : residual(ikFailure);
-    const auto considerSolution = [&](kinematics::IkResult solution)
+    const auto considerSolution = [&](kinematics::IkResult solution, bool pathAlreadyValid = false)
     {
         if (!solution)
         {
@@ -264,15 +266,6 @@ std::optional<kinematics::IkResult> SolveCollisionFreeIk(
         }
 
         AlignEquivalentJointAngles(solution.jointPositionRadians, start, specification);
-        const auto pathInvalidity = ValidateJointPath(
-            start, solution.jointPositionRadians, specification, stateValidityChecker, policy);
-        if (pathInvalidity != JointStateInvalidity::None)
-        {
-            if (invalidity == JointStateInvalidity::None)
-                invalidity = pathInvalidity;
-            return;
-        }
-
         double score = 0.0;
         for (std::size_t joint = 0; joint < start.size(); ++joint)
         {
@@ -289,16 +282,28 @@ std::optional<kinematics::IkResult> SolveCollisionFreeIk(
             // 한계 가까이에서는 다음 TCP 표본으로 이어갈 관절 방향이 줄어든다. 지금 작은 우회를 허용해 뒤 표본에서 분기를 급히 바꾸는 상황을 줄인다.
             score += kJointLimitPenaltyWeight * marginDeficit * marginDeficit;
         }
-        if (score < bestCandidateScore)
+        if (score >= bestCandidateScore)
+            return;
+
+        if (!pathAlreadyValid)
         {
-            bestCandidateScore = score;
-            bestSolution = std::move(solution);
+            const auto pathInvalidity = ValidateJointPath(
+                start, solution.jointPositionRadians, specification, stateValidityChecker, policy);
+            if (pathInvalidity != JointStateInvalidity::None)
+            {
+                if (invalidity == JointStateInvalidity::None)
+                    invalidity = pathInvalidity;
+                return;
+            }
         }
+
+        bestCandidateScore = score;
+        bestSolution = std::move(solution);
     };
 
     if (preferredPathValid)
     {
-        considerSolution(std::move(preferred));
+        considerSolution(std::move(preferred), true);
         JointVector alternateJ1Seed = start;
         const auto& j1Limits = specification.joints[0];
         alternateJ1Seed.front() = std::clamp(
