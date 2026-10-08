@@ -16,6 +16,8 @@
 #include "viewer/robotics/GripperTransformAdapter.h"
 #include "viewer/robotics/RobotTransformAdapter.h"
 
+#include <gtest/gtest.h>
+
 #include <glm/gtc/constants.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
@@ -24,7 +26,6 @@
 #include <array>
 #include <cmath>
 #include <filesystem>
-#include <iostream>
 #include <limits>
 #include <memory>
 #include <string>
@@ -32,6 +33,18 @@
 
 namespace
 {
+#define ASSERT_TRUE_MESSAGE(condition, message) ASSERT_TRUE(condition) << message
+#define EXPECT_TRUE_MESSAGE(condition, message) EXPECT_TRUE(condition) << message
+#define ASSERT_NEAR_FINITE(actual, expected, tolerance, message) \
+    ASSERT_TRUE(std::isfinite(actual) && std::abs((actual) - (expected)) <= (tolerance)) << message
+
+template<typename Exception, typename Function>
+void GTestExpectThrows(Function&& function, const std::string& message)
+{
+    EXPECT_THROW(function(), Exception) << message;
+}
+
+
 using namespace grasplink::robotics;
 using grasplink::physics::BodyMotionType;
 using grasplink::physics::CollisionLayer;
@@ -40,20 +53,20 @@ void RequireVector(const glm::vec3& actual, const glm::vec3& expected, const std
 {
     // GLB에서 만든 Entity 변환은 float로 저장하지만 기구학 계산은 double 정밀도를 쓴다. 두 계산 경로의 반올림 차이를 고려해 위치 비교에 20 μm의 허용 오차를 둔다.
     for (int axis = 0; axis < 3; ++axis)
-        RequireNear(actual[axis], expected[axis], 2.0e-5, label);
+        ASSERT_NEAR_FINITE(actual[axis], expected[axis], 2.0e-5, label);
 }
 
 void RequireMatrix(const glm::mat4& actual, const glm::mat4& expected, const std::string& label)
 {
     for (int column = 0; column < 4; ++column)
         for (int row = 0; row < 4; ++row)
-            RequireNear(actual[column][row], expected[column][row], 2.0e-5, label);
+            ASSERT_NEAR_FINITE(actual[column][row], expected[column][row], 2.0e-5, label);
 }
 
 void RequireRotation(const glm::quat& actual, const glm::quat& expected, const std::string& label)
 {
     // quaternion q와 -q는 같은 회전을 나타낸다. 단위 길이로 정규화한 두 값의 내적을 사용해 부호가 달라도 회전 방향이 같은지 비교한다.
-    Require(std::abs(glm::dot(glm::normalize(actual), glm::normalize(expected))) > 0.99999F, label);
+    ASSERT_TRUE_MESSAGE(std::abs(glm::dot(glm::normalize(actual), glm::normalize(expected))) > 0.99999F, label);
 }
 
 glm::vec3 InGripper(const Entity& entity, const Entity& gripper)
@@ -88,14 +101,14 @@ struct Fixture
     {
         world.import<TransformSystemModule>();
         scene = std::make_unique<Scene>(world);
-        Require(scene->GetSceneRoot().is_alive(), "Scene owns a live hierarchy root");
+        EXPECT_TRUE_MESSAGE(scene->GetSceneRoot().is_alive(), "Scene owns a live hierarchy root");
         model = LoadTestGlb("HCR12A_2F-85.glb");
-        Require(model.rootNodeIndex >= 0, "model root exists");
+        EXPECT_TRUE_MESSAGE(model.rootNodeIndex >= 0, "model root exists");
         nodes.resize(model.nodes.size());
         robotRoot = CreateTree(model.rootNodeIndex, Entity{scene->GetSceneRoot()});
         gripper = robotRoot.FindChildByNameRecursive("Gripper");
-        Require(static_cast<bool>(gripper), "authored Gripper exists");
-        Require(controller.Connect().Ok() && controller.Activate().Ok(), "controller activated");
+        EXPECT_TRUE_MESSAGE(static_cast<bool>(gripper), "authored Gripper exists");
+        EXPECT_TRUE_MESSAGE(controller.Connect().Ok() && controller.Activate().Ok(), "controller activated");
         armState.valid = true;
         armState.jointPositionRadians.assign(6, 0.0);
         armAdapter = std::make_unique<grasplink::viewer::robotics::RobotTransformAdapter>(robotRoot, models::hanwha::kHcr12a);
@@ -139,7 +152,7 @@ struct Fixture
 
     void Command(std::uint8_t position, std::uint8_t speed = 255)
     {
-        Require(controller.Command({position, speed, 128}).Ok(), "valid gripper command accepted");
+        ASSERT_TRUE_MESSAGE(controller.Command({position, speed, 128}).Ok(), "valid gripper command accepted");
     }
 
     void CheckLocalPositions() const
@@ -159,15 +172,15 @@ struct Fixture
         {
             Entity joint = std::string(owner) == "Gripper" ? gripper : gripper.FindChildByNameRecursive(owner);
             Entity proxy = joint.GetChild(std::string(owner) + "_CollisionProxy");
-            Require(static_cast<bool>(proxy), "proxy remains under owning joint");
-            Require(proxy.Get<RigidBody>().motionType == BodyMotionType::Kinematic &&
+            ASSERT_TRUE_MESSAGE(static_cast<bool>(proxy), "proxy remains under owning joint");
+            ASSERT_TRUE_MESSAGE(proxy.Get<RigidBody>().motionType == BodyMotionType::Kinematic &&
                     proxy.Get<RigidBody>().collisionLayer == CollisionLayer::Gripper, "proxy motion and layer unchanged");
             RequireMatrix(proxy.GetWorldMatrix(), joint.GetWorldMatrix(), "proxy shares owning joint World pose");
             ++count;
         };
         check("Gripper");
         for (const auto& joint : models::robotiq::kTwoF85Joints) check(joint.name.data());
-        Require(count == 7, "all seven gripper proxies checked");
+        ASSERT_TRUE_MESSAGE(count == 7, "all seven gripper proxies checked");
     }
 
     double Gap()
@@ -209,7 +222,7 @@ void CheckBranchedPose(Fixture& fixture, const std::array<glm::vec3, 2>& outerBi
         RequireVector(InGripper(tip, fixture.gripper), expected, "nested fingertip follows only its own branch");
         const glm::mat3 tipInRoot = glm::mat3(glm::inverse(fixture.gripper.GetWorldMatrix()) * tip.GetWorldMatrix());
         const glm::quat rotation = glm::normalize(glm::quat_cast(tipInRoot));
-        Require(std::abs(rotation.w) > 0.99999F, "opposite tip rotation cancels outer joint orientation");
+        ASSERT_TRUE_MESSAGE(std::abs(rotation.w) > 0.99999F, "opposite tip rotation cancels outer joint orientation");
     }
     fixture.CheckLocalPositions();
     fixture.CheckProxies();
@@ -235,13 +248,13 @@ void CheckNonidentityBindRotation()
     adapter.Apply(pose);
     const glm::quat expected = glm::quat(bindEuler) * glm::quat{
         static_cast<float>(std::cos(0.2)), 0.0F, 0.0F, static_cast<float>(-std::sin(0.2))};
-    Require(std::abs(glm::dot(glm::normalize(joint.GetLocalRotation()), glm::normalize(expected))) > 0.99999F,
+    ASSERT_TRUE_MESSAGE(std::abs(glm::dot(glm::normalize(joint.GetLocalRotation()), glm::normalize(expected))) > 0.99999F,
         "nonidentity bind rotation multiplies delta on the right");
     RequireVector(joint.GetLocalPosition(), {0.03F, 0.05F, 0.09F}, "nonidentity bind position untouched");
     // 정상 setter를 거치지 않고 ECS root 회전을 직접 손상시킨 경우에도 adapter가 GLB 관절을 연결할 때 잘못된 기준 자세를 거부하는지 확인한다.
     Rotation& rootRotation = root.GetHandle().get_mut<Rotation, Local>();
     rootRotation.w = rootRotation.x = rootRotation.y = rootRotation.z = 0.0F;
-    ExpectThrows<std::invalid_argument>([&]
+    GTestExpectThrows<std::invalid_argument>([&]
     {
         grasplink::viewer::robotics::GripperTransformAdapter invalid(root, specification);
     }, "zero root bind quaternion rejected");
@@ -252,7 +265,7 @@ void CheckMotionAndHierarchy()
     Fixture fixture;
     const glm::mat4 mountBind = TransformSystemModule::ComposeLocalMatrix(
         fixture.gripper.GetLocalPosition(), fixture.gripper.GetLocalRotation(), fixture.gripper.GetLocalScale());
-    Require(glm::length(fixture.gripper.GetLocalPosition()) > 0.09F, "GLB Gripper matrix is not mistaken for identity");
+    ASSERT_TRUE_MESSAGE(glm::length(fixture.gripper.GetLocalPosition()) > 0.09F, "GLB Gripper matrix is not mistaken for identity");
     const std::array<glm::vec3, 2> outerBind{
         InGripper(fixture.gripper.FindChildByNameRecursive("LeftOuterKnuckleJoint"), fixture.gripper),
         InGripper(fixture.gripper.FindChildByNameRecursive("RightOuterKnuckleJoint"), fixture.gripper)};
@@ -260,32 +273,32 @@ void CheckMotionAndHierarchy()
         InGripper(fixture.gripper.FindChildByNameRecursive("LeftFingerTipJoint"), fixture.gripper),
         InGripper(fixture.gripper.FindChildByNameRecursive("RightFingerTipJoint"), fixture.gripper)};
     CheckBranchedPose(fixture, outerBind, tipBind);
-    RequireNear(fixture.Gap(), 0.085, 2.0e-5, "authored open gap is 85 mm");
+    ASSERT_NEAR_FINITE(fixture.Gap(), 0.085, 2.0e-5, "authored open gap is 85 mm");
 
     fixture.Command(255, 0);
     fixture.Step(1);
-    Require(fixture.controller.GetState().actualPosition == 0 && fixture.controller.GetState().closureFraction > 0.0,
+    ASSERT_TRUE_MESSAGE(fixture.controller.GetState().actualPosition == 0 && fixture.controller.GetState().closureFraction > 0.0,
         "continuous motion precedes first 8-bit feedback increment");
-    Require(std::abs(fixture.gripper.FindChildByNameRecursive("LeftOuterKnuckleJoint").GetLocalRotation().z) > 1.0e-5F,
+    ASSERT_TRUE_MESSAGE(std::abs(fixture.gripper.FindChildByNameRecursive("LeftOuterKnuckleJoint").GetLocalRotation().z) > 1.0e-5F,
         "continuous snapshot moves geometry without raw quantization");
     fixture.Command(128);
     fixture.Step(125);
     CheckBranchedPose(fixture, outerBind, tipBind);
     const double halfGap = fixture.Gap();
-    Require(halfGap > 0.015 && halfGap < 0.06, "intermediate command narrows aperture");
+    ASSERT_TRUE_MESSAGE(halfGap > 0.015 && halfGap < 0.06, "intermediate command narrows aperture");
     fixture.Command(255);
     fixture.Step(250);
     CheckBranchedPose(fixture, outerBind, tipBind);
-    Require(fixture.Gap() >= 0.0 && fixture.Gap() < 0.003, "nominal closed geometry preserves small asset gap");
+    ASSERT_TRUE_MESSAGE(fixture.Gap() >= 0.0 && fixture.Gap() < 0.003, "nominal closed geometry preserves small asset gap");
     RequireMatrix(TransformSystemModule::ComposeLocalMatrix(fixture.gripper.GetLocalPosition(),
         fixture.gripper.GetLocalRotation(), fixture.gripper.GetLocalScale()), mountBind, "nonidentity mounting matrix preserved");
 
     fixture.Command(0);
     fixture.Step(35);
-    Require(fixture.controller.Stop().Ok(), "stop accepted during reopening");
+    ASSERT_TRUE_MESSAGE(fixture.controller.Stop().Ok(), "stop accepted during reopening");
     const double stopped = fixture.controller.GetState().closureFraction;
     fixture.Step(100);
-    RequireNear(fixture.controller.GetState().closureFraction, stopped, 1.0e-12, "stop holds continuous position");
+    ASSERT_NEAR_FINITE(fixture.controller.GetState().closureFraction, stopped, 1.0e-12, "stop holds continuous position");
     CheckBranchedPose(fixture, outerBind, tipBind);
 
     // 팔과 모델 root 위치를 함께 바꿔도 GLB에 저장된 그리퍼 기준 변환과 좌우 관절 회전은 그대로여야 한다. 부모의 변화만 자손 World 행렬에 누적되어야 한다.
@@ -305,18 +318,18 @@ void CheckMotionAndHierarchy()
 
     auto bad = pose;
     bad.jointLocalRotations.back().w = std::numeric_limits<double>::quiet_NaN();
-    ExpectThrows<std::invalid_argument>([&] { fixture.gripperAdapter->Apply(bad); }, "invalid late quaternion rejected atomically");
+    GTestExpectThrows<std::invalid_argument>([&] { fixture.gripperAdapter->Apply(bad); }, "invalid late quaternion rejected atomically");
     for (std::size_t index = 0; index < before.size(); ++index)
         RequireRotation(fixture.gripper.FindChildByNameRecursive(std::string(models::robotiq::kTwoF85Joints[index].name)).GetLocalRotation(),
             before[index], "invalid apply leaves every joint unchanged");
     Entity finger = fixture.gripper.FindChildByNameRecursive("LeftFinger");
     const Entity parent = finger.GetParent();
     finger.SetParent(fixture.gripper);
-    ExpectThrows<std::runtime_error>([&] { fixture.gripperAdapter->Apply(pose); }, "changed intermediate ancestry rejected");
+    GTestExpectThrows<std::runtime_error>([&] { fixture.gripperAdapter->Apply(pose); }, "changed intermediate ancestry rejected");
     finger.SetParent(parent);
     fixture.gripperAdapter->Apply(pose);
     fixture.scene.reset();
-    ExpectThrows<std::runtime_error>([&] { fixture.gripperAdapter->Apply(pose); }, "removed scene invalidates borrowed joint handles");
+    GTestExpectThrows<std::runtime_error>([&] { fixture.gripperAdapter->Apply(pose); }, "removed scene invalidates borrowed joint handles");
 }
 
 glm::vec3 SupportPoint(Entity proxy, float& top)
@@ -334,7 +347,8 @@ glm::vec3 SupportPoint(Entity proxy, float& top)
     std::size_t count = 0;
     for (const auto& point : points)
         if (top - point.y < 0.002F) { center += point; ++count; }
-    Require(count != 0, "tip has gravity-facing hull surface");
+    EXPECT_TRUE_MESSAGE(count != 0, "tip has gravity-facing hull surface");
+    if (count == 0) return center;
     return center / static_cast<float>(count);
 }
 
@@ -359,7 +373,7 @@ void CheckPhysicalFollowing()
     drop.set<RigidBody>({BodyMotionType::Dynamic, CollisionLayer::DynamicObject})
         .set<Colliders>({{physics_colliders::Box({0.003F, 0.003F, 0.003F})}});
     fixture.Step(300);
-    Require(drop.GetLocalPosition().y > surfaceY + 0.001F && drop.GetLocalPosition().y < surfaceY + 0.02F,
+    ASSERT_TRUE_MESSAGE(drop.GetLocalPosition().y > surfaceY + 0.001F && drop.GetLocalPosition().y < surfaceY + 0.02F,
         "Jolt contacts fingertip at controller-driven intermediate pose");
     // 손끝과 이미 접촉한 물체는 마찰 때문에 함께 움직일 수 있다. 따라서 이전 접촉 위치가 아니라 새 위치에서 물체를 떨어뜨려 손끝 지지 형상이 이동했는지 독립적으로 확인한다.
     drop.Destroy();
@@ -370,13 +384,13 @@ void CheckPhysicalFollowing()
     oldPositionDrop.set<RigidBody>({BodyMotionType::Dynamic, CollisionLayer::DynamicObject})
         .set<Colliders>({{physics_colliders::Box({0.003F, 0.003F, 0.003F})}});
     fixture.Step(300);
-    Require(oldPositionDrop.GetLocalPosition().y < surfaceY - 0.04F, "old fingertip position loses support after reopening");
+    ASSERT_TRUE_MESSAGE(oldPositionDrop.GetLocalPosition().y < surfaceY - 0.04F, "old fingertip position loses support after reopening");
     fixture.CheckProxies();
     float openSurfaceY;
     const glm::vec3 openSurface = SupportPoint(tip, openSurfaceY);
     const auto pose = fixture.gripperMath.Update(fixture.controller.GetState());
     fixture.scene.reset();
-    ExpectThrows<std::runtime_error>([&] { fixture.gripperAdapter->Apply(pose); }, "removed Scene rejects stale adapter");
+    GTestExpectThrows<std::runtime_error>([&] { fixture.gripperAdapter->Apply(pose); }, "removed Scene rejects stale adapter");
     fixture.scene = std::make_unique<Scene>(fixture.world);
     Entity ghostCheck = fixture.scene->CreateEntity("NoStaleGripperBody");
     ghostCheck.SetLocalPosition({openSurface.x, openSurfaceY + 0.07F, openSurface.z});
@@ -387,20 +401,22 @@ void CheckPhysicalFollowing()
         TransformSystemModule::UpdateWorldTransforms(fixture.world);
         fixture.integration->Step(0.004);
     }
-    Require(ghostCheck.GetLocalPosition().y < openSurfaceY - 0.2F, "scene cleanup leaves no stale gripper collision body");
+    ASSERT_TRUE_MESSAGE(ghostCheck.GetLocalPosition().y < openSurfaceY - 0.2F, "scene cleanup leaves no stale gripper collision body");
 }
 }
 
 /** @brief 실제 GLB의 갈라진 관절 계층에서 연속 개폐가 화면 Entity와 Jolt 충돌 형상에 같은 자세로 반영되는지 확인한다. */
-int main()
+TEST(GripperPoseIntegration, NonidentityBindRotationAndInvalidRoot)
 {
-    try
-    {
-        CheckNonidentityBindRotation();
-        CheckMotionAndHierarchy();
-        CheckPhysicalFollowing();
-        std::cout << "Gripper runtime, branched GLB poses and physical following checks passed\n";
-        return 0;
-    }
-    catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
+    CheckNonidentityBindRotation();
+}
+
+TEST(GripperPoseIntegration, MotionHierarchyAndAtomicPoseApplication)
+{
+    CheckMotionAndHierarchy();
+}
+
+TEST(GripperPoseIntegration, ColliderFollowsGripperAndSceneCleanup)
+{
+    CheckPhysicalFollowing();
 }

@@ -13,6 +13,10 @@
 
 #include <imgui.h>
 
+#include <gtest/gtest.h>
+
+#include <cmath>
+
 #include <iostream>
 #include <memory>
 
@@ -37,15 +41,37 @@ Colliders ConfiguredShapes()
     return colliders;
 }
 
-void RequireControllerUnchanged(const GripperState& actual, const GripperState& before)
+struct TestCheckFailure {};
+
+void CheckImpl(bool condition, const std::string& label, const char* file, int line)
 {
-    RequireNear(actual.closureFraction, before.closureFraction, 0.0, "panel draw preserves continuous position");
-    Require(actual.mode == before.mode, "panel draw preserves mode");
-    Require(actual.requestedPositionEcho == before.requestedPositionEcho, "panel draw preserves command echo");
-    Require(actual.actualPosition == before.actualPosition, "panel draw preserves raw feedback");
-    Require(actual.valid == before.valid && actual.closureFractionValid == before.closureFractionValid,
+    if (condition) return;
+    ADD_FAILURE_AT(file, line) << label;
+    throw TestCheckFailure{};
+}
+
+void CheckNearImpl(double actual, double expected, double tolerance, const std::string& label,
+    const char* file, int line)
+{
+    if (std::isfinite(actual) && std::abs(actual - expected) <= tolerance) return;
+    const std::string detail = label + ": actual=" + std::to_string(actual) +
+        ", expected=" + std::to_string(expected) + ", tolerance=" + std::to_string(tolerance);
+    ADD_FAILURE_AT(file, line) << detail;
+    throw TestCheckFailure{};
+}
+
+#define Check(...) CheckImpl(__VA_ARGS__, __FILE__, __LINE__)
+#define CheckNear(...) CheckNearImpl(__VA_ARGS__, __FILE__, __LINE__)
+
+void CheckControllerUnchanged(const GripperState& actual, const GripperState& before)
+{
+    CheckNear(actual.closureFraction, before.closureFraction, 0.0, "panel draw preserves continuous position");
+    Check(actual.mode == before.mode, "panel draw preserves mode");
+    Check(actual.requestedPositionEcho == before.requestedPositionEcho, "panel draw preserves command echo");
+    Check(actual.actualPosition == before.actualPosition, "panel draw preserves raw feedback");
+    Check(actual.valid == before.valid && actual.closureFractionValid == before.closureFractionValid,
         "panel draw preserves position validity");
-    Require(actual.activated == before.activated && actual.goToActive == before.goToActive,
+    Check(actual.activated == before.activated && actual.goToActive == before.goToActive,
         "panel draw preserves activation and movement");
 }
 }
@@ -56,7 +82,7 @@ void RequireControllerUnchanged(const GripperState& actual, const GripperState& 
  * 그리퍼 상태를 읽기만 한 프레임은 Controller 명령이나 시뮬레이션 시간 진행을 만들지 않아야 한다.
  * Window는 GUI 연결보다 오래 살아야 하고 Flecs World는 Scene과 Overlay보다 오래 살아야 한다.
  */
-int main()
+TEST(GuiComposition, DrawingPreservesControllerAndColliderVisibility)
 {
     try
     {
@@ -70,7 +96,7 @@ int main()
         flecs::world world;
         world.import<TransformSystemModule>();
         auto scene = std::make_unique<Scene>(world);
-        Require(scene->GetSceneRoot().is_alive(), "Scene owns a live hierarchy root");
+        Check(scene->GetSceneRoot().is_alive(), "Scene owns a live hierarchy root");
         Entity collider = scene->CreateEntity("ConfiguredShapes");
         collider.set(RigidBody{grasplink::physics::BodyMotionType::Static,
             grasplink::physics::CollisionLayer::Environment}).set(ConfiguredShapes());
@@ -84,19 +110,19 @@ int main()
         grasplink::gui::PhysicsDebugPanel physicsPanel;
         grasplink::gui::ColliderOverlay overlay(world);
         backends::simulation::SimGripperController controller(models::robotiq::kTwoF85);
-        Require(controller.Connect().Ok() && controller.Activate().Ok(), "gripper controller activated");
-        Require(controller.Command({180, 128, 128}).Ok(), "controller has a nontrivial movement request");
+        Check(controller.Connect().Ok() && controller.Activate().Ok(), "gripper controller activated");
+        Check(controller.Command({180, 128, 128}).Ok(), "controller has a nontrivial movement request");
         controller.Update(0.2);
         const GripperState before = controller.GetState();
-        Require(before.mode == GripperMode::Moving && before.closureFraction > 0.0,
+        Check(before.mode == GripperMode::Moving && before.closureFraction > 0.0,
             "controller movement is prepared before drawing");
-        Require(!physicsPanel.IsColliderVisible(), "debug panel starts with lines hidden");
+        Check(!physicsPanel.IsColliderVisible(), "debug panel starts with lines hidden");
 
         const auto drawFrame = [&](bool visible)
         {
             window.PollEvents();
             gui.BeginFrame();
-            Require(ImGui::GetIO().DisplaySize.x > 0.0F && ImGui::GetIO().DisplaySize.y > 0.0F,
+            Check(ImGui::GetIO().DisplaySize.x > 0.0F && ImGui::GetIO().DisplaySize.y > 0.0F,
                 "hidden window provides drawable display size");
             gripperPanel.Draw(controller);
             physicsPanel.Draw();
@@ -106,33 +132,33 @@ int main()
             (void)gui.WantsMouse();
             (void)gui.WantsKeyboard();
             gui.EndFrame();
-            RequireControllerUnchanged(controller.GetState(), before);
-            Require(!physicsPanel.IsColliderVisible(), "drawing preserves debug checkbox state");
+            CheckControllerUnchanged(controller.GetState(), before);
+            Check(!physicsPanel.IsColliderVisible(), "drawing preserves debug checkbox state");
             return foregroundVertices;
         };
 
-        Require(drawFrame(true) > 0, "configured shapes generate foreground wire lines");
+        Check(drawFrame(true) > 0, "configured shapes generate foreground wire lines");
         // 표시를 껐다가 다시 켜면 이전 선이 남지 않고 상자와 볼록 껍질이 각각 새 선을 만드는지 확인한다.
         for (const auto& shape : ConfiguredShapes().shapes)
         {
             collider.set(Colliders{{shape}});
-            Require(drawFrame(false) == 0, "shape change hidden frame remains empty");
-            Require(drawFrame(true) > 0, "each configured shape generates foreground wire lines");
+            Check(drawFrame(false) == 0, "shape change hidden frame remains empty");
+            Check(drawFrame(true) > 0, "each configured shape generates foreground wire lines");
         }
-        Require(drawFrame(false) == 0, "hidden overlay emits no foreground lines");
+        Check(drawFrame(false) == 0, "hidden overlay emits no foreground lines");
         scene.reset();
         scene = std::make_unique<Scene>(world);
         TransformSystemModule::UpdateWorldTransforms(world);
-        Require(!collider.IsValid(), "scene replacement removes the configured collider");
+        Check(!collider.IsValid(), "scene replacement removes the configured collider");
         // 숨김 상태에서 Scene을 바꾸면 이전 물체의 선 자료를 버려야 한다. 다시 켤 때는 100 ms 주기를 기다리지 않고 새 Scene의 충돌 설정을 읽어 선을 만든다.
-        Require(drawFrame(false) == 0, "replacement scene hidden frame remains empty");
-        Require(drawFrame(true) == 0, "replacement scene does not draw stale collider lines");
-        std::cout << "GUI composition and collider visibility checks passed\n";
-        return 0;
+        Check(drawFrame(false) == 0, "replacement scene hidden frame remains empty");
+        Check(drawFrame(true) == 0, "replacement scene does not draw stale collider lines");
+    }
+    catch (const TestCheckFailure&)
+    {
     }
     catch (const std::exception& error)
     {
-        std::cerr << error.what() << '\n';
-        return 1;
+        ADD_FAILURE() << error.what();
     }
 }

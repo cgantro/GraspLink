@@ -16,6 +16,8 @@
 
 #include <glm/gtc/quaternion.hpp>
 
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -28,7 +30,46 @@ using namespace grasplink::robotics;
 
 namespace
 {
-void RequirePositionNear(const glm::vec3& actual, const glm::vec3& expected, const std::string& label)
+struct TestCheckFailure {};
+
+void CheckImpl(bool condition, const std::string& label, const char* file, int line)
+{
+    if (condition) return;
+    ADD_FAILURE_AT(file, line) << label;
+    throw TestCheckFailure{};
+}
+
+void CheckNearImpl(double actual, double expected, double tolerance, const std::string& label,
+    const char* file, int line)
+{
+    if (std::isfinite(actual) && std::abs(actual - expected) <= tolerance) return;
+    const std::string detail = label + ": actual=" + std::to_string(actual) +
+        ", expected=" + std::to_string(expected) + ", tolerance=" + std::to_string(tolerance);
+    ADD_FAILURE_AT(file, line) << detail;
+    throw TestCheckFailure{};
+}
+
+#define Check(...) CheckImpl(__VA_ARGS__, __FILE__, __LINE__)
+#define CheckNear(...) CheckNearImpl(__VA_ARGS__, __FILE__, __LINE__)
+
+template<typename Exception, typename Function>
+void CheckThrows(Function&& function, const std::string& label)
+{
+    try
+    {
+        function();
+        Check(false, label);
+    }
+    catch (const TestCheckFailure&)
+    {
+        throw;
+    }
+    catch (const Exception&)
+    {
+    }
+}
+
+void CheckPositionNear(const glm::vec3& actual, const glm::vec3& expected, const std::string& label)
 {
     // Scene 기준 위치를 [m] 단위로 비교하고 축마다 0.2 mm 오차를 허용한다. GLB Entity 행렬은 float, 정기구학 계산은 double을 쓰므로 생기는 반올림 차이를 포함한다.
     const auto coordinateLabel = [&](const char* axis, float actualValue, float expectedValue)
@@ -36,9 +77,9 @@ void RequirePositionNear(const glm::vec3& actual, const glm::vec3& expected, con
         return label + " " + axis + ": actual=" + std::to_string(actualValue) +
             ", expected=" + std::to_string(expectedValue);
     };
-    RequireNear(actual.x, expected.x, 2e-4, coordinateLabel("x", actual.x, expected.x));
-    RequireNear(actual.y, expected.y, 2e-4, coordinateLabel("y", actual.y, expected.y));
-    RequireNear(actual.z, expected.z, 2e-4, coordinateLabel("z", actual.z, expected.z));
+    CheckNear(actual.x, expected.x, 2e-4, coordinateLabel("x", actual.x, expected.x));
+    CheckNear(actual.y, expected.y, 2e-4, coordinateLabel("y", actual.y, expected.y));
+    CheckNear(actual.z, expected.z, 2e-4, coordinateLabel("z", actual.z, expected.z));
 }
 
 void ApplyAndCompare(
@@ -63,7 +104,7 @@ void ApplyAndCompare(
     TransformSystemModule::UpdateWorldTransforms(world);
 
     const Entity toolFrame = robotRoot.FindChildByNameRecursive("ToolFrame");
-    Require(static_cast<bool>(toolFrame), label + ": GLB ToolFrame exists");
+    Check(static_cast<bool>(toolFrame), label + ": GLB ToolFrame exists");
     const glm::mat4 rootWorld = robotRoot.GetWorldMatrix();
     const glm::mat4 toolWorld = toolFrame.GetWorldMatrix();
     // ToolFrame은 로봇이 작업할 때 기준으로 삼는 도구 끝 위치다. GLB 장면 계층에서 읽은 Scene 위치와 CPU FK가 계산한 위치를 비교한다.
@@ -73,7 +114,7 @@ void ApplyAndCompare(
         static_cast<float>(fk.toolFrameInBaseFrame.positionMeters.y),
         static_cast<float>(fk.toolFrameInBaseFrame.positionMeters.z),
         1.0F));
-    RequirePositionNear(actualWorld, expectedWorld, label + ": ToolFrame world position");
+    CheckPositionNear(actualWorld, expectedWorld, label + ": ToolFrame world position");
 
     const glm::quat actualOrientation = glm::quat_cast(glm::mat3(toolWorld));
     const auto& expectedRotation = fk.toolFrameInBaseFrame.rotation;
@@ -81,7 +122,7 @@ void ApplyAndCompare(
         static_cast<float>(expectedRotation.w), static_cast<float>(expectedRotation.x),
         static_cast<float>(expectedRotation.y), static_cast<float>(expectedRotation.z)};
     // quaternion과 그 음수는 같은 회전이므로, 두 값을 정규화한 내적의 절댓값으로 부호와 무관하게 회전 방향을 비교한다.
-    Require(std::abs(glm::dot(glm::normalize(actualOrientation), glm::normalize(expectedOrientation))) > 0.9999F,
+    Check(std::abs(glm::dot(glm::normalize(actualOrientation), glm::normalize(expectedOrientation))) > 0.9999F,
         label + ": ToolFrame world orientation");
 }
 }
@@ -92,7 +133,7 @@ void ApplyAndCompare(
  * 로봇 root를 옮기거나 돌린 경우도 확인하며, 모델의 관절 이름·부모·기준 위치가 사양과 다르면 연결을 거부해야 한다.
  * 숨겨진 Window가 OpenGL context를 제공하고 AssetManager와 Shader가 만든 GPU 자원을 해제한 뒤 마지막에 context를 닫는다.
  */
-int main()
+TEST(RobotPoseIntegration, MatchesKinematicsAndPreservesCachedMeshOwnership)
 {
     try
     {
@@ -110,34 +151,34 @@ int main()
         flecs::world world;
         world.import<TransformSystemModule>();
         Scene scene(world);
-        Require(scene.GetSceneRoot().is_alive(), "Scene owns a live hierarchy root");
+        Check(scene.GetSceneRoot().is_alive(), "Scene owns a live hierarchy root");
 
         ModelResource invalidHierarchy = model;
         invalidHierarchy.nodes.front().name = "PreflightFailureRoot";
         invalidHierarchy.nodes.front().parentIndex = 0;
-        ExpectThrows<std::runtime_error>(
+        CheckThrows<std::runtime_error>(
             [&] { prefab_factory::CreateModel(scene, invalidHierarchy, assets, shader); },
             "cyclic model hierarchy is rejected before Scene mutation");
-        Require(!world.lookup("PreflightFailureRoot").is_valid(),
+        Check(!world.lookup("PreflightFailureRoot").is_valid(),
             "preflight failure leaves no partial model Entity in the Scene");
 
         Entity robotRoot = prefab_factory::CreateModel(scene, model, assets, shader);
         const auto meshNode = std::find_if(model.nodes.begin(), model.nodes.end(),
             [](const NodeData& node) { return node.meshIndex >= 0; });
-        Require(meshNode != model.nodes.end(), "robot model contains a renderable node");
+        Check(meshNode != model.nodes.end(), "robot model contains a renderable node");
         const std::size_t meshNodeIndex = static_cast<std::size_t>(meshNode - model.nodes.begin());
         const MeshData& renderableMesh = model.meshes[static_cast<std::size_t>(meshNode->meshIndex)];
         const ResourceID meshId = renderableMesh.uniqueID;
         const auto cachedMesh = assets.GetMesh(meshId);
-        Require(cachedMesh != nullptr, "uploaded GPU mesh is available from AssetManager");
+        Check(cachedMesh != nullptr, "uploaded GPU mesh is available from AssetManager");
         const bool isRootMesh = meshNodeIndex == static_cast<std::size_t>(model.rootNodeIndex);
         const Entity meshEntity = renderableMesh.subMeshes.size() == 1
             ? (isRootMesh ? robotRoot : robotRoot.FindChildByNameRecursive(meshNode->name))
             : robotRoot.FindChildByNameRecursive(
                 meshNode->name + "_Primitive_" + std::to_string(meshNodeIndex) + "_0");
-        Require(meshEntity.IsValid(), "renderable model node has a Scene Entity");
-        Require(meshEntity.Has<MeshFilter>(), "renderable node has a MeshFilter");
-        Require(meshEntity.GetHandle().get<MeshFilter>().mesh == cachedMesh,
+        Check(meshEntity.IsValid(), "renderable model node has a Scene Entity");
+        Check(meshEntity.Has<MeshFilter>(), "renderable node has a MeshFilter");
+        Check(meshEntity.GetHandle().get<MeshFilter>().mesh == cachedMesh,
             "PrefabFactory attaches the cached GPU mesh to the Entity");
 
         robotRoot.SetLocalPosition({1.2F, -0.4F, 0.7F});
@@ -175,7 +216,7 @@ int main()
         grasplink::viewer::robotics::RobotTransformAdapter negativeIdentityBind(robotRoot, specification);
         const glm::vec3 originalJ1Position = j1.GetLocalPosition();
         j1.SetLocalPosition(originalJ1Position + glm::vec3{0.01F, 0.0F, 0.0F});
-        ExpectThrows<std::invalid_argument>(
+        CheckThrows<std::invalid_argument>(
             [&] { grasplink::viewer::robotics::RobotTransformAdapter bad(robotRoot, specification); },
             "changed GLB bind pivot rejected");
         j1.SetLocalPosition(originalJ1Position);
@@ -183,24 +224,24 @@ int main()
         Entity j2 = robotRoot.FindChildByNameRecursive("J2");
         Entity originalJ2Parent = j2.GetParent();
         j2.SetParent(robotRoot);
-        ExpectThrows<std::invalid_argument>(
+        CheckThrows<std::invalid_argument>(
             [&] { grasplink::viewer::robotics::RobotTransformAdapter bad(robotRoot, specification); },
             "broken joint ancestor hierarchy rejected");
         j2.SetParent(originalJ2Parent);
 
         assets.UploadModel(model);
-        Require(assets.GetMesh(meshId) == cachedMesh,
+        Check(assets.GetMesh(meshId) == cachedMesh,
             "uploading the same model reuses its cached GPU mesh");
         model = {};
-        Require(meshEntity.GetHandle().get<MeshFilter>().mesh == cachedMesh,
+        Check(meshEntity.GetHandle().get<MeshFilter>().mesh == cachedMesh,
             "Entity keeps the GPU mesh after the CPU model is released");
 
-        std::cout << "Robot pose GLB integration checks passed\n";
-        return 0;
+    }
+    catch (const TestCheckFailure&)
+    {
     }
     catch (const std::exception& error)
     {
-        std::cerr << error.what() << '\n';
-        return 1;
+        ADD_FAILURE() << error.what();
     }
 }

@@ -5,6 +5,8 @@
 #include "systems/TransformSystemModule.h"
 #include "TestSupport.h"
 
+#include <gtest/gtest.h>
+
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
 
@@ -19,28 +21,67 @@ namespace
 constexpr float kTolerance = 1.0e-5F;
 const glm::quat kIdentity{1.0F, 0.0F, 0.0F, 0.0F};
 
-void RequireMatrix(const glm::mat4& actual, const glm::mat4& expected, const std::string& label)
+struct TestCheckFailure {};
+
+void CheckImpl(bool condition, const std::string& label, const char* file, int line)
+{
+    if (condition) return;
+    ADD_FAILURE_AT(file, line) << label;
+    throw TestCheckFailure{};
+}
+
+void CheckNearImpl(double actual, double expected, double tolerance, const std::string& label,
+    const char* file, int line)
+{
+    if (std::isfinite(actual) && std::abs(actual - expected) <= tolerance) return;
+    const std::string detail = label + ": actual=" + std::to_string(actual) +
+        ", expected=" + std::to_string(expected) + ", tolerance=" + std::to_string(tolerance);
+    ADD_FAILURE_AT(file, line) << detail;
+    throw TestCheckFailure{};
+}
+
+#define Check(...) CheckImpl(__VA_ARGS__, __FILE__, __LINE__)
+#define CheckNear(...) CheckNearImpl(__VA_ARGS__, __FILE__, __LINE__)
+
+template<typename Exception, typename Function>
+void CheckThrows(Function&& function, const std::string& label)
+{
+    try
+    {
+        function();
+        Check(false, label);
+    }
+    catch (const TestCheckFailure&)
+    {
+        throw;
+    }
+    catch (const Exception&)
+    {
+    }
+}
+
+void CheckMatrix(const glm::mat4& actual, const glm::mat4& expected, const std::string& label)
 {
     for (int column = 0; column < 4; ++column)
         for (int row = 0; row < 4; ++row)
-            RequireNear(actual[column][row], expected[column][row], kTolerance,
+            CheckNear(actual[column][row], expected[column][row], kTolerance,
                 label + " [" + std::to_string(column) + "][" + std::to_string(row) + "]");
 }
 
-void RequireQuaternion(const glm::quat& actual, const glm::quat& expected, const std::string& label)
+void CheckQuaternion(const glm::quat& actual, const glm::quat& expected, const std::string& label)
 {
-    RequireNear(glm::length(actual), 1.0, kTolerance, label + " unit length");
+    CheckNear(glm::length(actual), 1.0, kTolerance, label + " unit length");
     // q와 -q는 성분 부호만 다르고 같은 공간 회전을 나타낸다. 저장된 부호가 아니라 실제 회전 방향이 같은지 확인한다.
-    RequireNear(std::abs(glm::dot(actual, glm::normalize(expected))), 1.0, kTolerance,
+    CheckNear(std::abs(glm::dot(actual, glm::normalize(expected))), 1.0, kTolerance,
         label + " orientation");
 }
 
-void RequireQuaternionComponents(const glm::quat& actual, const glm::quat& expected, const std::string& label)
+void CheckQuaternionComponents(const glm::quat& actual, const glm::quat& expected, const std::string& label)
 {
-    RequireNear(actual.w, expected.w, 0.0, label + " w");
-    RequireNear(actual.x, expected.x, 0.0, label + " x");
-    RequireNear(actual.y, expected.y, 0.0, label + " y");
-    RequireNear(actual.z, expected.z, 0.0, label + " z");
+    CheckNear(actual.w, expected.w, 0.0, label + " w");
+    CheckNear(actual.x, expected.x, 0.0, label + " x");
+    CheckNear(actual.y, expected.y, 0.0, label + " y");
+    CheckNear(actual.z, expected.z, 0.0, label + " z");
 }
 
 glm::mat4 ReferenceMatrix(const glm::vec3& position, const glm::quat& rotation, const glm::vec3& scale)
@@ -59,12 +100,12 @@ std::array<glm::quat, 3> InvalidRotations()
 
 void CheckDefaultsAndNormalization(Scene& scene)
 {
-    RequireQuaternionComponents(Rotation{}, kIdentity, "default Rotation");
-    RequireQuaternionComponents(Entity{}.GetLocalRotation(), kIdentity, "invalid Entity rotation");
+    CheckQuaternionComponents(Rotation{}, kIdentity, "default Rotation");
+    CheckQuaternionComponents(Entity{}.GetLocalRotation(), kIdentity, "invalid Entity rotation");
     Entity withoutRotation{scene.GetWorld().entity()};
-    RequireQuaternionComponents(withoutRotation.GetLocalRotation(), kIdentity, "missing rotation pair");
+    CheckQuaternionComponents(withoutRotation.GetLocalRotation(), kIdentity, "missing rotation pair");
     Entity entity = scene.CreateEntity("Normalization");
-    RequireQuaternionComponents(entity.GetLocalRotation(), kIdentity, "Scene rotation default");
+    CheckQuaternionComponents(entity.GetLocalRotation(), kIdentity, "Scene rotation default");
 
     const glm::quat expected = glm::quat(glm::vec3{0.3F, -0.7F, 0.5F});
     // 성분 제곱합을 float로 바로 구하면 큰 값은 overflow, 작은 값은 underflow할 수 있다.
@@ -72,27 +113,27 @@ void CheckDefaultsAndNormalization(Scene& scene)
     for (const float magnitude : {7.0F, 1.0e30F, 1.0e-30F})
     {
         const glm::quat input = expected * magnitude;
-        RequireQuaternion(Rotation{input}, expected, "Rotation normalizes finite input");
+        CheckQuaternion(Rotation{input}, expected, "Rotation normalizes finite input");
         entity.SetLocalRotation(input);
-        RequireQuaternion(entity.GetLocalRotation(), expected, "setter normalizes finite input");
+        CheckQuaternion(entity.GetLocalRotation(), expected, "setter normalizes finite input");
     }
     const glm::quat tinyIdentity{std::numeric_limits<float>::denorm_min(), 0.0F, 0.0F, 0.0F};
-    RequireQuaternion(Rotation{tinyIdentity}, kIdentity, "smallest nonzero input");
+    CheckQuaternion(Rotation{tinyIdentity}, kIdentity, "smallest nonzero input");
 
     TransformSystemModule::UpdateWorldTransforms(scene.GetWorld());
     const glm::quat before = entity.GetLocalRotation();
     const glm::mat4 worldBefore = entity.GetWorldMatrix();
     for (const glm::quat& invalid : InvalidRotations())
     {
-        ExpectThrows<std::invalid_argument>([&] { (void)Rotation{invalid}; }, "invalid Rotation rejected");
-        ExpectThrows<std::invalid_argument>([&] { entity.SetLocalRotation(invalid); }, "invalid setter rejected");
-        RequireQuaternionComponents(entity.GetLocalRotation(), before, "rejected setter preserves Local state");
-        RequireMatrix(entity.GetWorldMatrix(), worldBefore, "rejected setter preserves World cache");
+        CheckThrows<std::invalid_argument>([&] { (void)Rotation{invalid}; }, "invalid Rotation rejected");
+        CheckThrows<std::invalid_argument>([&] { entity.SetLocalRotation(invalid); }, "invalid setter rejected");
+        CheckQuaternionComponents(entity.GetLocalRotation(), before, "rejected setter preserves Local state");
+        CheckMatrix(entity.GetWorldMatrix(), worldBefore, "rejected setter preserves World cache");
         TransformSystemModule::UpdateWorldTransforms(scene.GetWorld());
-        RequireMatrix(entity.GetWorldMatrix(), worldBefore, "rejected setter preserves subsequent World pose");
+        CheckMatrix(entity.GetWorldMatrix(), worldBefore, "rejected setter preserves subsequent World pose");
     }
     entity.Destroy();
-    RequireQuaternionComponents(entity.GetLocalRotation(), kIdentity, "destroyed Entity rotation");
+    CheckQuaternionComponents(entity.GetLocalRotation(), kIdentity, "destroyed Entity rotation");
 }
 
 void CheckComposition()
@@ -105,15 +146,15 @@ void CheckComposition()
     {
         const glm::quat rotation = glm::quat(glm::vec3{0.4F, pitch, -0.8F});
         const glm::mat4 expected = ReferenceMatrix(position, rotation, scale);
-        RequireMatrix(TransformSystemModule::ComposeLocalMatrix(position, rotation, scale), expected,
+        CheckMatrix(TransformSystemModule::ComposeLocalMatrix(position, rotation, scale), expected,
             "near singular pitch preserves matrix");
-        RequireMatrix(TransformSystemModule::ComposeLocalMatrix(position, -rotation, scale), expected,
+        CheckMatrix(TransformSystemModule::ComposeLocalMatrix(position, -rotation, scale), expected,
             "opposite quaternion sign preserves matrix");
-        RequireMatrix(TransformSystemModule::ComposeLocalMatrix(position, rotation * 4.0F, scale), expected,
+        CheckMatrix(TransformSystemModule::ComposeLocalMatrix(position, rotation * 4.0F, scale), expected,
             "nonunit composition preserves matrix");
     }
     for (const glm::quat& invalid : InvalidRotations())
-        ExpectThrows<std::invalid_argument>(
+        CheckThrows<std::invalid_argument>(
             [&] { (void)TransformSystemModule::ComposeLocalMatrix(position, invalid, scale); },
             "invalid composition rejected");
 }
@@ -143,16 +184,16 @@ void CheckHierarchy(Scene& scene)
     {
         const glm::quat rootRotation = glm::quat(glm::vec3{0.3F, pitch, -0.4F});
         root.SetLocalRotation(rootRotation);
-        RequireMatrix(grandchild.GetWorldMatrix(), previousWorld, "setter waits for World update");
+        CheckMatrix(grandchild.GetWorldMatrix(), previousWorld, "setter waits for World update");
         TransformSystemModule::UpdateWorldTransforms(scene.GetWorld());
         const glm::mat4 rootExpected = ReferenceMatrix(rootPosition, rootRotation, glm::vec3{1.0F});
         const glm::mat4 childExpected = rootExpected * ReferenceMatrix(childPosition, childRotation, glm::vec3{1.0F});
         const glm::mat4 grandchildExpected = childExpected *
             ReferenceMatrix(grandchildPosition, grandchildRotation, glm::vec3{1.0F});
-        RequireMatrix(root.GetWorldMatrix(), rootExpected, "root World rotation");
-        RequireMatrix(grouping.GetWorldMatrix(), rootExpected, "grouping propagates parent World");
-        RequireMatrix(child.GetWorldMatrix(), childExpected, "child World pose");
-        RequireMatrix(grandchild.GetWorldMatrix(), grandchildExpected, "grandchild World pose");
+        CheckMatrix(root.GetWorldMatrix(), rootExpected, "root World rotation");
+        CheckMatrix(grouping.GetWorldMatrix(), rootExpected, "grouping propagates parent World");
+        CheckMatrix(child.GetWorldMatrix(), childExpected, "child World pose");
+        CheckMatrix(grandchild.GetWorldMatrix(), grandchildExpected, "grandchild World pose");
         previousWorld = grandchildExpected;
     }
 }
@@ -180,10 +221,10 @@ void CheckCorruptedComponent()
         stored.x = invalid.x;
         stored.y = invalid.y;
         stored.z = invalid.z;
-        ExpectThrows<std::invalid_argument>([&] { TransformSystemModule::UpdateWorldTransforms(world); },
+        CheckThrows<std::invalid_argument>([&] { TransformSystemModule::UpdateWorldTransforms(world); },
             "corrupted ECS rotation rejected before matrix generation");
-        RequireMatrix(entity.GetWorldMatrix(), worldBefore, "corrupted rotation preserves World cache");
-        RequireMatrix(entity.GetHandle().get<TransformMatrix, Local>(), localBefore,
+        CheckMatrix(entity.GetWorldMatrix(), worldBefore, "corrupted rotation preserves World cache");
+        CheckMatrix(entity.GetHandle().get<TransformMatrix, Local>(), localBefore,
             "corrupted rotation preserves Local matrix cache");
         entity.SetLocalRotation(valid);
     }
@@ -195,24 +236,29 @@ void CheckCorruptedComponent()
  * @details 정규화, 잘못된 입력 거부, q와 -q의 방향 동등성 및 pitch 90도 부근의 자세 보존을 검사한다.
  * Scene은 World보다 먼저 파괴돼 root 아래의 물체를 정리하며, 이 테스트는 OpenGL context를 만들지 않는다.
  */
-int main()
+TEST(QuaternionTransform, DefaultsAndNormalization)
 {
-    try
-    {
-        flecs::world world;
-        world.import<TransformSystemModule>();
-        Scene scene(world);
-        Require(scene.GetSceneRoot().is_alive(), "Scene owns a live hierarchy root");
-        CheckDefaultsAndNormalization(scene);
-        CheckComposition();
-        CheckHierarchy(scene);
-        CheckCorruptedComponent();
-        std::cout << "Quaternion transform normalization, rejection and hierarchy checks passed\n";
-        return 0;
-    }
-    catch (const std::exception& error)
-    {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
+    flecs::world world;
+    world.import<TransformSystemModule>();
+    Scene scene(world);
+    Check(scene.GetSceneRoot().is_alive(), "Scene owns a live hierarchy root");
+    CheckDefaultsAndNormalization(scene);
+}
+
+TEST(QuaternionTransform, Composition)
+{
+    CheckComposition();
+}
+
+TEST(QuaternionTransform, HierarchyPropagation)
+{
+    flecs::world world;
+    world.import<TransformSystemModule>();
+    Scene scene(world);
+    CheckHierarchy(scene);
+}
+
+TEST(QuaternionTransform, CorruptedComponentIsRejected)
+{
+    CheckCorruptedComponent();
 }

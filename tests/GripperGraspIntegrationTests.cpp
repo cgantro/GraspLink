@@ -29,11 +29,52 @@
 #include <vector>
 #include <limits>
 
+#include <gtest/gtest.h>
+
 namespace
 {
 using namespace grasplink::physics;
 using grasplink::robotics::backends::simulation::SimGripperController;
 using grasplink::robotics::models::robotiq::kTwoF85;
+
+struct TestCheckFailure {};
+
+void CheckImpl(bool condition, const std::string& label, const char* file, int line)
+{
+    if (condition) return;
+    ADD_FAILURE_AT(file, line) << label;
+    throw TestCheckFailure{};
+}
+
+void CheckNearImpl(double actual, double expected, double tolerance, const std::string& label,
+    const char* file, int line)
+{
+    if (std::isfinite(actual) && std::abs(actual - expected) <= tolerance) return;
+    const std::string detail = label + ": actual=" + std::to_string(actual) +
+        ", expected=" + std::to_string(expected) + ", tolerance=" + std::to_string(tolerance);
+    ADD_FAILURE_AT(file, line) << detail;
+    throw TestCheckFailure{};
+}
+
+#define Check(...) CheckImpl(__VA_ARGS__, __FILE__, __LINE__)
+#define CheckNear(...) CheckNearImpl(__VA_ARGS__, __FILE__, __LINE__)
+
+template<typename Exception, typename Function>
+void CheckThrows(Function&& function, const std::string& label)
+{
+    try
+    {
+        function();
+        Check(false, label);
+    }
+    catch (const TestCheckFailure&)
+    {
+        throw;
+    }
+    catch (const Exception&)
+    {
+    }
+}
 
 CollisionShapeDescription SphereLikeHull(float radius)
 {
@@ -84,10 +125,10 @@ struct Fixture
         object = Box(*scene, "Object", {0.0F, 1.0F, 0.0F}, {0.1F, 0.1F, 0.1F}, BodyMotionType::Dynamic);
         TransformSystemModule::UpdateWorldTransforms(world);
         system = CreateTestPhysicsSystem(world, physics);
-        Require(controller.Connect().Ok() && controller.Activate().Ok(), "controller activated");
-        Require(controller.Command({255, 255, 128}).Ok(), "close command accepted");
+        Check(controller.Connect().Ok() && controller.Activate().Ok(), "controller activated");
+        Check(controller.Command({255, 255, 128}).Ok(), "close command accepted");
         grasp = std::make_unique<grasplink::simulation::GripperGraspAdapter>(physics, *system, controller);
-        Require(grasp->Bind(root), "synthetic finger proxies bound");
+        Check(grasp->Bind(root), "synthetic finger proxies bound");
     }
 
     Entity Box(Scene& scene, const char* name, glm::vec3 position, glm::vec3 halfSize, BodyMotionType type)
@@ -117,50 +158,50 @@ void CheckCarryAndOpen()
 {
     Fixture fixture;
     fixture.Step();
-    Require(fixture.grasp->GetState().leftContact && fixture.grasp->GetState().rightContact, "both real Jolt fingers contact object");
-    Require(fixture.grasp->GetState().grasped, "bilateral opposing contacts create grasp");
-    Require(fixture.controller.GetState().objectStatus == grasplink::robotics::GripperObjectStatus::ContactWhileClosing,
+    Check(fixture.grasp->GetState().leftContact && fixture.grasp->GetState().rightContact, "both real Jolt fingers contact object");
+    Check(fixture.grasp->GetState().grasped, "bilateral opposing contacts create grasp");
+    Check(fixture.controller.GetState().objectStatus == grasplink::robotics::GripperObjectStatus::ContactWhileClosing,
         "contact stops closing controller");
     const double closure = fixture.controller.GetState().closureFraction;
-    Require(fixture.controller.Command({255, 255, 128}).Ok(), "repeated close accepted");
+    Check(fixture.controller.Command({255, 255, 128}).Ok(), "repeated close accepted");
     fixture.Step(3);
-    RequireNear(fixture.controller.GetState().closureFraction, closure, 0.0, "repeated close preserves contact stop");
+    CheckNear(fixture.controller.GetState().closureFraction, closure, 0.0, "repeated close preserves contact stop");
     const float initialY = fixture.object.GetLocalPosition().y;
     for (int tick = 1; tick <= 100; ++tick)
     {
         fixture.root.SetLocalPosition({0.0F, 0.002F * tick, 0.0F});
         fixture.Step();
     }
-    RequireNear(fixture.object.GetLocalPosition().y - initialY, 0.2, 0.015, "dynamic object follows moving gripper via constraint");
-    Require(fixture.controller.Command({0, 255, 128}).Ok(), "open command accepted");
+    CheckNear(fixture.object.GetLocalPosition().y - initialY, 0.2, 0.015, "dynamic object follows moving gripper via constraint");
+    Check(fixture.controller.Command({0, 255, 128}).Ok(), "open command accepted");
     fixture.grasp->BeforePhysicsStep();
-    Require(!fixture.grasp->GetState().grasped, "opening releases before physics");
+    Check(!fixture.grasp->GetState().grasped, "opening releases before physics");
     const float releasedY = fixture.object.GetLocalPosition().y;
     fixture.Step(150);
-    Require(fixture.object.GetLocalPosition().y < releasedY - 0.5F, "released object falls under gravity");
+    Check(fixture.object.GetLocalPosition().y < releasedY - 0.5F, "released object falls under gravity");
 }
 
 void CheckRejectedContacts()
 {
     Fixture unilateral(true);
     unilateral.Step();
-    Require(unilateral.grasp->GetState().leftContact && !unilateral.grasp->GetState().rightContact, "unilateral real contact reported");
-    Require(!unilateral.grasp->GetState().grasped, "unilateral contact cannot grasp");
-    Require(unilateral.controller.GetState().mode == grasplink::robotics::GripperMode::Moving,
+    Check(unilateral.grasp->GetState().leftContact && !unilateral.grasp->GetState().rightContact, "unilateral real contact reported");
+    Check(!unilateral.grasp->GetState().grasped, "unilateral contact cannot grasp");
+    Check(unilateral.controller.GetState().mode == grasplink::robotics::GripperMode::Moving,
         "one finger touching first does not stop the other finger from closing");
     Fixture sameSide(false, true);
     sameSide.Step();
-    Require(sameSide.grasp->GetState().leftContact && sameSide.grasp->GetState().rightContact, "both fingers hit same object side");
-    Require(!sameSide.grasp->GetState().grasped, "same direction contacts cannot grasp");
+    Check(sameSide.grasp->GetState().leftContact && sameSide.grasp->GetState().rightContact, "both fingers hit same object side");
+    Check(!sameSide.grasp->GetState().grasped, "same direction contacts cannot grasp");
 
     Fixture differentObjects;
     differentObjects.object.Remove<Colliders>();
     differentObjects.Box(*differentObjects.scene, "LeftObject", {-0.07F, 1.0F, 0.0F}, {0.03F, 0.1F, 0.1F}, BodyMotionType::Dynamic);
     differentObjects.Box(*differentObjects.scene, "RightObject", {0.07F, 1.0F, 0.0F}, {0.03F, 0.1F, 0.1F}, BodyMotionType::Dynamic);
     differentObjects.Step();
-    Require(differentObjects.grasp->GetState().leftContact && differentObjects.grasp->GetState().rightContact,
+    Check(differentObjects.grasp->GetState().leftContact && differentObjects.grasp->GetState().rightContact,
         "both fingers contact different objects");
-    Require(!differentObjects.grasp->GetState().grasped, "different object contacts cannot create grasp");
+    Check(!differentObjects.grasp->GetState().grasped, "different object contacts cannot create grasp");
 }
 
 void CheckLifetimeAndRelease()
@@ -168,46 +209,46 @@ void CheckLifetimeAndRelease()
     Fixture deleted;
     deleted.Step();
     const auto handle = deleted.grasp->GetState().object;
-    Require(handle.IsValid(), "held object has valid handle");
+    Check(handle.IsValid(), "held object has valid handle");
     deleted.object.Destroy();
-    Require(!deleted.physics.IsBodyValid(handle), "deleted entity destroys held body");
+    Check(!deleted.physics.IsBodyValid(handle), "deleted entity destroys held body");
     deleted.Step();
-    Require(!deleted.grasp->GetState().grasped, "deleted body clears grasp safely");
+    Check(!deleted.grasp->GetState().grasped, "deleted body clears grasp safely");
 
     Fixture rebuilt;
     rebuilt.Step();
     const auto oldTip = rebuilt.system->GetBodyHandle(rebuilt.left.GetHandle());
     rebuilt.left.set<Colliders>({{physics_colliders::Box({0.05F, 0.2F, 0.15F})}});
     rebuilt.Step();
-    Require(!rebuilt.physics.IsBodyValid(oldTip), "collider replacement invalidates tip body");
-    Require(!rebuilt.grasp->GetState().grasped, "tip body rebuild releases old grasp");
+    Check(!rebuilt.physics.IsBodyValid(oldTip), "collider replacement invalidates tip body");
+    Check(!rebuilt.grasp->GetState().grasped, "tip body rebuild releases old grasp");
 
     Fixture reset;
     reset.Step();
-    Require(reset.controller.Reset().Ok() && reset.controller.Activate().Ok(), "reset followed immediately by activate");
+    Check(reset.controller.Reset().Ok() && reset.controller.Activate().Ok(), "reset followed immediately by activate");
     reset.grasp->BeforePhysicsStep();
-    Require(!reset.grasp->GetState().grasped, "reset release survives immediate activate");
+    Check(!reset.grasp->GetState().grasped, "reset release survives immediate activate");
 
     Fixture disconnected;
     disconnected.Step();
     disconnected.controller.Disconnect();
     disconnected.grasp->BeforePhysicsStep();
-    Require(!disconnected.grasp->GetState().grasped, "disconnect releases grasp");
+    Check(!disconnected.grasp->GetState().grasped, "disconnect releases grasp");
 
     Fixture manual;
     manual.Step();
     manual.grasp->Release();
     manual.Step();
-    Require(!manual.grasp->GetState().grasped, "manual release does not immediately regrasp old close request");
-    Require(manual.controller.Command({255, 255, 128}).Ok(), "fresh close rearms grasp");
+    Check(!manual.grasp->GetState().grasped, "manual release does not immediately regrasp old close request");
+    Check(manual.controller.Command({255, 255, 128}).Ok(), "fresh close rearms grasp");
     manual.Step();
-    Require(manual.grasp->GetState().grasped, "fresh command can grasp again");
+    Check(manual.grasp->GetState().grasped, "fresh command can grasp again");
 
     Fixture replacedScene;
     replacedScene.Step();
     replacedScene.scene.reset();
     replacedScene.grasp->BeforePhysicsStep();
-    Require(!replacedScene.grasp->GetState().grasped, "scene replacement removes body connections safely");
+    Check(!replacedScene.grasp->GetState().grasped, "scene replacement removes body connections safely");
 }
 
 void CheckSleepingAndHandleOwnership()
@@ -223,26 +264,26 @@ void CheckSleepingAndHandleOwnership()
     box.halfExtentsMeters = {0.1F, 0.1F, 0.1F};
     const auto falling = world.CreateBox(box);
     for (int tick = 0; tick < 900; ++tick) world.Step(0.004);
-    Require(!world.GetContacts().empty(), "resting sleeping body retains contact snapshot");
+    Check(!world.GetContacts().empty(), "resting sleeping body retains contact snapshot");
     floor.transform.position.x = 5.0F;
     world.SetBodyTransform(ground, floor.transform);
     world.Step(0.004);
-    Require(world.GetContacts().empty(), "teleported sleeping support loses old contact snapshot");
+    Check(world.GetContacts().empty(), "teleported sleeping support loses old contact snapshot");
 
     PhysicsWorld other;
-    Require(!other.IsBodyValid(falling), "foreign world body handle rejected");
-    ExpectThrows<std::invalid_argument>([&] { other.CreateFixedConstraint(ground, falling); }, "foreign constraint handles rejected");
+    Check(!other.IsBodyValid(falling), "foreign world body handle rejected");
+    CheckThrows<std::invalid_argument>([&] { other.CreateFixedConstraint(ground, falling); }, "foreign constraint handles rejected");
     BoxBodyDescription anchorDescription;
     anchorDescription.motionType = BodyMotionType::Kinematic;
     anchorDescription.collisionLayer = CollisionLayer::Gripper;
     anchorDescription.transform.position = {3.0F, 2.0F, 0.0F};
     const auto anchor = world.CreateBox(anchorDescription);
     const auto connection = world.CreateFixedConstraint(anchor, falling);
-    Require(world.IsConstraintValid(connection) && !other.IsConstraintValid(connection), "constraint handle includes owner world");
+    Check(world.IsConstraintValid(connection) && !other.IsConstraintValid(connection), "constraint handle includes owner world");
     other.DestroyConstraint(connection);
-    Require(world.IsConstraintValid(connection), "foreign release preserves owner constraint");
+    Check(world.IsConstraintValid(connection), "foreign release preserves owner constraint");
     world.DestroyBody(anchor);
-    Require(!world.IsConstraintValid(connection), "anchor deletion removes constraint first");
+    Check(!world.IsConstraintValid(connection), "anchor deletion removes constraint first");
     world.DestroyConstraint(connection);
 }
 
@@ -261,11 +302,11 @@ void CheckGripperEnvironmentOverlapQuery()
     gripper.halfExtentsMeters = {0.1F, 0.1F, 0.1F};
     gripper.transform.position = {0.0F, 0.3F, 0.0F};
     const auto gripperHandle = world.CreateBox(gripper);
-    Require(!world.OverlapsEnvironmentAt(gripperHandle, gripper.transform), "gripper starts above environment without overlap");
+    Check(!world.OverlapsEnvironmentAt(gripperHandle, gripper.transform), "gripper starts above environment without overlap");
     gripper.transform.position.y = 0.15F;
-    Require(world.OverlapsEnvironmentAt(gripperHandle, gripper.transform),
+    Check(world.OverlapsEnvironmentAt(gripperHandle, gripper.transform),
         "kinematic gripper target overlapping the floor is detected before movement");
-    Require(world.GetCollisionLayer(floorHandle) == CollisionLayer::Environment,
+    Check(world.GetCollisionLayer(floorHandle) == CollisionLayer::Environment,
         "floor remains classified as the environment");
 }
 
@@ -303,8 +344,8 @@ void CheckOffsetCenterOfMassConstraint()
     for (int tick = 0; tick < 10; ++tick) world.Step(0.004);
     const glm::vec3 expected = target.position + target.rotation * (objectDescription.transform.position - anchorDescription.transform.position);
     const auto actual = world.GetBodyTransform(object);
-    RequireNear(glm::length(actual.position - expected), 0.0, 0.008, "fixed grasp preserves model origins despite offset COM");
-    RequireNear(std::abs(glm::dot(actual.rotation, target.rotation)), 1.0, 0.002, "fixed grasp preserves relative rotation");
+    CheckNear(glm::length(actual.position - expected), 0.0, 0.008, "fixed grasp preserves model origins despite offset COM");
+    CheckNear(std::abs(glm::dot(actual.rotation, target.rotation)), 1.0, 0.002, "fixed grasp preserves relative rotation");
     world.DestroyConstraint(connection);
 }
 
@@ -318,7 +359,7 @@ void CheckAuthoredGripperContacts()
     int gripperIndex = -1;
     for (std::size_t node = 0; node < model.nodes.size(); ++node)
         if (model.nodes[node].name == "Gripper") gripperIndex = static_cast<int>(node);
-    Require(gripperIndex >= 0, "authored GLB contains Gripper");
+    Check(gripperIndex >= 0, "authored GLB contains Gripper");
     std::function<Entity(int, const Entity&)> createTree = [&](int index, const Entity& parent)
     {
         const auto& node = model.nodes.at(static_cast<std::size_t>(index));
@@ -332,7 +373,7 @@ void CheckAuthoredGripperContacts()
     };
     Entity gripper = createTree(gripperIndex, root);
     SimGripperController controller{kTwoF85};
-    Require(controller.Connect().Ok() && controller.Activate().Ok() && controller.Command({255, 255, 128}).Ok(),
+    Check(controller.Connect().Ok() && controller.Activate().Ok() && controller.Command({255, 255, 128}).Ok(),
         "authored gripper closing command accepted");
     controller.Update(kTwoF85.nominalMasterClosedRadians * 0.5);
     grasplink::robotics::kinematics::GripperKinematics math{kTwoF85};
@@ -346,12 +387,12 @@ void CheckAuthoredGripperContacts()
     auto hullPoints = [&](const char* name)
     {
         Entity proxy = root.FindChildByNameRecursive(name);
-        Require(static_cast<bool>(proxy), "authored finger collision proxy exists");
+        Check(static_cast<bool>(proxy), "authored finger collision proxy exists");
         std::vector<glm::vec3> points;
         for (const auto& shape : proxy.Get<Colliders>().shapes)
             for (const auto& point : shape.pointsMeters)
                 points.push_back(glm::vec3(proxy.GetWorldMatrix() * glm::vec4(point, 1.0F)));
-        Require(!points.empty(), "authored finger hull has vertices");
+        Check(!points.empty(), "authored finger hull has vertices");
         return points;
     };
     const auto left = hullPoints("LeftFingerTipJoint_CollisionProxy");
@@ -372,7 +413,7 @@ void CheckAuthoredGripperContacts()
     glm::vec3 center = (leftCenter + rightCenter) * 0.5F;
     center += axis * ((leftFace + rightFace) * 0.5F - glm::dot(center, axis));
     const float radius = (rightFace - leftFace) * 0.5F + 0.006F;
-    Require(radius > 0.0F, "authored open tips have positive test object half-size");
+    Check(radius > 0.0F, "authored open tips have positive test object half-size");
     Entity object = scene.CreateEntity("AuthoredGripObject");
     object.SetLocalPosition(center);
     object.set<RigidBody>({BodyMotionType::Dynamic, CollisionLayer::DynamicObject})
@@ -380,7 +421,7 @@ void CheckAuthoredGripperContacts()
     TransformSystemModule::UpdateWorldTransforms(world);
     grasplink::simulation::PhysicsSystemModule system{world, physics};
     grasplink::simulation::GripperGraspAdapter grasp{physics, system, controller};
-    Require(grasp.Bind(root), "authored proxies bind grasp adapter");
+    Check(grasp.Bind(root), "authored proxies bind grasp adapter");
     auto step = [&]
     {
         grasp.BeforePhysicsStep();
@@ -392,7 +433,7 @@ void CheckAuthoredGripperContacts()
         TransformSystemModule::UpdateWorldTransforms(world);
     };
     step();
-    Require(grasp.GetState().leftContact && grasp.GetState().rightContact && grasp.GetState().grasped,
+    Check(grasp.GetState().leftContact && grasp.GetState().rightContact && grasp.GetState().grasped,
         "actual GLB hull contacts create bilateral grasp");
     const glm::vec3 initial = object.GetLocalPosition();
     for (int tick = 1; tick <= 60; ++tick)
@@ -400,11 +441,11 @@ void CheckAuthoredGripperContacts()
         root.SetLocalPosition({0.0F, 0.001F * tick, 0.0F});
         step();
     }
-    RequireNear(object.GetLocalPosition().y - initial.y, 0.06, 0.015, "actual GLB grasp carries dynamic object");
-    Require(controller.Command({0, 255, 128}).Ok(), "authored gripper opens");
+    CheckNear(object.GetLocalPosition().y - initial.y, 0.06, 0.015, "actual GLB grasp carries dynamic object");
+    Check(controller.Command({0, 255, 128}).Ok(), "authored gripper opens");
     step();
-    Require(!grasp.GetState().grasped, "actual GLB opening removes constraint");
-    Require(controller.GetState().goToActive, "separating authored fingers do not stop on previous closing contact");
+    Check(!grasp.GetState().grasped, "actual GLB opening removes constraint");
+    Check(controller.GetState().goToActive, "separating authored fingers do not stop on previous closing contact");
 }
 
 /**
@@ -421,7 +462,7 @@ void CheckRobotControllerCarriesAuthoredGrasp()
     PhysicsWorld physics;
     Scene scene{world};
     const ModelResource model = LoadTestGlb("HCR12A_2F-85.glb");
-    Require(model.rootNodeIndex >= 0, "full robot GLB has authored root");
+    Check(model.rootNodeIndex >= 0, "full robot GLB has authored root");
     std::function<Entity(int, const Entity&)> createTree = [&](int index, const Entity& parent)
     {
         const auto& node = model.nodes.at(static_cast<std::size_t>(index));
@@ -435,7 +476,7 @@ void CheckRobotControllerCarriesAuthoredGrasp()
     };
     Entity root = createTree(model.rootNodeIndex, Entity{scene.GetSceneRoot()});
     Entity gripper = root.FindChildByNameRecursive("Gripper");
-    Require(static_cast<bool>(gripper), "full robot GLB includes gripper hierarchy");
+    Check(static_cast<bool>(gripper), "full robot GLB includes gripper hierarchy");
     TransformSystemModule::UpdateWorldTransforms(world);
     const Entity toolFrame = root.FindChildByNameRecursive("ToolFrame");
     const glm::mat4 worldToGripper = glm::inverse(gripper.GetWorldMatrix());
@@ -445,7 +486,7 @@ void CheckRobotControllerCarriesAuthoredGrasp()
     {
         const auto node = std::find_if(model.nodes.begin(), model.nodes.end(), [name](const NodeData& value) { return value.name == name; });
         const Entity meshEntity = root.FindChildByNameRecursive(name);
-        Require(node != model.nodes.end() && meshEntity.IsValid(), "viewer TCP fingertip mesh exists");
+        Check(node != model.nodes.end() && meshEntity.IsValid(), "viewer TCP fingertip mesh exists");
         glm::vec3 minimum(std::numeric_limits<float>::max());
         glm::vec3 maximum(std::numeric_limits<float>::lowest());
         const glm::mat4 meshToGripper = worldToGripper * meshEntity.GetWorldMatrix();
@@ -480,9 +521,9 @@ void CheckRobotControllerCarriesAuthoredGrasp()
     approachTarget.orientationXyzw = {faceDown.x, faceDown.y, faceDown.z, faceDown.w};
     const glm::dvec3 jawAxis = faceDown * glm::dvec3{1.0, 0.0, 0.0};
     const glm::dvec3 approachAxis = faceDown * glm::dvec3{0.0, 1.0, 0.0};
-    Require(std::abs(jawAxis.y) < 1.0e-6 && std::abs(approachAxis.y + 1.0) < 1.0e-6,
+    Check(std::abs(jawAxis.y) < 1.0e-6 && std::abs(approachAxis.y + 1.0) < 1.0e-6,
         "face-down orientation keeps the jaw opening horizontal and points the approach axis toward the floor");
-    Require(viewerIk.Solve(approachTarget, {0.0, 0.0, 0.0, 0.0, 0.0, 0.0}).Ok(),
+    Check(viewerIk.Solve(approachTarget, {0.0, 0.0, 0.0, 0.0, 0.0, 0.0}).Ok(),
         "face-down viewer gripper reaches the high approach point above the box");
     for (const glm::vec2 candidate : {glm::vec2{0.31F, 0.59F}, glm::vec2{0.31F, 0.71F},
              glm::vec2{0.39F, 0.59F}, glm::vec2{0.39F, 0.71F}, glm::vec2{0.10F, 0.65F}})
@@ -491,20 +532,20 @@ void CheckRobotControllerCarriesAuthoredGrasp()
         const glm::vec3 candidateInBase = glm::vec3(glm::inverse(root.GetWorldMatrix()) *
             glm::vec4{candidate.x, 0.276F, candidate.y, 1.0F});
         candidateTarget.positionMeters = {candidateInBase.x, candidateInBase.y, candidateInBase.z};
-        Require(viewerIk.Solve(candidateTarget, {0.0, 0.0, 0.0, 0.0, 0.0, 0.0}).Ok(),
+        Check(viewerIk.Solve(candidateTarget, {0.0, 0.0, 0.0, 0.0, 0.0, 0.0}).Ok(),
             "every random pickup boundary and the placement target is reachable from the home seed");
     }
     const models::Pose3 tcpOffset{{0.04, 0.0, 0.0}, {}};
     backends::simulation::SimRobotController robot{kHcr12a, tcpOffset};
     SimGripperController controller{kTwoF85};
-    Require(robot.Connect().Ok(), "full pipeline arm controller connected");
+    Check(robot.Connect().Ok(), "full pipeline arm controller connected");
     JointMoveCommand seed;
     seed.targetPositionRadians = {0.2, -0.35, 0.3, 0.2, -0.25, 0.1};
-    Require(robot.MoveJoint(seed).Ok(), "full pipeline regular pickup seed accepted");
+    Check(robot.MoveJoint(seed).Ok(), "full pipeline regular pickup seed accepted");
     // 실제 파지 물체를 생성하기 전에 정칙 관절 자세로 준비한다. 정칙 자세는 작은 TCP 이동에 안정적인 관절 해를 찾을 수 있는 시작 상태다.
     for (int tick = 0; tick < 2000 && robot.GetState().mode == RobotMode::Moving; ++tick) robot.Update(0.004);
-    Require(robot.GetState().mode == RobotMode::Idle, "full pipeline regular pickup seed reached");
-    Require(controller.Connect().Ok() && controller.Activate().Ok() && controller.Command({255, 255, 128}).Ok(),
+    Check(robot.GetState().mode == RobotMode::Idle, "full pipeline regular pickup seed reached");
+    Check(controller.Connect().Ok() && controller.Activate().Ok() && controller.Command({255, 255, 128}).Ok(),
         "full pipeline close command accepted");
     controller.Update(kTwoF85.nominalMasterClosedRadians * 0.5);
     kinematics::RobotKinematics robotMath{kHcr12a};
@@ -527,12 +568,12 @@ void CheckRobotControllerCarriesAuthoredGrasp()
     auto hullPoints = [&](const char* name)
     {
         Entity proxy = root.FindChildByNameRecursive(name);
-        Require(static_cast<bool>(proxy), "full pipeline authored finger proxy exists");
+        Check(static_cast<bool>(proxy), "full pipeline authored finger proxy exists");
         std::vector<glm::vec3> points;
         for (const auto& shape : proxy.Get<Colliders>().shapes)
             for (const auto& point : shape.pointsMeters)
                 points.push_back(glm::vec3(proxy.GetWorldMatrix() * glm::vec4(point, 1.0F)));
-        Require(!points.empty(), "full pipeline authored finger hull has vertices");
+        Check(!points.empty(), "full pipeline authored finger hull has vertices");
         return points;
     };
     const auto leftPoints = hullPoints("LeftFingerTipJoint_CollisionProxy");
@@ -553,7 +594,7 @@ void CheckRobotControllerCarriesAuthoredGrasp()
     glm::vec3 center = (leftCenter + rightCenter) * 0.5F;
     center += axis * ((leftFace + rightFace) * 0.5F - glm::dot(center, axis));
     const float radius = (rightFace - leftFace) * 0.5F + 0.006F;
-    Require(radius > 0.0F, "full pipeline test object half-size is positive");
+    Check(radius > 0.0F, "full pipeline test object half-size is positive");
     Entity object = scene.CreateEntity("RobotControllerHeldObject");
     object.SetLocalPosition(center);
     object.set<RigidBody>({BodyMotionType::Dynamic, CollisionLayer::DynamicObject})
@@ -561,7 +602,7 @@ void CheckRobotControllerCarriesAuthoredGrasp()
     TransformSystemModule::UpdateWorldTransforms(world);
     grasplink::simulation::PhysicsSystemModule system{world, physics};
     grasplink::simulation::GripperGraspAdapter grasp{physics, system, controller};
-    Require(grasp.Bind(root), "full pipeline grasp binds authored robot");
+    Check(grasp.Bind(root), "full pipeline grasp binds authored robot");
     auto step = [&]
     {
         // 앱과 같은 순서로 해제 확인, 두 Controller, FK, World 변환, Jolt 계산, 접촉 feedback을 실행한다.
@@ -574,18 +615,18 @@ void CheckRobotControllerCarriesAuthoredGrasp()
         TransformSystemModule::UpdateWorldTransforms(world);
     };
     step();
-    Require(grasp.GetState().leftContact && grasp.GetState().rightContact && grasp.GetState().grasped,
+    Check(grasp.GetState().leftContact && grasp.GetState().rightContact && grasp.GetState().grasped,
         "regular arm pickup pose creates genuine bilateral authored contact");
     const Entity baseProxy = root.FindChildByNameRecursive("Base_CollisionProxy");
-    Require(baseProxy.IsValid(), "robot base collision proxy exists for excluding its connected Link1 bearing");
+    Check(baseProxy.IsValid(), "robot base collision proxy exists for excluding its connected Link1 bearing");
     const auto baseBody = system.GetBodyHandle(baseProxy.GetHandle());
-    Require(baseBody.IsValid(), "robot base collision body exists before floor clearance checks");
+    Check(baseBody.IsValid(), "robot base collision body exists before floor clearance checks");
     for (const double clearance : {0.005, 0.010, 0.020, 0.025, 0.030, 0.040, 0.050})
     {
         CartesianPose candidate = approachTarget;
         candidate.positionMeters[1] = 0.026 + clearance;
         const auto solution = viewerIk.Solve(candidate, robot.GetState().jointPositionRadians);
-        Require(solution.Ok(), "face-down pickup height remains IK-reachable");
+        Check(solution.Ok(), "face-down pickup height remains IK-reachable");
         RobotState candidateState = robot.GetState();
         candidateState.jointPositionRadians = solution.jointPositionRadians;
         const auto& candidateKinematics = robotMath.Update(candidateState);
@@ -625,9 +666,9 @@ void CheckRobotControllerCarriesAuthoredGrasp()
             const auto children = entity.GetChildren();
             pending.insert(pending.end(), children.begin(), children.end());
         }
-        Require(gripperOverlaps == (clearance < 0.020),
+        Check(gripperOverlaps == (clearance < 0.020),
             "finger collision hulls overlap the floor below 20 mm clearance and clear it at 20 mm");
-        Require(!robotArmOverlaps,
+        Check(!robotArmOverlaps,
             "robot arm links clear the floor at every sampled pickup height after the Link1 bearing contact is excluded");
         applyPoses();
     }
@@ -644,60 +685,46 @@ void CheckRobotControllerCarriesAuthoredGrasp()
         for (; movingTicks < 2000 && robot.GetState().mode == RobotMode::Moving; ++movingTicks)
         {
             step();
-            Require(grasp.GetState().grasped, "arm Cartesian motion maintains actual grasp connection");
+            Check(grasp.GetState().grasped, "arm Cartesian motion maintains actual grasp connection");
             const auto anchorPose = physics.GetBodyTransform(anchorHandle);
             const auto objectPose = physics.GetBodyTransform(objectHandle);
             const glm::vec3 relativePosition = glm::inverse(anchorPose.rotation) * (objectPose.position - anchorPose.position);
             const glm::quat relativeRotation = glm::inverse(anchorPose.rotation) * objectPose.rotation;
-            RequireNear(glm::length(relativePosition - initialRelativePosition), 0.0, 0.012,
+            CheckNear(glm::length(relativePosition - initialRelativePosition), 0.0, 0.012,
                 "arm Cartesian motion preserves held object relative position");
-            RequireNear(std::abs(glm::dot(relativeRotation, initialRelativeRotation)), 1.0, 0.001,
+            CheckNear(std::abs(glm::dot(relativeRotation, initialRelativeRotation)), 1.0, 0.001,
                 "arm Cartesian motion preserves held object relative rotation");
         }
-        Require(movingTicks > 1, "Cartesian grasp motion executes intermediate simulation states");
-        Require(robot.GetState().mode == RobotMode::Idle, "Cartesian grasp motion finishes without runtime IK fault or stall");
+        Check(movingTicks > 1, "Cartesian grasp motion executes intermediate simulation states");
+        Check(robot.GetState().mode == RobotMode::Idle, "Cartesian grasp motion finishes without runtime IK fault or stall");
     };
     kinematics::DampedLeastSquaresIk targetMath{kHcr12a, tcpOffset};
     const CartesianPose poseTarget = targetMath.EvaluateTcp({0.23, -0.365, 0.32, 0.19, -0.24, 0.105});
-    Require(robot.MovePose(poseTarget, 0.25).Ok(), "held-object MovePose accepts regular reachable target");
+    Check(robot.MovePose(poseTarget, 0.25).Ok(), "held-object MovePose accepts regular reachable target");
     advanceHeldMotion();
     const CartesianPose linearTarget = targetMath.EvaluateTcp({0.25, -0.37, 0.34, 0.17, -0.23, 0.11});
-    Require(robot.MoveLinear({linearTarget, 0.025, 0.2}).Ok(), "held-object MoveLinear accepts regular reachable path");
+    Check(robot.MoveLinear({linearTarget, 0.025, 0.2}).Ok(), "held-object MoveLinear accepts regular reachable path");
     advanceHeldMotion();
-    Require(glm::length(physics.GetBodyTransform(anchorHandle).position - initialAnchor.position) > 0.005F,
+    Check(glm::length(physics.GetBodyTransform(anchorHandle).position - initialAnchor.position) > 0.005F,
         "Cartesian robot commands move actual gripper through scene");
-    Require(glm::length(physics.GetBodyTransform(objectHandle).position - initialObject.position) > 0.005F,
+    Check(glm::length(physics.GetBodyTransform(objectHandle).position - initialObject.position) > 0.005F,
         "Cartesian robot commands transport actual Dynamic object");
     const glm::vec3 rootOrigin = glm::vec3(root.GetWorldMatrix()[3]);
-    RequireNear(glm::length(rootOrigin - glm::vec3(model.nodes.at(static_cast<std::size_t>(model.rootNodeIndex)).translation)),
+    CheckNear(glm::length(rootOrigin - glm::vec3(model.nodes.at(static_cast<std::size_t>(model.rootNodeIndex)).translation)),
         0.0, 1.0e-6, "robot root placement stays unchanged during controller transport");
-    Require(controller.Command({0, 255, 128}).Ok(), "full pipeline open release accepted");
+    Check(controller.Command({0, 255, 128}).Ok(), "full pipeline open release accepted");
     grasp.BeforePhysicsStep();
-    Require(!grasp.GetState().grasped, "full pipeline open releases transported object before Jolt step");
+    Check(!grasp.GetState().grasped, "full pipeline open releases transported object before Jolt step");
     step();
-    Require(!grasp.GetState().grasped && physics.IsBodyValid(objectHandle), "transported object remains Dynamic after release");
+    Check(!grasp.GetState().grasped && physics.IsBodyValid(objectHandle), "transported object remains Dynamic after release");
 }
 }
 
-int main()
-{
-    try
-    {
-        CheckCarryAndOpen();
-        CheckRejectedContacts();
-        CheckLifetimeAndRelease();
-        CheckSleepingAndHandleOwnership();
-        CheckGripperEnvironmentOverlapQuery();
-        CheckOffsetCenterOfMassConstraint();
-        CheckAuthoredGripperContacts();
-        CheckRobotControllerCarriesAuthoredGrasp();
-        std::cout << "Gripper grasp integration tests passed\n";
-        return 0;
-    }
-    catch (const std::exception& error)
-    {
-        std::cerr << "Gripper grasp integration tests failed: " << error.what() << '\n';
-        return 1;
-    }
-}
-
+TEST(GripperGrasp, CarriesAndReleasesOnOpen) { CheckCarryAndOpen(); }
+TEST(GripperGrasp, RejectsInvalidContacts) { CheckRejectedContacts(); }
+TEST(GripperGrasp, ReleasesOnLifetimeAndControllerChanges) { CheckLifetimeAndRelease(); }
+TEST(GripperGrasp, TracksSleepingBodiesAndHandleOwnership) { CheckSleepingAndHandleOwnership(); }
+TEST(GripperGrasp, QueriesGripperEnvironmentOverlap) { CheckGripperEnvironmentOverlapQuery(); }
+TEST(GripperGrasp, ConstrainsOffsetCenterOfMass) { CheckOffsetCenterOfMassConstraint(); }
+TEST(GripperGrasp, UsesAuthoredGripperContacts) { CheckAuthoredGripperContacts(); }
+TEST(GripperGrasp, CarriesAuthoredGraspThroughRobotController) { CheckRobotControllerCarriesAuthoredGrasp(); }
