@@ -31,14 +31,24 @@ double HaltonValue(std::size_t index, std::size_t base)
     return value;
 }
 
-void BuildRestartSeed(std::size_t sample, const models::RobotSpecification& specification, JointVector& seed)
+void BuildRestartSeed(std::size_t sample, const JointVector& start,
+    const models::RobotSpecification& specification, JointVector& seed)
 {
     for (std::size_t joint = 0; joint < seed.size(); ++joint)
     {
         const auto& limits = specification.joints[joint];
-        const double fraction = HaltonValue(sample, kRestartPrimeBases[joint % kRestartPrimeBases.size()]);
+        const double range = limits.maxPositionRadians - limits.minPositionRadians;
+        if (range <= 1e-12)
+        {
+            seed[joint] = start[joint];
+            continue;
+        }
+        const double startFraction = (start[joint] - limits.minPositionRadians) / range;
+        const double shiftedFraction = HaltonValue(sample,
+            kRestartPrimeBases[joint % kRestartPrimeBases.size()]) + startFraction - 0.5;
+        const double fraction = shiftedFraction - std::floor(shiftedFraction);
         seed[joint] = limits.minPositionRadians +
-            fraction * (limits.maxPositionRadians - limits.minPositionRadians);
+            fraction * range;
     }
 }
 
@@ -190,7 +200,7 @@ std::optional<kinematics::IkResult> SolveCollisionFreeIk(
         invalidity = startInvalidity;
         return std::nullopt;
     }
-    // 먼저 직전 자세를 seed로 풀어 연속성을 유지한다. 이 해가 없거나 경로가 충돌하면 대체 seed도 검사해 가장 적게 움직이는 안전한 해를 고른다.
+    // 먼저 직전 자세를 seed로 풀어 연속성을 유지한다. 다른 seed가 필요하면 시작 자세에서 관절 범위로 정규화한 변화량이 가장 작은 안전한 해를 고른다.
     auto preferred = inverse.SolveSingleSeed(target, start, options);
     if (preferred)
     {
@@ -268,7 +278,7 @@ std::optional<kinematics::IkResult> SolveCollisionFreeIk(
     JointVector restartSeed(start.size());
     for (std::size_t sample = 1; sample <= kIkRestartSeedCount; ++sample)
     {
-        BuildRestartSeed(sample, specification, restartSeed);
+        BuildRestartSeed(sample, start, specification, restartSeed);
         considerSolution(inverse.SolveSingleSeed(target, restartSeed, options));
     }
 

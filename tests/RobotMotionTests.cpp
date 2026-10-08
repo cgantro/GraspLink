@@ -689,7 +689,13 @@ void CheckLinearPathRestartsAfterLocalIkStall()
         16.5 * radiansPerDegree, 60.7 * radiansPerDegree, -9.6 * radiansPerDegree};
     DampedLeastSquaresIk inverse(models::hanwha::kHcr12a);
     SimRobotController controller(models::hanwha::kHcr12a);
-    ASSERT_TRUE((static_cast<bool>(controller.Connect()))) << "seed-restart line-path fixture connects at home";
+    ASSERT_TRUE((static_cast<bool>(controller.Connect()))) << "seed-restart line-path fixture connects";
+    JointMoveCommand startCommand;
+    startCommand.targetPositionRadians = {
+        130.0 * radiansPerDegree, -0.8, -0.1, 0.5, -0.4, 0.2};
+    ASSERT_TRUE((static_cast<bool>(controller.MoveJoint(startCommand)))) << "fixture starts on a nonzero J1 branch";
+    ASSERT_TRUE(AdvanceUntilIdle(controller, 0.004)) << "fixture reaches its nonzero J1 start posture";
+    const double initialJ1 = controller.GetStateView().jointPositionRadians[0];
 
     LinearPathMoveCommand command;
     command.targetPoses.push_back(inverse.EvaluateTcp(targetJoints));
@@ -699,13 +705,24 @@ void CheckLinearPathRestartsAfterLocalIkStall()
     command.maxAngularAccelerationRadiansPerSecondSquared = 120.0;
     const Result accepted = controller.MoveLinearPath(command);
     ASSERT_TRUE((static_cast<bool>(accepted))) << "deterministic restart seeds recover a reachable line-path sample: " + accepted.message;
-    ASSERT_TRUE(AdvanceUntilIdle(controller, 0.004)) << "restarted IK plan finishes without a runtime fault";
+    double previousJ1 = initialJ1;
+    double totalJ1Travel = 0.0;
+    for (int tick = 0; tick < 10000 && controller.GetStateView().mode == RobotMode::Moving; ++tick)
+    {
+        controller.Update(0.004);
+        const double currentJ1 = controller.GetStateView().jointPositionRadians[0];
+        totalJ1Travel += std::abs(currentJ1 - previousJ1);
+        previousJ1 = currentJ1;
+    }
+    ASSERT_EQ(controller.GetStateView().mode, RobotMode::Idle) << "restarted IK plan finishes without a runtime fault";
     const RobotState finalState = controller.GetState();
     ASSERT_TRUE(finalState.tcpPoseValid) << "completed line path reports a valid TCP pose";
     ASSERT_LT(PositionDistance(finalState.tcpPose, command.targetPoses.back()), 2e-5)
         << "restarted IK plan reaches its target position";
     ASSERT_LT(OrientationDistance(finalState.tcpPose, command.targetPoses.back()), 2e-4)
         << "restarted IK plan reaches its target orientation";
+    ASSERT_LE(totalJ1Travel, std::abs(finalState.jointPositionRadians[0] - initialJ1) + 0.5)
+        << "fallback IK does not add a detour toward the J1 zero position";
 }
 
 void CheckStopRetargetAndDisconnect()
