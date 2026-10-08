@@ -128,7 +128,7 @@ private:
     // 모델의 Mesh, Material, Texture를 GPU 자원으로 올리고 공유한다.
     std::unique_ptr<AssetManager> m_AssetManager;
 
-    // Collider 추출용 CPU 데이터와 업로드된 GPU Mesh를 함께 공유한다. Context보다 먼저 해제한다.
+    // Collider 추출에 필요한 원본 CPU 정점 자료를 보관한다.
     ModelResource m_RobotModel;
 
     // 로봇 모델과 디버그 상자 렌더링에 함께 사용하는 Shader다.

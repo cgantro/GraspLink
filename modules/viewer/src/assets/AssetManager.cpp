@@ -18,7 +18,7 @@ AssetManager::AssetManager()
         0.8F);
 }
 
-void AssetManager::UploadModel(ModelResource& model)
+void AssetManager::UploadModel(const ModelResource& model)
 {
     // 이미지, 재질, 형상 순서로 올린다. 뒤에 처리할 데이터가 앞서 만든 자원을 번호로 찾기 때문이다.
 
@@ -61,12 +61,11 @@ void AssetManager::UploadModel(ModelResource& model)
         materials_.emplace(materialData.uniqueID, std::move(material));
     }
 
-    for (MeshData& meshData : model.meshes)
+    for (const MeshData& meshData : model.meshes)
     {
         const auto existing = meshes_.find(meshData.uniqueID);
         if (existing != meshes_.end())
         {
-            meshData.gpuMesh = existing->second;
             continue;
         }
 
@@ -87,10 +86,15 @@ void AssetManager::UploadModel(ModelResource& model)
             meshData.indices.data(),
             static_cast<std::uint32_t>(meshData.indices.size()));
 
-        // ModelResource도 GPU 형상을 공유한다. PrefabFactory가 같은 참조를 Entity에 복사해도 모델이 형상을 계속 보유한다.
-        meshData.gpuMesh = gpuMesh;
         meshes_.emplace(meshData.uniqueID, std::move(gpuMesh));
     }
+}
+
+std::shared_ptr<Mesh> AssetManager::GetMesh(ResourceID id) const
+{
+    const auto iterator = meshes_.find(id);
+    if (iterator == meshes_.end()) return nullptr;
+    return iterator->second;
 }
 
 std::shared_ptr<Material> AssetManager::GetMaterial(ResourceID id) const

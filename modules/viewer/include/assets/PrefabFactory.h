@@ -29,7 +29,7 @@ namespace prefab_factory
 /**
  * @brief 모델 부품 Entity를 만들고 최상위 부품을 가리키는 wrapper를 반환한다.
  * @param scene Entity를 추가할 활성 장면. 장면이 Entity와 관계의 수명을 관리한다.
- * @param model GLB에서 읽은 뒤 AssetManager::UploadModel로 GPU 자료를 준비한 모델.
+ * @param model GLB에서 읽은 CPU 자료. 각 GPU Mesh는 AssetManager의 자원 번호로 찾는다.
  * @param assets 자원 번호로 GPU 형상과 재질을 찾는 관리자.
  * @param shader 만들어지는 모든 표면이 사용할 화면 그리기 프로그램.
  * @return 선택된 최상위 부품을 가리키는 Entity wrapper.

@@ -585,8 +585,6 @@ void ViewerApp::Shutdown()
     m_World.reset();
     m_PhysicsWorld.reset();
 
-    // ModelResource가 GPU Mesh를 공유하므로 마지막 참조를 OpenGL Context가 살아 있을 때 해제해야 Mesh 소멸자가 안전하게 동작한다.
-    m_RobotModel = {};
     m_AssetManager.reset();
     m_RobotShader.reset();
 

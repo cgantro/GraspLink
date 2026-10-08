@@ -104,7 +104,7 @@ Physics는 render FPS와 독립된 고정 간격으로 진행한다. `IsSceneDri
 
 `ViewerApp`은 Flecs World와 PhysicsWorld를 소유한다. `ColliderOverlay`의 World query와 패널을 먼저 해제하고, 어댑터·Scene Entity를 제거한 뒤 Physics integration과 World를 정리한다. Flecs 제거 observer가 Entity의 Jolt Body도 삭제한다. `GuiModule`은 Window의 OpenGL context가 살아 있을 때 backend와 ImGui context를 정리한다.
 
-`Scene` creates one SceneRoot on construction and removes its child Entities on destruction. The Viewer uses one Scene for its lifetime; there is no scene transition or per-scene update lifecycle. Shutdown removes adapters and Scene Entities while physics observers are live, then removes the integration objects and World. `ModelResource` also holds strong GPU Mesh references; it, AssetManager, shaders, and the renderer are released before the Window destroys the OpenGL context.
+`Scene` creates one SceneRoot on construction and removes its child Entities on destruction. The Viewer uses one Scene for its lifetime; there is no scene transition or per-scene update lifecycle. Shutdown removes adapters and Scene Entities while physics observers are live, then removes the integration objects and World. CPU-only `ModelResource` data is separate from GPU ownership. `AssetManager` caches GPU Meshes by resource ID and Entities keep shared MeshFilter references, so GPU resources are released before the Window destroys the OpenGL context.
 
 The renderer keeps multisample antialiasing (MSAA) for smoother object edges and uses a single color pass. It does not allocate a shadow map or run a depth pass.
 

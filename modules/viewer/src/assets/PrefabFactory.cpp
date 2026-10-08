@@ -84,7 +84,7 @@ void ValidateModelBeforeSceneChanges(
             continue;
 
         const MeshData& mesh = model.meshes[static_cast<std::size_t>(node.meshIndex)];
-        if (!mesh.gpuMesh)
+        if (!assets.GetMesh(mesh.uniqueID))
             throw std::runtime_error("Mesh has not been uploaded: " + mesh.name);
         for (const SubMeshInfo& subMesh : mesh.subMeshes)
         {
@@ -107,7 +107,7 @@ void ValidateModelBeforeSceneChanges(
 
 /**
  * @brief 부품이 가리키는 형상과 그 표면별 그리기 범위를 Entity에 연결한다.
- * @details AssetManager::UploadModel은 삼각형 형상을 GPU에 올려 gpuMesh를 채운다. 한 형상의 표면 묶음들은 같은 GPU Mesh를 공유하고 indexStart/indexCount로 각자 사용할 연결 번호 구간을 고른다.
+ * @details AssetManager::UploadModel은 삼각형 형상을 GPU에 올리고, PrefabFactory는 형상 식별자로 이를 찾아 Entity에 공유한다. 한 형상의 표면 묶음들은 같은 GPU Mesh를 공유하고 indexStart/indexCount로 각자 사용할 연결 번호 구간을 고른다.
  * 시작 위치는 번호 배열의 원소 개수이며 Renderer가 GPU 명령을 만들 때 byte 위치로 바꾼다. 표면이 하나면 부품 Entity가 직접 그린다.
  * 여러 표면은 재질이나 연결 번호 범위가 다를 수 있어 자식 Entity로 나눈다.
  */
@@ -123,12 +123,13 @@ void CreateRenderEntities(
     if (node.meshIndex < 0) return;
 
     const MeshData& meshData = model.meshes[static_cast<std::size_t>(node.meshIndex)];
+    const std::shared_ptr<Mesh> gpuMesh = assets.GetMesh(meshData.uniqueID);
 
     if (meshData.subMeshes.size() == 1)
     {
         const SubMeshInfo& subMesh = meshData.subMeshes.front();
         nodeEntity
-            .set<MeshFilter>(MeshFilter{meshData.gpuMesh, subMesh.indexStart, subMesh.indexCount})
+            .set<MeshFilter>(MeshFilter{gpuMesh, subMesh.indexStart, subMesh.indexCount})
             .set<MeshRenderer>(MeshRenderer{
                 shader,
                 ResolveMaterial(model, assets, subMesh.defaultMaterialIndex),
@@ -157,7 +158,7 @@ void CreateRenderEntities(
 
         renderEntity
             .set<MeshFilter>(MeshFilter{
-                meshData.gpuMesh,
+                gpuMesh,
                 subMesh.indexStart,
                 subMesh.indexCount})
             .set<MeshRenderer>(MeshRenderer{

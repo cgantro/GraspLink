@@ -15,8 +15,8 @@ class Texture;
  * GltfLoader는 GLB 파일에서 삼각형 정점·픽셀·재질 데이터를 CPU 메모리로 읽는다. UploadModel은 픽셀과 정점 byte를 GPU로 복사해 Texture와 Mesh를 만든다.
  * PrefabFactory는 이 이미지와 형상을 장면 부품 및 Material(표면 색·빛 반응 정보)에 연결한다.
  * ResourceID 캐시는 같은 식별자를 가진 이미지·재질·형상을 다시 만들어 올리지 않고 재사용한다.
- * ModelResource와 장면 Entity도 형상 참조를 보유할 수 있어 캐시를 비워도 쓰는 곳이 남아 있으면 GPU 데이터는 유지된다.
- * 마지막 공유 참조를 놓으면 GPU 객체 삭제가 발생한다. 장면과 모델 및 이 관리자의 참조를 정리한 뒤 OpenGL context를 종료해야 한다.
+ * 형상은 이 관리자의 캐시와 Entity의 MeshFilter가 공유한다. CPU ModelResource가 해제되어도 Entity가 그리는 동안 GPU 데이터는 유지된다.
+ * 마지막 공유 참조를 놓으면 GPU 객체 삭제가 발생한다. 장면의 Entity와 이 관리자의 참조를 정리한 뒤 OpenGL context를 종료해야 한다.
  * OpenGL context는 GPU 명령을 실행할 상태와 자원 연결을 제공하는 환경이다. 단지 창이 존재하는 것만으로 충분하지 않고 업로드와 마지막 참조 해제 때 현재 스레드에서 활성화되어 있어야 한다.
  * 이 캐시는 동시에 여러 스레드에서 호출될 때 서로 보호하지 않는다.
  */
@@ -27,8 +27,8 @@ public:
     AssetManager();
 
     /**
-     * @brief 모델의 픽셀·꼭짓점 데이터를 그래픽 카드에 복사하고 재질과 형상 참조를 채운다.
-     * @param model GltfLoader가 읽은 모델 데이터. 성공한 형상은 gpuMesh에서도 공유한다.
+     * @brief 모델의 픽셀·꼭짓점 데이터를 그래픽 카드에 복사해 캐시에 저장한다.
+     * @param model GltfLoader가 읽은 CPU 모델 데이터.
      * @throws std::runtime_error 이미지 크기·채널이 잘못됐거나 재질이 요구한 기본색 이미지가 없거나, 정점·삼각형 번호 배열이 비었거나 형상 크기가 32-bit 번호 범위를 넘으면 발생한다.
      * @details Texture는 GPU가 표면 색을 읽을 이미지이고 Mesh는 삼각형 정점과 연결 번호를 담는 형상이다. 이미지, 재질, 형상 순서로 올려 뒤 단계가 앞 단계 자원을 찾는다.
      * 캐시에 같은 ResourceID가 있으면 다시 만들지 않고 공유한다. 픽셀 자료가 없는 이미지는 업로드하지 않으며 그런 이미지를 요구하는 재질은 오류다.
@@ -37,7 +37,10 @@ public:
      * sRGB는 모니터용 RGB 색을 GPU 조명 계산용 선형 색으로 읽게 하는 저장 형식이다. Material에는 기본색 이미지 참조만 연결하며 금속성·거칠기, 표면 방향, 빛 가림, 발광 이미지 참조는 유효한 ID로 설정하지 않는다.
      * GPU 업로드에는 OpenGL 명령 실행 환경(context)이 현재 스레드에서 활성화되어 있어야 한다.
      */
-    void UploadModel(ModelResource& model);
+    void UploadModel(const ModelResource& model);
+
+    /** @brief 형상 식별자에 해당하는 GPU Mesh를 찾는다. @return 업로드되지 않았으면 빈 공유 참조. */
+    std::shared_ptr<Mesh> GetMesh(ResourceID id) const;
 
     /** @brief 자원 식별자에 해당하는 Material(표면 색·빛 반응 정보)을 찾는다. @return 없으면 빈 공유 참조. */
     std::shared_ptr<Material> GetMaterial(ResourceID id) const;

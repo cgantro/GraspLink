@@ -142,7 +142,7 @@ if(BUILD_TESTING)
     endif()
   endfunction()
 
-  grasplink_add_test(grasplink_physics_tests PhysicsWorld tests/PhysicsWorldTests.cpp grasplink_physics)
+  grasplink_add_test(grasplink_physics_tests PhysicsWorld tests/PhysicsWorldTests.cpp grasplink_physics GTEST_DISCOVERY)
   grasplink_add_test(grasplink_control_tests ControlRuntime tests/ControlRuntimeTests.cpp grasplink_robotics GTEST_DISCOVERY)
   grasplink_add_test(grasplink_kinematics_tests RobotKinematics tests/RobotKinematicsTests.cpp grasplink_robotics GTEST_DISCOVERY)
   grasplink_add_test(grasplink_inverse_kinematics_tests RobotInverseKinematics tests/RobotInverseKinematicsTests.cpp grasplink_robotics GTEST_DISCOVERY)
@@ -165,22 +165,21 @@ option(
 grasplink_add_scene_dependencies()
 
 add_library(grasplink_scene STATIC
-  modules/viewer/src/Entity.cpp
-  modules/viewer/src/scene/Scene.cpp
-  modules/viewer/src/systems/TransformSystemModule.cpp
-  modules/viewer/src/robotics/RobotTransformAdapter.cpp
-  modules/viewer/src/robotics/GripperTransformAdapter.cpp
+  modules/scene/src/Entity.cpp
+  modules/scene/src/scene/Scene.cpp
+  modules/scene/src/systems/TransformSystemModule.cpp
+  modules/scene/src/robotics/RobotTransformAdapter.cpp
+  modules/scene/src/robotics/GripperTransformAdapter.cpp
 )
 target_include_directories(grasplink_scene PUBLIC
-  modules/viewer/include
-  modules/viewer/include/components
-  modules/viewer/include/systems
+  modules/scene/include
+  modules/scene/include/systems
 )
 target_link_libraries(grasplink_scene PUBLIC flecs::flecs_static glm::glm grasplink_robotics)
 target_compile_definitions(grasplink_scene PRIVATE GLM_ENABLE_EXPERIMENTAL)
 
-add_library(grasplink_model_data STATIC modules/viewer/src/assets/GltfLoader.cpp)
-target_include_directories(grasplink_model_data PUBLIC modules/viewer/include)
+add_library(grasplink_model_data STATIC modules/model/src/GltfLoader.cpp)
+target_include_directories(grasplink_model_data PUBLIC modules/model/include)
 target_link_libraries(grasplink_model_data PUBLIC glm::glm PRIVATE tinygltf)
 target_compile_definitions(grasplink_model_data PRIVATE GLM_ENABLE_EXPERIMENTAL)
 
@@ -204,15 +203,15 @@ target_link_libraries(grasplink_simulation PUBLIC
 )
 target_compile_definitions(grasplink_simulation PRIVATE GLM_ENABLE_EXPERIMENTAL)
 
-add_library(grasplink_application STATIC apps/viewer/PickPlaceMission.cpp)
-target_include_directories(grasplink_application PUBLIC apps/viewer)
+add_library(grasplink_application STATIC modules/application/src/PickPlaceMission.cpp)
+target_include_directories(grasplink_application PUBLIC modules/application/include)
 target_link_libraries(grasplink_application PUBLIC grasplink_robotics glm::glm)
 target_compile_definitions(grasplink_application PRIVATE GLM_ENABLE_EXPERIMENTAL)
 
 if(BUILD_TESTING)
   grasplink_add_test(grasplink_pick_place_mission_tests PickPlaceMission tests/PickPlaceMissionTests.cpp grasplink_application GTEST_DISCOVERY)
   grasplink_add_test(grasplink_random_scenario_tests RandomScenario tests/RandomScenarioTests.cpp grasplink_simulation GTEST_DISCOVERY)
-  grasplink_add_test(grasplink_gltf_tests GltfLoader tests/GltfLoaderTests.cpp grasplink_model_data)
+  grasplink_add_test(grasplink_gltf_tests GltfLoader tests/GltfLoaderTests.cpp grasplink_model_data GTEST_DISCOVERY)
   target_compile_definitions(grasplink_gltf_tests PRIVATE GRASPLINK_TEST_ASSET_DIR="${CMAKE_SOURCE_DIR}/assets")
 
   grasplink_add_test(grasplink_physics_ecs_tests PhysicsEcsIntegration tests/PhysicsEcsIntegrationTests.cpp grasplink_simulation)
@@ -261,9 +260,7 @@ if(GRASPLINK_BUILD_GRAPHICS)
 
   target_include_directories(grasplink_viewer PUBLIC
     modules/viewer/include
-    modules/viewer/include/components
     modules/viewer/include/graphics
-    modules/viewer/include/systems
   )
 
 

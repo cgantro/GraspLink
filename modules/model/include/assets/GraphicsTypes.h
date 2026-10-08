@@ -6,11 +6,8 @@
 #include <glm/gtc/quaternion.hpp>
 
 #include <cstdint>
-#include <memory>
 #include <string>
 #include <vector>
-
-class Mesh;
 
 /**
  * @brief 모델 표면의 꼭짓점 한 개와 그릴 때 필요한 표면 정보를 담는다.
@@ -87,10 +84,10 @@ struct SubMeshInfo{
 };
 
 /**
- * @brief 한 모델 Mesh의 CPU 데이터, 표면별 범위, GPU에 올린 Mesh 참조를 모은다.
+ * @brief 한 모델 Mesh의 CPU 데이터와 표면별 범위를 모은다.
  * @details
- * AssetManager가 vertices와 indices를 그래픽 카드 메모리에 올려 gpuMesh를 만든다.
- * PrefabFactory는 gpuMesh 참조를 Entity의 MeshFilter에도 복사한다. 그래서 캐시를 비운 뒤에도 Entity가 그리는 동안 GPU 데이터가 유지된다. 마지막 참조를 해제할 때 OpenGL context가 현재 스레드에서 활성화되어 있어야 한다.
+ * AssetManager가 vertices와 indices를 그래픽 카드 메모리에 올린다. ModelResource에는 GPU 객체가 아닌 GLB에서 읽은 CPU 자료만 남는다.
+ * PrefabFactory는 AssetManager에서 GPU Mesh를 찾아 Entity의 MeshFilter에 공유 참조로 연결한다. CPU 모델이 해제되어도 Entity가 참조하는 동안 그릴 형상은 유지된다. 마지막 GPU 참조를 해제할 때 OpenGL context가 현재 스레드에서 활성화되어 있어야 한다.
  */
 struct MeshData
 {
@@ -109,8 +106,6 @@ struct MeshData
     /// 원래 Primitive별 draw 범위와 기본 재질 번호.
     std::vector<SubMeshInfo> subMeshes;
 
-    /// AssetManager가 업로드한 GPU Mesh. 업로드 전에는 비어 있다.
-    std::shared_ptr<Mesh> gpuMesh;
 };
 
 /**
@@ -156,7 +151,7 @@ struct NodeData
  * @brief GLB 파일에서 읽은 이미지·재질·형상·부품 관계를 한데 모은 결과다.
  * @details
  * GltfLoader는 우선 CPU 배열을 만든다. AssetManager가 이를 그래픽 카드에 올린다.
- * 각 MeshData의 공유 참조는 GPU Mesh가 언제 해제될지 결정하는 데 참여한다.
+ * GPU 자원은 AssetManager와 이를 사용하는 Entity가 소유하며 CPU 모델 수명과 분리된다.
  * 현재는 선택한 장면이 최상위 부품 하나에서 시작하는 계층만 허용하며, 장면 밖의 별도 부품 묶음은 거부한다.
  */
 struct ModelResource

@@ -1,5 +1,5 @@
 #include "assets/GltfLoader.h"
-#include "TestSupport.h"
+#include <gtest/gtest.h>
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
@@ -11,9 +11,9 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
-#include <iostream>
 #include <limits>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -88,7 +88,7 @@ public:
         const auto path = directory_ / (name + ".glb");
         std::ofstream file(path, std::ios::binary);
         file.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
-        Require(static_cast<bool>(file), "write GLB fixture: " + name);
+        if (!file) throw std::runtime_error("write GLB fixture: " + name);
         return path;
     }
 
@@ -97,22 +97,16 @@ public:
     {
         // 잘못된 시험 자료는 로더가 거부하고 예상한 오류 설명까지 반환한 경우에만 의도한 실패 사례로 인정한다.
         const auto path = Write(name, json, std::move(binary));
+        std::string errorMessage;
         try { GltfLoader::LoadGLB(path); }
-        catch (const std::runtime_error& error)
-        {
-            Require(std::string(error.what()).find(diagnostic) != std::string::npos,
-                name + " rejected for unexpected reason: " + error.what());
-            ++rejected_;
-            return;
-        }
-        throw std::runtime_error(name + " must be rejected");
+        catch (const std::runtime_error& error) { errorMessage = error.what(); }
+        ASSERT_FALSE(errorMessage.empty()) << name + " must be rejected";
+        EXPECT_NE(errorMessage.find(diagnostic), std::string::npos)
+            << name + " rejected for unexpected reason: " + errorMessage;
     }
-
-    int RejectedCount() const { return rejected_; }
 
 private:
     std::filesystem::path directory_;
-    int rejected_ = 0;
 };
 
 void CheckRepositoryAssets()
@@ -121,19 +115,15 @@ void CheckRepositoryAssets()
     for (const char* filename : {"HCR12A_2F-85.glb", "plane.glb"})
     {
         const auto resource = GltfLoader::LoadGLB(std::filesystem::path(GRASPLINK_TEST_ASSET_DIR) / filename);
-        Require(!resource.meshes.empty() && !resource.nodes.empty(), std::string(filename) + " has model data");
-        Require(resource.rootNodeIndex >= 0 && resource.rootNodeIndex < static_cast<int>(resource.nodes.size()),
-            std::string(filename) + " has a valid root");
-        Require(resource.nodes[static_cast<std::size_t>(resource.rootNodeIndex)].parentIndex == -1,
-            std::string(filename) + " root has no parent");
+        ASSERT_TRUE((!resource.meshes.empty() && !resource.nodes.empty())) << std::string(filename) + " has model data";
+        ASSERT_TRUE((resource.rootNodeIndex >= 0 && resource.rootNodeIndex < static_cast<int>(resource.nodes.size()))) << std::string(filename) + " has a valid root";
+        ASSERT_TRUE((resource.nodes[static_cast<std::size_t>(resource.rootNodeIndex)].parentIndex == -1)) << std::string(filename) + " root has no parent";
         for (const auto& mesh : resource.meshes)
         {
-            Require(!mesh.vertices.empty() && !mesh.indices.empty(), std::string(filename) + " has geometry");
+            ASSERT_TRUE((!mesh.vertices.empty() && !mesh.indices.empty())) << std::string(filename) + " has geometry";
             for (const auto index : mesh.indices)
-                Require(index < mesh.vertices.size(), std::string(filename) + " index is inside mesh");
+                ASSERT_TRUE((index < mesh.vertices.size())) << std::string(filename) + " index is inside mesh";
         }
-        std::cout << "Loaded " << filename << ": " << resource.meshes.size() << " meshes, "
-                  << resource.nodes.size() << " nodes\n";
     }
 }
 
@@ -142,9 +132,9 @@ void CheckAccessors(Fixtures& fixtures)
     // 정점 좌표가 연달아 저장되거나 다른 정점 속성과 섞여 저장되어도 각 FLOAT 위치를 정확히 읽는지 확인한다.
     // 자료 구역 밖 접근, 크기 overflow, 지원하지 않는 sparse 자료, 정점 0개, NaN 좌표는 오류로 거부해야 한다.
     const auto valid = GltfLoader::LoadGLB(fixtures.Write("triangle", TriangleJson()));
-    Require(valid.meshes.front().vertices.size() == 3 && valid.meshes.front().indices ==
-        std::vector<std::uint32_t>{0U, 1U, 2U}, "packed FLOAT positions and generated indices");
-    RequireNear(valid.meshes.front().vertices[1].position.x, 1.0, 0.0, "second packed position");
+    ASSERT_TRUE((valid.meshes.front().vertices.size() == 3 && valid.meshes.front().indices ==
+        std::vector<std::uint32_t>{0U, 1U, 2U})) << "packed FLOAT positions and generated indices";
+    EXPECT_NEAR((valid.meshes.front().vertices[1].position.x), (1.0), (0.0)) << "second packed position";
 
     Bytes interleaved(64, 0U);
     const float positions[]{0.0F, 0.0F, 0.0F, 99.0F, 1.0F, 0.0F, 0.0F, 99.0F, 0.0F, 1.0F, 0.0F};
@@ -152,8 +142,8 @@ void CheckAccessors(Fixtures& fixtures)
     const auto strided = GltfLoader::LoadGLB(fixtures.Write("interleaved", TriangleJson(
         R"({"bufferView":0,"componentType":5126,"count":3,"type":"VEC3"})",
         R"({"buffer":0,"byteLength":44,"byteStride":16})"), interleaved));
-    RequireNear(strided.meshes.front().vertices[1].position.x, 1.0, 0.0, "interleaved position skips padding");
-    RequireNear(strided.meshes.front().vertices[2].position.y, 1.0, 0.0, "interleaved final position");
+    EXPECT_NEAR((strided.meshes.front().vertices[1].position.x), (1.0), (0.0)) << "interleaved position skips padding";
+    EXPECT_NEAR((strided.meshes.front().vertices[2].position.y), (1.0), (0.0)) << "interleaved final position";
 
     const std::string sparseViews = R"({"buffer":0,"byteLength":36},{"buffer":0,"byteOffset":36,"byteLength":1},{"buffer":0,"byteOffset":40,"byteLength":12})";
     const std::string sparse = R"("componentType":5126,"count":3,"type":"VEC3","sparse":{"count":1,"indices":{"bufferView":1,"componentType":5121},"values":{"bufferView":2}})";
@@ -192,8 +182,8 @@ void CheckTransformsAndHierarchy(Fixtures& fixtures)
     const std::string view = R"({"buffer":0,"byteLength":36})";
     const auto translated = GltfLoader::LoadGLB(fixtures.Write("valid-matrix", TriangleJson(accessor, view,
         R"({"mesh":0,"matrix":[2,0,0,0,0,3,0,0,0,0,4,0,5,6,7,1]})")));
-    RequireNear(translated.nodes.front().translation.x, 5.0, 1e-5, "matrix local translation");
-    RequireNear(translated.nodes.front().scale.z, 4.0, 1e-5, "matrix local scale");
+    EXPECT_NEAR((translated.nodes.front().translation.x), (5.0), (1e-5)) << "matrix local translation";
+    EXPECT_NEAR((translated.nodes.front().scale.z), (4.0), (1e-5)) << "matrix local scale";
     fixtures.Reject("matrix-skew", TriangleJson(accessor, view,
         R"({"mesh":0,"matrix":[1,0,0,0,0.25,1,0,0,0,0,1,0,0,0,0,1]})"), "non-degenerate TRS only");
     fixtures.Reject("matrix-perspective", TriangleJson(accessor, view,
@@ -252,22 +242,20 @@ std::string MatrixNode(const glm::mat4& matrix)
     return json.str();
 }
 
-void RequireNodeQuaternion(const NodeData& node, const glm::quat& expected, const std::string& label)
+void VerifyNodeQuaternion(const NodeData& node, const glm::quat& expected, const std::string& label)
 {
-    RequireNear(glm::length(node.rotation), 1.0, 1e-5, label + " unit quaternion");
+    EXPECT_NEAR((glm::length(node.rotation)), (1.0), (1e-5)) << label + " unit quaternion";
     // quaternion의 부호를 뒤집어도 같은 회전이다. 행렬을 quaternion으로 분해할 때 라이브러리가 어느 부호를 고르는지에 시험이 좌우되지 않게 한다.
-    RequireNear(std::abs(glm::dot(node.rotation, glm::normalize(expected))), 1.0, 1e-5,
-        label + " quaternion direction");
+    EXPECT_NEAR((std::abs(glm::dot(node.rotation, glm::normalize(expected)))), (1.0), (1e-5)) << label + " quaternion direction";
 }
 
-void RequireNodeMatrix(const NodeData& node, const glm::mat4& expected, const std::string& label)
+void VerifyNodeMatrix(const NodeData& node, const glm::mat4& expected, const std::string& label)
 {
     const glm::mat4 actual = glm::translate(glm::mat4(1.0F), node.translation) *
         glm::mat4_cast(node.rotation) * glm::scale(glm::mat4(1.0F), node.scale);
     for (int column = 0; column < 4; ++column)
         for (int row = 0; row < 4; ++row)
-            RequireNear(actual[column][row], expected[column][row], 1e-5,
-                label + " [" + std::to_string(column) + "][" + std::to_string(row) + "]");
+            EXPECT_NEAR((actual[column][row]), (expected[column][row]), (1e-5)) << label + " [" + std::to_string(column) + "][" + std::to_string(row) + "]";
 }
 
 /**
@@ -285,13 +273,13 @@ void CheckQuaternionTransforms(Fixtures& fixtures)
     const auto orderedResource = GltfLoader::LoadGLB(fixtures.Write("quaternion-xyzw",
         TriangleJson(accessor, view, QuaternionTrsNode(position, ordered, scale))));
     const glm::quat actualOrdered = orderedResource.nodes.front().rotation;
-    RequireNear(actualOrdered.w, ordered.w, 1e-6, "glTF xyzw maps w to quaternion scalar");
-    RequireNear(actualOrdered.x, ordered.x, 1e-6, "glTF xyzw maps x");
-    RequireNear(actualOrdered.y, ordered.y, 1e-6, "glTF xyzw maps y");
-    RequireNear(actualOrdered.z, ordered.z, 1e-6, "glTF xyzw maps z");
+    EXPECT_NEAR((actualOrdered.w), (ordered.w), (1e-6)) << "glTF xyzw maps w to quaternion scalar";
+    EXPECT_NEAR((actualOrdered.x), (ordered.x), (1e-6)) << "glTF xyzw maps x";
+    EXPECT_NEAR((actualOrdered.y), (ordered.y), (1e-6)) << "glTF xyzw maps y";
+    EXPECT_NEAR((actualOrdered.z), (ordered.z), (1e-6)) << "glTF xyzw maps z";
 
     const auto defaults = GltfLoader::LoadGLB(fixtures.Write("quaternion-default", TriangleJson()));
-    RequireNodeQuaternion(defaults.nodes.front(), glm::quat{1.0F, 0.0F, 0.0F, 0.0F}, "default rotation");
+    VerifyNodeQuaternion(defaults.nodes.front(), glm::quat{1.0F, 0.0F, 0.0F, 0.0F}, "default rotation");
 
     const float halfPi = std::acos(-1.0F) * 0.5F;
     int fixtureIndex = 0;
@@ -308,36 +296,37 @@ void CheckQuaternionTransforms(Fixtures& fixtures)
             const std::string name = "quaternion-trs-" + std::to_string(fixtureIndex++);
             const auto resource = GltfLoader::LoadGLB(fixtures.Write(name, TriangleJson(accessor, view,
                 QuaternionTrsNode(position, expectedRotation * multiplier, scale))));
-            RequireNodeQuaternion(resource.nodes.front(), expectedRotation, name);
-            RequireNodeMatrix(resource.nodes.front(), expectedMatrix, name + " Local TRS");
+            VerifyNodeQuaternion(resource.nodes.front(), expectedRotation, name);
+            VerifyNodeMatrix(resource.nodes.front(), expectedMatrix, name + " Local TRS");
         }
         const std::string name = "quaternion-matrix-" + std::to_string(fixtureIndex++);
         const auto resource = GltfLoader::LoadGLB(fixtures.Write(name,
             TriangleJson(accessor, view, MatrixNode(expectedMatrix))));
-        RequireNodeQuaternion(resource.nodes.front(), expectedRotation, name);
-        RequireNodeMatrix(resource.nodes.front(), expectedMatrix, name + " decomposed Local TRS");
+        VerifyNodeQuaternion(resource.nodes.front(), expectedRotation, name);
+        VerifyNodeMatrix(resource.nodes.front(), expectedMatrix, name + " decomposed Local TRS");
     }
 }
 }
 
-/**
- * @brief 실제 저장소 모델과 직접 만든 malformed GLB fixture에서 loader 계약을 확인한다.
- * @details Accessor는 GLB에서 정점 자료가 어디에 있고 몇 개를 어떤 간격으로 읽을지 설명하는 항목이다. 임시 파일로 범위 오류와 부모-자식 node 검사를 확인한다.
- * TRS 입력과 행렬 입력이 같은 회전 방향을 보존하는지, 기울기가 90도에 가까운 Local 변환도 정확한지 비교한다. 정점 위치는 원본 GLB 좌표를 유지해야 한다.
- * 이 시험은 CPU에서 파일을 읽는 단계만 확인하며 OpenGL에 올리거나 화면에 그리지는 않는다.
- */
-int main()
+TEST(GltfLoader, RepositoryAssets)
 {
-    try
-    {
-        CheckRepositoryAssets();
-        Fixtures fixtures;
-        CheckAccessors(fixtures);
-        CheckTransformsAndHierarchy(fixtures);
-        CheckQuaternionTransforms(fixtures);
-        std::cout << "GLB packed/interleaved/quaternion/matrix checks and " << fixtures.RejectedCount()
-                  << " malformed fixtures passed\n";
-        return 0;
-    }
-    catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
+    CheckRepositoryAssets();
+}
+
+TEST(GltfLoader, Accessors)
+{
+    Fixtures fixtures;
+    CheckAccessors(fixtures);
+}
+
+TEST(GltfLoader, TransformsAndHierarchy)
+{
+    Fixtures fixtures;
+    CheckTransformsAndHierarchy(fixtures);
+}
+
+TEST(GltfLoader, QuaternionTransforms)
+{
+    Fixtures fixtures;
+    CheckQuaternionTransforms(fixtures);
 }

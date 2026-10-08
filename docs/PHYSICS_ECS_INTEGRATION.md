@@ -76,7 +76,7 @@ Floor의 `plane.glb` Mesh와 Static Box Collider는 하나의 model root Entity�
 
 ## Lifetime과 확장 범위
 
-`ViewerApp`이 `PhysicsWorld`를 소유하고 `PhysicsSystemModule` 및 어댑터보다 먼저 생성한다. `Scene`은 실행 중 하나만 있고 생성될 때 SceneRoot를 만들며 파괴될 때 자식 계층을 제거한다. 종료할 때 Overlay의 World query와 패널, 어댑터와 Scene Entity를 먼저 정리하고, `PhysicsSystemModule`을 해제한 다음 Flecs World와 `PhysicsWorld`를 파괴한다. Flecs Entity의 제거 observer가 Physics Body도 삭제한다. `GuiModule` backend와 `ModelResource`·Entity가 공유하는 GPU Mesh 참조도 OpenGL Context를 정리하기 전에 해제한다.
+`ViewerApp`이 `PhysicsWorld`를 소유하고 `PhysicsSystemModule` 및 어댑터보다 먼저 생성한다. `Scene`은 실행 중 하나만 있고 생성될 때 SceneRoot를 만들며 파괴될 때 자식 계층을 제거한다. 종료할 때 Overlay의 World query와 패널, 어댑터와 Scene Entity를 먼저 정리하고, `PhysicsSystemModule`을 해제한 다음 Flecs World와 `PhysicsWorld`를 파괴한다. Flecs Entity의 제거 observer가 Physics Body도 삭제한다. `GuiModule` backend와 `AssetManager`의 GPU Mesh 참조도 OpenGL Context를 정리하기 전에 해제한다. `ModelResource`는 CPU 모델 데이터만 보관한다.
 
 Collider는 하나의 Body 안에 Box와 Convex Hull을 여러 개 둘 수 있다. Collider mass properties와 center-of-mass 처리는 Jolt 내부 책임이며, 공개 API는 ECS Entity와 같은 Body 원점의 pose를 주고받는다. Collider 설정 변경은 pending Entity 목록으로 모아 다음 PrePhysicsSync에서 한 번 반영한다. 모든 Body의 Dynamic 조상은 금지하며 Dynamic 자체의 비항등 조상도 지원하지 않는다. 실행 중 scale·부모 계약이 깨지면 연결 Body를 제거하고, 계약이 복구되면 현재 Scene World 자세로 재생성한다.
 

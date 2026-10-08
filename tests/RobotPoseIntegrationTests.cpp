@@ -5,6 +5,7 @@
 #include "assets/GltfLoader.h"
 #include "assets/GraphicsTypes.h"
 #include "assets/PrefabFactory.h"
+#include "components/RenderComponents.h"
 #include "robotics/kinematics/RobotKinematics.h"
 #include "robotics/models/hanwha/Hcr12a.h"
 #include "scene/Scene.h"
@@ -15,6 +16,7 @@
 
 #include <glm/gtc/quaternion.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <filesystem>
@@ -120,6 +122,24 @@ int main()
             "preflight failure leaves no partial model Entity in the Scene");
 
         Entity robotRoot = prefab_factory::CreateModel(scene, model, assets, shader);
+        const auto meshNode = std::find_if(model.nodes.begin(), model.nodes.end(),
+            [](const NodeData& node) { return node.meshIndex >= 0; });
+        Require(meshNode != model.nodes.end(), "robot model contains a renderable node");
+        const std::size_t meshNodeIndex = static_cast<std::size_t>(meshNode - model.nodes.begin());
+        const MeshData& renderableMesh = model.meshes[static_cast<std::size_t>(meshNode->meshIndex)];
+        const ResourceID meshId = renderableMesh.uniqueID;
+        const auto cachedMesh = assets.GetMesh(meshId);
+        Require(cachedMesh != nullptr, "uploaded GPU mesh is available from AssetManager");
+        const bool isRootMesh = meshNodeIndex == static_cast<std::size_t>(model.rootNodeIndex);
+        const Entity meshEntity = renderableMesh.subMeshes.size() == 1
+            ? (isRootMesh ? robotRoot : robotRoot.FindChildByNameRecursive(meshNode->name))
+            : robotRoot.FindChildByNameRecursive(
+                meshNode->name + "_Primitive_" + std::to_string(meshNodeIndex) + "_0");
+        Require(meshEntity.IsValid(), "renderable model node has a Scene Entity");
+        Require(meshEntity.Has<MeshFilter>(), "renderable node has a MeshFilter");
+        Require(meshEntity.GetHandle().get<MeshFilter>().mesh == cachedMesh,
+            "PrefabFactory attaches the cached GPU mesh to the Entity");
+
         robotRoot.SetLocalPosition({1.2F, -0.4F, 0.7F});
         robotRoot.SetLocalRotation(glm::quat{glm::vec3{0.3F, 0.7F, -0.4F}});
         const auto& specification = models::hanwha::kHcr12a;
@@ -167,6 +187,13 @@ int main()
             [&] { grasplink::viewer::robotics::RobotTransformAdapter bad(robotRoot, specification); },
             "broken joint ancestor hierarchy rejected");
         j2.SetParent(originalJ2Parent);
+
+        assets.UploadModel(model);
+        Require(assets.GetMesh(meshId) == cachedMesh,
+            "uploading the same model reuses its cached GPU mesh");
+        model = {};
+        Require(meshEntity.GetHandle().get<MeshFilter>().mesh == cachedMesh,
+            "Entity keeps the GPU mesh after the CPU model is released");
 
         std::cout << "Robot pose GLB integration checks passed\n";
         return 0;

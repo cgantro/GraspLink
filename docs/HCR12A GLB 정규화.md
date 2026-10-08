@@ -298,8 +298,8 @@ modules/robotics/include/robotics/backends/simulation/SimRobotController.h
 Viewer 반영:
 
 ```text
-modules/viewer/include/viewer/robotics/RobotTransformAdapter.h
-modules/viewer/src/robotics/RobotTransformAdapter.cpp
+modules/scene/include/viewer/robotics/RobotTransformAdapter.h
+modules/scene/src/robotics/RobotTransformAdapter.cpp
 ```
 
 수치 출처/변환 성격:

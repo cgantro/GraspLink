@@ -17,14 +17,14 @@
 | 높음 | Compound Body 무게중심을 이중 보정 | SOL | [PhysicsWorld](../modules/physics/src/PhysicsWorld.cpp): 공개 pose는 Body 원점, COM 변환은 Jolt 내부 처리. 비대칭 형상의 실제 낙하·접촉 테스트로 검증 |
 | 높음 | 다른 PhysicsWorld의 같은 숫자 Body ID 사용 가능 | SOL | [PhysicsTypes](../modules/physics/include/PhysicsTypes.h): World token과 Jolt 세대 ID를 함께 검사 |
 | 높음 | Link collider에 하위 관절·Gripper geometry 포함 | SOL | [RobotPhysicsAdapter](../modules/simulation/src/robotics/RobotPhysicsAdapter.cpp): 다음 가동 관절/Gripper에서 소유 범위를 끊음. 여러 hull의 전체 좌표 범위로 회귀 검증 |
-| 높음 | FK와 GLB bind pivot/hierarchy 일치 여부 미검증 | SOL + LUNA | [RobotTransformAdapter](../modules/viewer/src/robotics/RobotTransformAdapter.cpp): bind 위치·행렬·관절 조상 검증. 실제 GLB ToolFrame과 FK 비교 |
+| 높음 | FK와 GLB bind pivot/hierarchy 일치 여부 미검증 | SOL + LUNA | [RobotTransformAdapter](../modules/scene/src/robotics/RobotTransformAdapter.cpp): bind 위치·행렬·관절 조상 검증. 실제 GLB ToolFrame과 FK 비교 |
 | 높음 | J1 90°에서 quaternion → Euler 정밀도 손실 | SOL + LUNA | Viewer/Physics 어댑터 모두 double 정밀도로 Euler 변환 후 저장. GLB 비교 오차 약 0.316 mm에서 최대 약 0.000172 mm로 감소 |
-| 높음 | Transform 없는 grouping parent가 조상 변환을 잃음 | SOL | [TransformSystemModule](../modules/viewer/src/systems/TransformSystemModule.cpp): 항등 Local로 조상 변환 전달, 파생 World cache 저장 |
+| 높음 | Transform 없는 grouping parent가 조상 변환을 잃음 | SOL | [TransformSystemModule](../modules/scene/src/systems/TransformSystemModule.cpp): 항등 Local로 조상 변환 전달, 파생 World cache 저장 |
 | 높음 | Dynamic 조상 아래 물리 Body의 갱신 규칙 불명확 | SOL | [PhysicsSystemModule](../modules/simulation/src/systems/PhysicsSystemModule.cpp): 지원하지 않는 계층의 Body 생성/유지를 차단 |
-| 높음 | Scene 활성화 전 생성/Scene 밖 재부모화로 소유 범위 이탈 | SOL + LUNA | [Scene](../modules/viewer/src/scene/Scene.cpp), [Entity](../modules/viewer/src/Entity.cpp): 활성 root·World·Scene·cycle 검사. 이름 없는 grouping 검색도 안전하게 처리 |
-| 높음 | ModelResource GPU 공유 참조가 GL Context보다 오래 생존 | SOL + LUNA | [ViewerApp](../apps/viewer/ViewerApp.cpp): ModelResource까지 GPU 참조를 Context 종료 전에 해제. 실제 강한 공유 소유권으로 주석 정정 |
+| 높음 | Scene 활성화 전 생성/Scene 밖 재부모화로 소유 범위 이탈 | SOL + LUNA | [Scene](../modules/scene/src/scene/Scene.cpp), [Entity](../modules/scene/src/Entity.cpp): 활성 root·World·Scene·cycle 검사. 이름 없는 grouping 검색도 안전하게 처리 |
+| 해결 | CPU `ModelResource`와 GPU Mesh 소유권 분리 | SOL + LUNA | `AssetManager`가 ResourceID별 GPU Mesh를 캐시하고 Entity의 `MeshFilter`가 공유 참조를 보유한다. `RobotPoseIntegrationTests`에서 캐시 재사용과 CPU 모델 해제 뒤 MeshFilter 수명을 확인한다. |
 | 중간 | Shader/MSAA framebuffer 일부 생성 실패 시 자원 누수 | SOL + LUNA | [Shader](../modules/viewer/src/graphics/Shader.cpp), [MultisampleFramebuffer](../modules/viewer/src/graphics/MultisampleFramebuffer.cpp): 실패 시 정리, resize 실패 후 같은 크기 재시도 지원. 과거 shadow map 경로는 2026-10-08에 제거 |
-| 중간 | GLB sparse/range/matrix/hierarchy를 조용히 잘못 해석 | SOL + LUNA | [GltfLoader](../modules/viewer/src/assets/GltfLoader.cpp): 지원하지 않는 sparse, 범위/stride/overflow, 비유한 값, skew/perspective/퇴화 TRS, 순환·다중 부모·분리된 root 거부 |
+| 중간 | GLB sparse/range/matrix/hierarchy를 조용히 잘못 해석 | SOL + LUNA | [GltfLoader](../modules/model/src/GltfLoader.cpp): 지원하지 않는 sparse, 범위/stride/overflow, 비유한 값, skew/perspective/퇴화 TRS, 순환·다중 부모·분리된 root 거부 |
 | 중간 | Graphics OFF 의존성과 Ninja configuration/파일 대소문자 불일치 | LUNA | [Dependencies](../cmake/Dependencies.cmake), [Presets](../CMakePresets.json): 공통 GLM, Debug/Release 별도 경로, MultisampleFramebuffer 이름 통일 |
 | 중간 | 임시 물리 데모가 기본 simulator에 섞임 | LUNA | 데모를 별도 옵션으로 분리했던 뒤 2026-10-08 M&S 범위 축소에서 50개 낙하 물체와 자동 J1 명령을 함께 제거 |
 | 중간 | GUI 표시를 실제 Jolt 형상으로 오해할 수 있음 | SOL + LUNA | [GuiModule](../modules/gui/src/GuiModule.cpp): ECS 설정의 X-ray 외곽선, 100 ms cache, 투영/clipping 한계 명시 |

@@ -120,10 +120,10 @@ Controller는 관절 목표를 검증하고, 관절 속도 제한과 TCP 목표 
 ## Viewer adapter
 
 ```text
-modules/viewer/include/viewer/robotics/RobotTransformAdapter.h
-modules/viewer/src/robotics/RobotTransformAdapter.cpp
-modules/viewer/include/viewer/robotics/GripperTransformAdapter.h
-modules/viewer/src/robotics/GripperTransformAdapter.cpp
+modules/scene/include/viewer/robotics/RobotTransformAdapter.h
+modules/scene/src/robotics/RobotTransformAdapter.cpp
+modules/scene/include/viewer/robotics/GripperTransformAdapter.h
+modules/scene/src/robotics/GripperTransformAdapter.cpp
 ```
 
 `RobotKinematics`가 `RobotState`를 pose로 바꾸고, Adapter는 그 결과를 Flecs/GLB transform으로 표현한다. Viewer는 FK나 제어 로직을 수행하지 않는다.

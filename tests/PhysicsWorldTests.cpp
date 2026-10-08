@@ -1,9 +1,10 @@
 #include "PhysicsWorld.h"
-#include "TestSupport.h"
 
+#include <gtest/gtest.h>
 #include <glm/gtc/quaternion.hpp>
-#include <iostream>
+#include <cmath>
 #include <limits>
+#include <stdexcept>
 
 using namespace grasplink::physics;
 
@@ -27,15 +28,7 @@ BodyDescription OffsetPlatform()
     return body;
 }
 
-/**
- * @brief 지정한 X 위치의 작은 상자가 offset 플랫폼에 안착하는지 검증한다.
- * @param world 테스트용 PhysicsWorld. 호출자가 플랫폼을 만들고 수명을 관리한다.
- * @param x 플랫폼과 상자의 World X 위치 [m].
- * @param expectedY 상자 Body 원점의 기대 높이 [m].
- * @details 플랫폼 윗면 0.75 m에 반높이 0.1 m인 상자가 닿으면 Body 원점은 0.85 m가 된다.
- * 750회의 4 ms 계산은 3 s 동안 낙하하고 접촉한 뒤 안정될 시간을 준다. 15 mm 허용 오차는 작은 계산 흔들림은 허용하면서 형상 중심과 물체 기준점을 혼동한 큰 높이 오류를 잡는다.
- */
-void CheckContact(PhysicsWorld& world, float x, float expectedY)
+float ContactHeight(PhysicsWorld& world, float x)
 {
     BodyDescription fallingBox;
     CollisionShapeDescription shape;
@@ -44,117 +37,140 @@ void CheckContact(PhysicsWorld& world, float x, float expectedY)
     fallingBox.transform.position = {x, 2.0F, 0.0F};
     const auto falling = world.CreateBody(fallingBox);
     for (int i = 0; i < 750; ++i) world.Step(0.004);
-    RequireNear(world.GetBodyTransform(falling).position.y, expectedY, 0.015, "offset platform contact height");
+    const float height = world.GetBodyTransform(falling).position.y;
     world.DestroyBody(falling);
+    return height;
 }
 }
 
-int main()
+TEST(PhysicsWorld, BodyOriginAndEnvironmentOverlap)
 {
-    try
-    {
-        // Body를 만들고 다른 물체와 접촉시킨 뒤 순간이동시켜 원점이 올바른지 확인한다. 서로 다른 두 X 위치에서도 같은 접촉 높이가 유지되는지 검사한다.
-        PhysicsWorld world;
-        auto platform = OffsetPlatform();
-        const auto handle = world.CreateBody(platform);
-        Require(world.GetCollisionLayer(handle) == CollisionLayer::Environment, "body reports its collision category");
-        RequireNear(world.GetBodyTransform(handle).position.y, 0.0, 1e-5, "body origin after creation");
-        BodyDescription robotProxy;
-        robotProxy.motionType = BodyMotionType::Kinematic;
-        robotProxy.collisionLayer = CollisionLayer::Robot;
-        robotProxy.transform.position = {0.0F, 0.72F, 0.0F};
-        CollisionShapeDescription robotBox;
-        robotBox.halfExtentsMeters = {0.1F, 0.1F, 0.1F};
-        robotProxy.shapes.push_back(robotBox);
-        const auto robotHandle = world.CreateBody(robotProxy);
-        const auto robotPose = robotProxy.transform;
-        Require(world.OverlapsEnvironmentAt(robotHandle, robotPose), "robot query detects the offset environment platform");
-        for (int query = 0; query < 5000; ++query)
-            Require(world.OverlapsEnvironmentAt(robotHandle, robotPose), "repeated environment overlap query stays valid");
+    // 환경 플랫폼 원점과 로봇 proxy의 겹침 조회 및 제외할 환경 물체 지정 동작을 확인한다.
+    PhysicsWorld world;
+    const auto handle = world.CreateBody(OffsetPlatform());
+    ASSERT_EQ(world.GetCollisionLayer(handle), CollisionLayer::Environment) << "body reports its collision category";
+    ASSERT_NEAR(world.GetBodyTransform(handle).position.y, 0.0, 1e-5) << "body origin after creation";
 
-        BodyDescription secondEnvironment;
-        secondEnvironment.motionType = BodyMotionType::Static;
-        secondEnvironment.collisionLayer = CollisionLayer::Environment;
-        secondEnvironment.transform = robotPose;
-        CollisionShapeDescription secondEnvironmentBox;
-        secondEnvironmentBox.halfExtentsMeters = {0.1F, 0.1F, 0.1F};
-        secondEnvironment.shapes.push_back(secondEnvironmentBox);
-        const auto secondEnvironmentHandle = world.CreateBody(secondEnvironment);
-        Require(world.OverlapsEnvironmentAt(robotHandle, robotPose, handle),
-            "ignoring one environment body still detects another overlapping environment body");
-        secondEnvironment.transform.position.x = 10.0F;
-        world.SetBodyTransform(secondEnvironmentHandle, secondEnvironment.transform);
-        Require(!world.OverlapsEnvironmentAt(robotHandle, robotPose, handle),
-            "ignoring the only overlapping environment body clears the overlap result");
-        world.DestroyBody(secondEnvironmentHandle);
+    BodyDescription robotProxy;
+    robotProxy.motionType = BodyMotionType::Kinematic;
+    robotProxy.collisionLayer = CollisionLayer::Robot;
+    robotProxy.transform.position = {0.0F, 0.72F, 0.0F};
+    CollisionShapeDescription robotBox;
+    robotBox.halfExtentsMeters = {0.1F, 0.1F, 0.1F};
+    robotProxy.shapes.push_back(robotBox);
+    const auto robotHandle = world.CreateBody(robotProxy);
+    const auto robotPose = robotProxy.transform;
+    ASSERT_TRUE(world.OverlapsEnvironmentAt(robotHandle, robotPose))
+        << "robot query detects the offset environment platform";
+    for (int query = 0; query < 5000; ++query)
+        ASSERT_TRUE(world.OverlapsEnvironmentAt(robotHandle, robotPose))
+            << "repeated environment overlap query stays valid";
 
-        world.DestroyBody(robotHandle);
-        CheckContact(world, 0.0F, 0.85F);
-        platform.transform.position.x = 1.5F;
-        world.SetBodyTransform(handle, platform.transform);
-        RequireNear(world.GetBodyTransform(handle).position.x, 1.5, 1e-5, "body origin after teleport");
-        CheckContact(world, 1.5F, 0.85F);
+    BodyDescription secondEnvironment;
+    secondEnvironment.motionType = BodyMotionType::Static;
+    secondEnvironment.collisionLayer = CollisionLayer::Environment;
+    secondEnvironment.transform = robotPose;
+    CollisionShapeDescription secondEnvironmentBox;
+    secondEnvironmentBox.halfExtentsMeters = {0.1F, 0.1F, 0.1F};
+    secondEnvironment.shapes.push_back(secondEnvironmentBox);
+    const auto secondEnvironmentHandle = world.CreateBody(secondEnvironment);
+    ASSERT_TRUE(world.OverlapsEnvironmentAt(robotHandle, robotPose, handle))
+        << "ignoring one environment body still detects another overlapping environment body";
+    secondEnvironment.transform.position.x = 10.0F;
+    world.SetBodyTransform(secondEnvironmentHandle, secondEnvironment.transform);
+    ASSERT_FALSE(world.OverlapsEnvironmentAt(robotHandle, robotPose, handle))
+        << "ignoring the only overlapping environment body clears the overlap result";
+    world.DestroyBody(secondEnvironmentHandle);
+}
 
-        BodyDescription teleportedDynamic;
-        teleportedDynamic.motionType = BodyMotionType::Dynamic;
-        teleportedDynamic.collisionLayer = CollisionLayer::DynamicObject;
-        CollisionShapeDescription teleportShape;
-        teleportShape.halfExtentsMeters = glm::vec3{0.1F};
-        teleportedDynamic.shapes.push_back(teleportShape);
-        teleportedDynamic.transform.position.y = 10.0F;
-        const auto dynamicHandle = world.CreateBody(teleportedDynamic);
-        world.Step(0.5);
-        Transform resetPose;
-        resetPose.position = {2.0F, 5.0F, 0.0F};
-        world.SetBodyTransform(dynamicHandle, resetPose);
-        world.Step(0.004);
-        RequireNear(world.GetBodyTransform(dynamicHandle).position.y, 5.0 - 0.5 * 9.81 * 0.004 * 0.004,
-            1e-4, "dynamic teleport clears previous velocity");
-        world.DestroyBody(dynamicHandle);
+TEST(PhysicsWorld, OffsetPlatformContactAndTeleport)
+{
+    PhysicsWorld world;
+    auto platform = OffsetPlatform();
+    const auto handle = world.CreateBody(platform);
+    ASSERT_NEAR(ContactHeight(world, 0.0F), 0.85F, 0.015) << "offset platform contact height";
 
-        platform.motionType = BodyMotionType::Kinematic;
-        platform.collisionLayer = CollisionLayer::Robot;
-        platform.transform.position = {3.0F, 0.0F, 0.0F};
-        const auto moving = world.CreateBody(platform);
-        Require(world.GetCollisionLayer(moving) == CollisionLayer::Robot, "moving robot proxy category is available for contact policy");
-        auto target = platform.transform;
-        target.position.y = 0.25F;
-        target.rotation = glm::angleAxis(0.4F, glm::vec3{0.0F, 1.0F, 0.0F}) * target.rotation;
-        world.MoveKinematic(moving, target, 0.004);
-        world.Step(0.004);
-        RequireNear(world.GetBodyTransform(moving).position.y, 0.25, 1e-4, "kinematic body origin");
-        // 질량 중심은 물체의 질량이 균형을 이루는 위치로 Body 기준점과 다를 수 있다. 이 중심이 어긋난 회전 물체도 Kinematic 목표 전송을 멈춘 뒤 계속 미끄러지거나 돌지 않아야 한다.
-        world.StopKinematic(moving);
-        const Transform stopped = world.GetBodyTransform(moving);
-        for (int tick = 0; tick < 250; ++tick) world.Step(0.004);
-        const Transform afterStop = world.GetBodyTransform(moving);
-        RequireNear(glm::length(afterStop.position - stopped.position), 0.0, 1e-5, "stopped kinematic has no linear drift");
-        RequireNear(std::abs(glm::dot(afterStop.rotation, stopped.rotation)), 1.0, 1e-5,
-            "stopped kinematic has no angular drift");
-        ExpectThrows<std::logic_error>([&] { world.StopKinematic(handle); }, "Static body cannot stop as Kinematic");
-        world.DestroyBody(moving);
+    platform.transform.position.x = 1.5F;
+    world.SetBodyTransform(handle, platform.transform);
+    ASSERT_NEAR(world.GetBodyTransform(handle).position.x, 1.5, 1e-5) << "body origin after teleport";
+    ASSERT_NEAR(ContactHeight(world, 1.5F), 0.85F, 0.015) << "offset platform contact height";
+}
 
-        // Body handle은 소속 World의 고유 표식과 Body ID를 함께 확인한다. World가 파괴된 뒤 같은 ID가 재사용돼도 예전 handle은 새 Body를 가리키지 않는다.
-        PhysicsWorld otherWorld;
-        const auto other = otherWorld.CreateBody(OffsetPlatform());
-        Require(otherWorld.IsBodyValid(other), "own World handle");
-        Require(!otherWorld.IsBodyValid(handle), "cross-World handle must fail");
-        ExpectThrows<std::invalid_argument>([&] { otherWorld.StopKinematic(handle); }, "cross-World stop must fail");
-        ExpectThrows<std::invalid_argument>([&] { otherWorld.GetBodyTransform(handle); }, "cross-World getter must fail");
-        world.DestroyBody(handle);
-        Require(!world.IsBodyValid(handle), "destroyed handle must fail");
-        const auto replacement = world.CreateBody(OffsetPlatform());
-        Require(world.IsBodyValid(replacement) && !world.IsBodyValid(handle), "reused ID must not revive old handle");
+TEST(PhysicsWorld, DynamicTeleportClearsVelocity)
+{
+    PhysicsWorld world;
+    BodyDescription teleportedDynamic;
+    teleportedDynamic.motionType = BodyMotionType::Dynamic;
+    teleportedDynamic.collisionLayer = CollisionLayer::DynamicObject;
+    CollisionShapeDescription teleportShape;
+    teleportShape.halfExtentsMeters = glm::vec3{0.1F};
+    teleportedDynamic.shapes.push_back(teleportShape);
+    teleportedDynamic.transform.position.y = 10.0F;
+    const auto dynamicHandle = world.CreateBody(teleportedDynamic);
+    world.Step(0.5);
+    Transform resetPose;
+    resetPose.position = {2.0F, 5.0F, 0.0F};
+    world.SetBodyTransform(dynamicHandle, resetPose);
+    world.Step(0.004);
+    ASSERT_NEAR(world.GetBodyTransform(dynamicHandle).position.y,
+        5.0 - 0.5 * 9.81 * 0.004 * 0.004, 1e-4) << "dynamic teleport clears previous velocity";
+}
 
-        // 잘못된 숫자와 회전값은 Jolt 내부로 전달하기 전에 검사해, 호출자가 입력 오류를 예측 가능한 예외로 확인할 수 있게 한다.
-        auto invalid = OffsetPlatform();
-        invalid.transform.position.x = std::numeric_limits<float>::quiet_NaN();
-        ExpectThrows<std::invalid_argument>([&] { world.CreateBody(invalid); }, "non-finite pose must fail");
-        invalid = OffsetPlatform();
-        invalid.shapes.front().localTransform.rotation = glm::quat{0.0F, 0.0F, 0.0F, 0.0F};
-        ExpectThrows<std::invalid_argument>([&] { world.CreateBody(invalid); }, "zero shape rotation must fail");
-        std::cout << "Physics origin, contact, movement and ownership checks passed\n";
-        return 0;
-    }
-    catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
+TEST(PhysicsWorld, KinematicMoveAndStop)
+{
+    PhysicsWorld world;
+    const auto staticBody = world.CreateBody(OffsetPlatform());
+    auto platform = OffsetPlatform();
+    platform.motionType = BodyMotionType::Kinematic;
+    platform.collisionLayer = CollisionLayer::Robot;
+    platform.transform.position = {3.0F, 0.0F, 0.0F};
+    const auto moving = world.CreateBody(platform);
+    ASSERT_EQ(world.GetCollisionLayer(moving), CollisionLayer::Robot)
+        << "moving robot proxy category is available for contact policy";
+    auto target = platform.transform;
+    target.position.y = 0.25F;
+    target.rotation = glm::angleAxis(0.4F, glm::vec3{0.0F, 1.0F, 0.0F}) * target.rotation;
+    world.MoveKinematic(moving, target, 0.004);
+    world.Step(0.004);
+    ASSERT_NEAR(world.GetBodyTransform(moving).position.y, 0.25, 1e-4) << "kinematic body origin";
+
+    // 질량 중심은 물체의 질량이 균형을 이루는 위치로 Body 기준점과 다를 수 있다. 이 중심이 어긋난 회전 물체도 Kinematic 목표 전송을 멈춘 뒤 계속 미끄러지거나 돌지 않아야 한다.
+    world.StopKinematic(moving);
+    const Transform stopped = world.GetBodyTransform(moving);
+    for (int tick = 0; tick < 250; ++tick) world.Step(0.004);
+    const Transform afterStop = world.GetBodyTransform(moving);
+    ASSERT_NEAR(glm::length(afterStop.position - stopped.position), 0.0, 1e-5)
+        << "stopped kinematic has no linear drift";
+    ASSERT_NEAR(std::abs(glm::dot(afterStop.rotation, stopped.rotation)), 1.0, 1e-5)
+        << "stopped kinematic has no angular drift";
+    ASSERT_THROW(world.StopKinematic(staticBody), std::logic_error);
+}
+
+TEST(PhysicsWorld, BodyHandleOwnershipAndReuse)
+{
+    PhysicsWorld world;
+    PhysicsWorld otherWorld;
+    const auto handle = world.CreateBody(OffsetPlatform());
+    const auto other = otherWorld.CreateBody(OffsetPlatform());
+    ASSERT_TRUE(otherWorld.IsBodyValid(other)) << "own World handle";
+    ASSERT_FALSE(otherWorld.IsBodyValid(handle)) << "cross-World handle must fail";
+    ASSERT_THROW(otherWorld.StopKinematic(handle), std::invalid_argument);
+    ASSERT_THROW(otherWorld.GetBodyTransform(handle), std::invalid_argument);
+    world.DestroyBody(handle);
+    ASSERT_FALSE(world.IsBodyValid(handle)) << "destroyed handle must fail";
+    const auto replacement = world.CreateBody(OffsetPlatform());
+    ASSERT_TRUE(world.IsBodyValid(replacement) && !world.IsBodyValid(handle))
+        << "reused ID must not revive old handle";
+}
+
+TEST(PhysicsWorld, RejectsInvalidBodyInputs)
+{
+    PhysicsWorld world;
+    // 잘못된 숫자와 회전값은 Jolt 내부로 전달하기 전에 검사해, 호출자가 입력 오류를 예측 가능한 예외로 확인할 수 있게 한다.
+    auto invalid = OffsetPlatform();
+    invalid.transform.position.x = std::numeric_limits<float>::quiet_NaN();
+    ASSERT_THROW(world.CreateBody(invalid), std::invalid_argument);
+    invalid = OffsetPlatform();
+    invalid.shapes.front().localTransform.rotation = glm::quat{0.0F, 0.0F, 0.0F, 0.0F};
+    ASSERT_THROW(world.CreateBody(invalid), std::invalid_argument);
 }
