@@ -12,6 +12,7 @@
 #include <random>
 #include <optional>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace
@@ -101,6 +102,7 @@ void LinearPathPlanning(benchmark::State& state)
 struct RuntimePathCase
 {
     CartesianPose targetPose;
+    JointVector reachableTargetJoints;
 };
 
 std::vector<RuntimePathCase> RuntimePathCases(std::size_t caseCount)
@@ -119,7 +121,7 @@ std::vector<RuntimePathCase> RuntimePathCases(std::size_t caseCount)
                 limits.minPositionRadians * 0.8, limits.maxPositionRadians * 0.8);
             targetJoints[joint] = position(random);
         }
-        generated.push_back({inverse.EvaluateTcp(targetJoints)});
+        generated.push_back({inverse.EvaluateTcp(targetJoints), std::move(targetJoints)});
     }
     return generated;
 }
@@ -129,7 +131,10 @@ void RuntimeLinearPathStress(benchmark::State& state)
     const auto cases = RuntimePathCases(static_cast<std::size_t>(state.range(0)));
     std::uint64_t plannerRejections = 0;
     std::uint64_t plannerIkRejections = 0;
-    std::uint64_t plannerJointLimitRejections = 0;
+    std::uint64_t plannerJointLimitStatuses = 0;
+    std::uint64_t plannerIkLimitStalls = 0;
+    std::uint64_t plannerVerifiedJointLimitViolations = 0;
+    std::uint64_t rejectionsWithKnownReachableEndpoints = 0;
     std::uint64_t runtimeFaults = 0;
     std::uint64_t runtimeIkFaults = 0;
     std::uint64_t timeouts = 0;
@@ -159,7 +164,16 @@ void RuntimeLinearPathStress(benchmark::State& state)
                 if (accepted.code == ErrorCode::IkDidNotConverge)
                     ++plannerIkRejections;
                 else if (accepted.code == ErrorCode::JointLimitReached)
-                    ++plannerJointLimitRejections;
+                {
+                    ++plannerJointLimitStatuses;
+                    if (accepted.message == "IK: joint limits block local improvement" ||
+                        accepted.message == "IK: iteration limit while constrained by joint limits")
+                        ++plannerIkLimitStalls;
+                    else if (accepted.message == "SimRobotController: planned state exceeds a joint limit")
+                        ++plannerVerifiedJointLimitViolations;
+                }
+                if (ValidateJointState(kHcr12a, testCase.reachableTargetJoints, {}) == JointStateInvalidity::None)
+                    ++rejectionsWithKnownReachableEndpoints;
                 continue;
             }
 
@@ -191,7 +205,10 @@ void RuntimeLinearPathStress(benchmark::State& state)
     state.counters["cases"] = totalCases;
     state.counters["planner_rejections"] = static_cast<double>(plannerRejections);
     state.counters["planner_ik_rejections"] = static_cast<double>(plannerIkRejections);
-    state.counters["planner_joint_limit_rejections"] = static_cast<double>(plannerJointLimitRejections);
+    state.counters["planner_joint_limit_statuses"] = static_cast<double>(plannerJointLimitStatuses);
+    state.counters["planner_ik_limit_stalls"] = static_cast<double>(plannerIkLimitStalls);
+    state.counters["planner_verified_joint_limit_violations"] = static_cast<double>(plannerVerifiedJointLimitViolations);
+    state.counters["rejections_with_known_reachable_endpoints"] = static_cast<double>(rejectionsWithKnownReachableEndpoints);
     state.counters["runtime_faults"] = static_cast<double>(runtimeFaults);
     state.counters["runtime_ik_faults"] = static_cast<double>(runtimeIkFaults);
     state.counters["timeouts"] = static_cast<double>(timeouts);

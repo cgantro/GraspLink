@@ -151,6 +151,18 @@ TEST(RobotInverseKinematicsTests, FallbackEscapesSingularSeedLocalMinimum)
     const IkResult primaryAttempt = inverse.SolveSingleSeed(target, source);
     EXPECT_TRUE(primaryAttempt.status == IkStatus::DidNotConverge || primaryAttempt.status == IkStatus::JointLimitReached)
         << "single-seed solve exposes the singular home-posture local minimum";
+    if (primaryAttempt.status == IkStatus::JointLimitReached)
+    {
+        bool isAtJointLimit = false;
+        for (std::size_t joint = 0; joint < primaryAttempt.jointPositionRadians.size(); ++joint)
+        {
+            const auto& limits = models::hanwha::kHcr12a.joints[joint];
+            isAtJointLimit = isAtJointLimit ||
+                std::abs(primaryAttempt.jointPositionRadians[joint] - limits.minPositionRadians) <= 1e-8 ||
+                std::abs(primaryAttempt.jointPositionRadians[joint] - limits.maxPositionRadians) <= 1e-8;
+        }
+        EXPECT_TRUE(isAtJointLimit) << "joint-limit status requires the returned IK state to be at an active boundary";
+    }
     const IkResult solved = inverse.Solve(target, source);
     ASSERT_EQ(solved.status, IkStatus::Success)
         << "bounded posture alternatives recover an FK-reachable target from a singular home seed";

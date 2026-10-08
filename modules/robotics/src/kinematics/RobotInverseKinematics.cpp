@@ -214,14 +214,19 @@ IkResult DampedLeastSquaresIk::SolveSingleSeed(const CartesianPose& targetInBase
             {
                 const double fraction = stepScale * std::ldexp(1.0, -line);
                 JointVector candidate = angles;
-                bool clipped = false;
+                bool clippedAtActiveLimit = false;
                 for (std::size_t i = 0; i < angles.size(); ++i)
                 {
                     const double requested = angles[i] + jointStep[i] * fraction;
-                    candidate[i] = std::clamp(requested, specification_.joints[i].minPositionRadians, specification_.joints[i].maxPositionRadians);
-                    clipped = clipped || candidate[i] != requested;
+                    const auto& limits = specification_.joints[i];
+                    candidate[i] = std::clamp(requested, limits.minPositionRadians, limits.maxPositionRadians);
+                    const double boundaryTolerance = std::max(1e-10,
+                        (limits.maxPositionRadians - limits.minPositionRadians) * 1e-10);
+                    clippedAtActiveLimit = clippedAtActiveLimit ||
+                        (angles[i] <= limits.minPositionRadians + boundaryTolerance && requested < limits.minPositionRadians) ||
+                        (angles[i] >= limits.maxPositionRadians - boundaryTolerance && requested > limits.maxPositionRadians);
                 }
-                boundaryBlocked = boundaryBlocked || clipped;
+                boundaryBlocked = boundaryBlocked || clippedAtActiveLimit;
                 const Error next = Measure(target, Compose(forward_.Update(candidate).toolFrameInBaseFrame, tcpInToolFrame_), weight);
                 if (next.cost < error.cost)
                 {
