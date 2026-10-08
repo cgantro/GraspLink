@@ -133,7 +133,6 @@ void IncrementalLinearPathPlanning(benchmark::State& state)
     std::vector<double> workFramesPerPath;
     std::size_t succeeded = 0;
     std::size_t plannerStateChecks = 0;
-    double totalPlanningMicroseconds = 0.0;
     double maximumPositionErrorMeters = 0.0;
     double maximumOrientationErrorRadians = 0.0;
     std::size_t totalWorkFrames = 0;
@@ -148,7 +147,6 @@ void IncrementalLinearPathPlanning(benchmark::State& state)
         }
 
         std::size_t workFrames = 0;
-        const auto planningStart = Clock::now();
         while (job.GetState() == LinearPathPlanningState::Running && workFrames < 4096)
         {
             const auto frameStart = Clock::now();
@@ -161,7 +159,6 @@ void IncrementalLinearPathPlanning(benchmark::State& state)
                 Clock::now() - frameStart).count());
             ++workFrames;
         }
-        const auto planningEnd = Clock::now();
         if (job.GetState() != LinearPathPlanningState::Completed)
         {
             state.SkipWithError("incremental planner did not complete a valid benchmark path");
@@ -190,7 +187,6 @@ void IncrementalLinearPathPlanning(benchmark::State& state)
             }
         }
 
-        totalPlanningMicroseconds += std::chrono::duration<double, std::micro>(planningEnd - planningStart).count();
         plannerStateChecks += plan.validityStateChecks;
         totalWorkFrames += workFrames;
         workFramesPerPath.push_back(static_cast<double>(workFrames));
@@ -223,7 +219,6 @@ void IncrementalLinearPathPlanning(benchmark::State& state)
         const double workFramesMax = *std::max_element(workFramesPerPath.begin(), workFramesPerPath.end());
         constexpr double millisecondsPerFrameAt60Hz = 1000.0 / 60.0;
         state.counters["success_rate"] = static_cast<double>(succeeded) / state.iterations();
-        state.counters["planning_us_per_path"] = totalPlanningMicroseconds / succeeded;
         state.counters["work_frames"] = static_cast<double>(totalWorkFrames);
         state.counters["work_frames_per_path"] = averageWorkFrames;
         state.counters["work_frames_p50"] = workFramesP50;
