@@ -1,13 +1,14 @@
 # GraspLink
 
-C++17/OpenGL/Flecs 기반 HCR-12A + 2F-85 로봇 시뮬레이터 프로젝트다.
-Controller가 관절 상태를 갱신하면 공통 FK 결과를 Viewer의 J1~J6 변환과 Jolt Kinematic 충돌 프록시에 반영한다. Damped Least Squares IK는 관절 공간 목표 이동(MoveJ)과 TCP 직선 경로(MoveL)를 지원한다. 장거리 Pick-and-Place 이동은 충돌 검사와 제한된 RRT-Connect를 사용하는 MoveJ로 계획하고, 물체 주변 접근·하강·들기에는 MoveL을 사용한다. UI 계획은 프레임 단위로 나뉘어 진행한다. Cartesian 경로에는 TCP 기준 가속·감속 프로파일을, 관절 이동에는 최대 속도까지 0.20초를 기본값으로 하는 Simulation 가속 프로파일을 적용한다. 이 관절 ramp는 조정 가능한 시뮬레이터 정책이며 HCR-12A 제조사 가속도 사양이 아니다. 2F-85는 연속 개폐를 지원하며, 양쪽 손끝이 같은 Dynamic 물체의 반대 면에 닿으면 고정 constraint를 만들어 운반한다. 실제 힘 계산과 개별 손가락 적응은 구현하지 않았다. FK ToolFrame과 backend TCP feedback은 별도다.
+C++17, OpenGL, Flecs, Jolt를 사용하는 HCR-12A + 2F-85 로봇 시뮬레이터다. 관절 상태를 공통 순기구학(FK)으로 변환해 화면 모델과 Jolt의 Kinematic 충돌 프록시에 적용한다. Damped Least Squares IK는 관절 공간 목표 이동(MoveJ)과 TCP 직선 경로(MoveL)에 쓰인다. Pick-and-Place의 장거리 이동에는 충돌 검사를 포함한 제한된 RRT-Connect를, 물체 주변 접근·하강·들기에는 MoveL을 사용한다.
+
+시뮬레이터의 관절 가속 ramp와 그리퍼 개폐 매핑은 조정 가능한 정책 값이며 제조사 사양으로 검증된 값이 아니다. 그리퍼가 물체를 운반할 때는 양쪽 손끝이 같은 Dynamic 물체의 반대 면에 닿으면 고정 constraint를 만든다. 실제 힘 계산과 개별 손가락 적응은 구현하지 않았다. FK ToolFrame과 Controller의 TCP feedback은 별도 경로다.
 
 ## 디렉터리
 
 ```text
 apps/
-└─ viewer/                         # 프로그램 조립 / main loop
+└─ simulator/                      # 프로그램 조립 / main loop
 
 modules/
 ├─ diagnostics/                    # 비동기 로그·수치·성능 기록
@@ -34,6 +35,19 @@ assets/                             # GLB / shaders
 docs/                               # 설계 / 사양 문서
 ```
 
+## 문서 안내
+
+| 필요한 내용 | 문서 |
+| --- | --- |
+| 모듈 책임과 의존성 | [Architecture](docs/ARCHITECTURE.md) |
+| Controller 계약과 실행 주기 | [Controller Interface](docs/CONTROLLER_INTERFACE.md), [Control Simulation Goals](docs/CONTROL_SIMULATION_GOALS.md) |
+| 로봇·그리퍼 모델과 데이터 출처 | [HCR-12A + 2F-85 Simulation Specs](docs/HCR12A_2F85_SIMULATION_SPECS.md), [Model Data Provenance](docs/MODEL_DATA_PROVENANCE.md), [GLB Normalization](docs/HCR12A_GLB_NORMALIZATION.md) |
+| 물리, 충돌, 이동·파지 동작 | [Physics / ECS Integration](docs/PHYSICS_ECS_INTEGRATION.md), [Self-Collision](docs/SELF_COLLISION.md), [Robot Motion and Grasp](docs/ROBOT_MOTION_AND_GRASP.md), [Gripper Runtime Design](docs/GRIPPER_RUNTIME_DESIGN.md) |
+| 진단 도구 | [Diagnostics](docs/DIAGNOSTICS.md) |
+| 개발 이력과 경험 기록 | [STAR 기록 색인](docs/diary/README.md), [감사 결과](docs/history/) |
+
+설계 문서는 현재 구조와 제약을 설명하고, `docs/diary`는 시점별 작업·검증 이력을 보존한다. 두 곳의 상태 설명이 다르면 각 기록의 날짜와 근거 범위를 확인한다. 대화 요약과 커밋 목록은 사건의 맥락을 찾는 자료이며, 테스트 결과나 현재 코드 동작을 대신 증명하지 않는다.
+
 ## 책임 분리
 
 ```text
@@ -41,7 +55,7 @@ Application / IK / Planner
             ↓
       IRobotController
             ↓
-   Simulation / Hardware backend
+   Simulation backend
             ↓
          RobotState
             ↓
@@ -50,7 +64,7 @@ Application / IK / Planner
             └─ RobotPhysicsAdapter → Kinematic collider Entity
 ```
 
-`models/`는 로봇이 무엇인지 정의하고, `backends/`는 그 모델을 어떻게 움직이는지 구현한다.
+`models/`는 로봇이 무엇인지 정의하고, `backends/`는 그 모델을 어떻게 움직이는지 구현한다. 현재 실행 가능한 backend는 시뮬레이션용이며 실제 하드웨어 backend는 제공하지 않는다.
 새 로봇을 추가할 때 기존 Controller interface를 수정하지 않고 `models/<manufacturer>/<model>.h`를 추가하는 방향을 기준으로 한다.
 
 그리퍼는 `IGripperController → GripperState → GripperKinematics → GripperTransformAdapter → GLB 관절 → 기존 충돌 proxy` 경로를 사용한다. 4 ms마다 두 Controller 갱신, 관절 자세 적용, World 변환 갱신, Jolt step, World 변환 재갱신 순서로 진행한다. raw 위치의 선형 fraction 매핑과 기본 master 속도 0.1..1.0 rad/s는 시뮬레이션 가정이며 제조사 보정식·속도 사양이 아니다. 계약과 검증 범위는 [그리퍼 런타임 설계](docs/GRIPPER_RUNTIME_DESIGN.md)에 정리했다.
