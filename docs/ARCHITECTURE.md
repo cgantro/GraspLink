@@ -1,5 +1,7 @@
 # Architecture
 
+This page is a map of the simulator. It shows which module owns each part of the work, then follows robot state from a controller command through kinematics, physics, and rendering. The detailed contracts live in the linked documents below each section.
+
 ## Module boundaries
 
 ```text

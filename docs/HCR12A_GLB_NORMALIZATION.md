@@ -1,8 +1,6 @@
 # HCR-12A + Robotiq 2F-85 Controller-ready GLB 정규화
 
-> 현재 대상 자산: `assets/HCR12A_2F-85.glb`  
-> 기준: 2026-10-04  
-> 목적: CAD 형상을 유지하면서 HCR-12A J1~J6와 2F-85 linkage를 런타임 Controller가 직접 구동할 수 있는 GLB 구조로 만든다.
+이 문서는 `assets/HCR12A_2F-85.glb`의 좌표와 hierarchy를 설명한다. 팔과 그리퍼 관절을 코드에서 구동할 수 있도록 어떤 기준을 적용했는지, asset을 바꿀 때 무엇을 다시 확인해야 하는지 기록해 두었다. 내용은 2026-10-04 기준이다.
 
 ## 1. 현재 자산 contract
 

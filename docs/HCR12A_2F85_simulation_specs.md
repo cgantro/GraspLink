@@ -1,8 +1,8 @@
 # HCR-12A + Robotiq 2F-85 Simulation Specification
 
-> 기준일: 2026-10-05
-> 현재 runtime asset: `assets/HCR12A_2F-85.glb`  
-> 목적: HCR-12A + 2F-85의 장비 규격, 프로젝트 기구학 기준, GLB-specific 좌표를 구분해 시뮬레이션 source of truth를 명확히 한다.
+이 문서는 시뮬레이터가 쓰는 HCR-12A와 2F-85 수치를 한곳에 모은다. 제조사 자료에서 온 값, 공개 기구학 모델을 참고한 값, 현재 GLB에 맞춰 계산한 값을 구별해 적었다. 이 숫자들이 모두 제조사 공식 사양이라고 받아들이지 않도록 출처도 함께 설명한다.
+
+현재 runtime asset은 `assets/HCR12A_2F-85.glb`이며, 문서의 사양 표는 2026-10-05 기준이다.
 
 ## 1. 먼저 구분해야 하는 데이터 종류
 

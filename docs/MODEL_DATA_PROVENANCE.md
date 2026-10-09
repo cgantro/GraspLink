@@ -1,12 +1,8 @@
 # Model Data Provenance
 
-## 목적
+## 왜 출처를 나누는가?
 
-`modules/robotics/include/robotics/models/`에 있는 숫자는 모두 같은 종류의 데이터가 아니다.
-제조사 공식 규격, CAD에서 직접 추출한 기계 형상, 공개 kinematic reference, 현재 GLB에 맞춰 변환한 asset-specific 값이 함께 존재한다.
-
-이 구분을 하지 않으면 `TwoF85.h`의 pivot이나 `0.7929 rad` 같은 값을 Robotiq 공식 모터 사양으로 오해하기 쉽다.
-따라서 모델 상수와 관련 문서에서는 아래 provenance 분류를 명시한다.
+모델 코드에는 제조사 규격뿐 아니라 CAD에서 읽은 치수, 공개 기구학 모델을 참고한 값, 현재 GLB에 맞춘 좌표도 들어 있다. 예를 들어 `TwoF85.h`의 pivot과 `0.7929 rad`는 Robotiq의 공식 모터 사양이 아니다. 아래 분류를 보면 각 값이 어디서 왔고 어떤 의미까지 뒷받침하는지 알 수 있다.
 
 ## 분류
 

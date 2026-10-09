@@ -1,5 +1,7 @@
 # Physics / Flecs Integration
 
+이 문서는 장면의 Entity가 Jolt 물체가 되는 과정, 그리고 두 쪽의 위치가 매 물리 tick마다 어떻게 맞춰지는지를 설명한다. 모듈마다 책임을 나눠 둔 이유는 PhysicsWorld가 장면이나 렌더러에 얽매이지 않게 하기 위해서다.
+
 ## 책임 경계
 
 | 영역 | 책임 |

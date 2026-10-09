@@ -1,8 +1,6 @@
-# Robotics Controller Interface
+# 로봇 제어 인터페이스
 
-## 목적
-
-실제 장비와 시뮬레이터가 같은 상위 제어 코드를 사용하도록 robotics 계층을 분리한다.
+시뮬레이터와 실제 장비가 같은 상위 제어 코드를 사용할 수 있도록, GraspLink는 로봇·그리퍼 제어를 공통 인터페이스 뒤에 둔다. 지금 저장소에는 Simulation backend가 있고, Hardware backend는 아직 구현하지 않았다.
 
 ```text
 Application / Planner
@@ -15,7 +13,7 @@ IRobotController / IGripperController
         +-- backends/hardware (future)
 ```
 
-상위 계층은 Flecs Entity, GLB Node, 제조사 packet/register를 직접 다루지 않는다.
+상위 계층은 Flecs Entity나 GLB Node를 직접 수정하지 않는다. 제조사별 packet과 register도 backend 안에서 처리하도록 경계를 둔다.
 
 ## 디렉터리
 
