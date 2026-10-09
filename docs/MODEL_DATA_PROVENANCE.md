@@ -84,7 +84,13 @@ ToolFrame bind 위치는 `(0, 1.0150, 0.9145)` m다.
 
 HCR-12A Link collider는 `HCR12A_2F-85.glb`의 재질 메시에서 삼각형 연결별로 생성한다. 같은 위치의 mesh seam 정점도 이어 분리 부품을 찾는다. 4 cm 미만 부품은 제외하고, 나머지 삼각형은 중심점 기준 관절 좌표계의 16 cm 셀에 묶는다. 삼각형은 셀 경계에서 자르지 않으며 1 cm 미만 셀과 부피가 없는 hull 입력도 제외한다. 방향별 극점으로 축약한 Convex Hull은 오목한 부분을 메울 수 있다. 다음 가동 관절 아래와 Gripper geometry는 `RobotPhysicsAdapter`의 대상에서 제외한다.
 
-2F-85의 별도 collider 구성기는 현재 GLB의 이름 있는 rigid-part mesh마다 방향별 극점으로 정점을 축약해 Convex Hull을 만든다. 고정 `GripperMesh`, 좌우 outer knuckle과 각 attached finger mesh의 compound, 좌우 inner knuckle, 좌우 fingertip으로 총 일곱 Kinematic proxy다. Mesh 정점을 owning authored Gripper/joint 원점 기준으로 바꿔 shape를 저장하므로 collider 중심은 각 body 원점과 다를 수 있다. 모델 및 Scene 계층의 scale은 unit이어야 한다. 이는 현재 `HCR12A_2F-85.glb`에 맞춘 asset-derived 형상이며 다른 GLB에 그대로 적용할 수 없다. 초기 open pose는 약 85 mm gap이다. 개폐 자세는 `GripperState.closureFraction`에서 계산한 Local 회전을 authored GLB 관절에 적용해 공급하며, 기존 proxy는 자식 계층의 World 변환을 따른다.
+2F-85의 별도 collider 구성기는 현재 GLB의 이름 있는 rigid-part mesh마다 방향별 극점으로 정점을 축약해 Convex Hull을 만든다. 고정 `GripperMesh`, 좌우 outer knuckle과 각 attached finger mesh의 compound, 좌우 inner knuckle, 좌우 fingertip으로 총 일곱 Kinematic proxy다.
+
+Mesh 정점을 owning authored Gripper/joint 원점 기준으로 바꿔 shape를 저장하므로 collider 중심은 각 body 원점과 다를 수 있다. 모델 및 Scene 계층의 scale은 unit이어야 한다.
+
+이는 현재 `HCR12A_2F-85.glb`에 맞춘 asset-derived 형상이며 다른 GLB에 그대로 적용할 수 없다. 초기 open pose는 약 85 mm gap이다.
+
+개폐 자세는 `GripperState.closureFraction`에서 계산한 Local 회전을 authored GLB 관절에 적용해 공급하며, 기존 proxy는 자식 계층의 World 변환을 따른다.
 
 볼록 외피는 각 16 cm 구간 안의 오목한 부분을 메울 수 있고, 두께가 없는 평면 장식 조각은 충돌에서 제외한다. 제조사 CAD 충돌 모델과 비교 검증한 값은 아니므로 ImGui 충돌 표시와 실제 접촉 결과로 계속 확인한다.
 

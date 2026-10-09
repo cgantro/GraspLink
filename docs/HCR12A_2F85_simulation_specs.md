@@ -362,7 +362,13 @@ docs/GRIPPER_RUNTIME_DESIGN.md
 
 HCR-12A GLB의 link geometry에서 만든 Convex Hull은 별도 Kinematic proxy Entity에 연결한다. Simulation adapter는 이 Entity들의 Local 자세를 World 자세로 바꾸어 Jolt에 전달하며, Robot Base에는 고정 Environment collider를, Link1~Link6에는 Kinematic collider를 둔다. Gripper collider는 별도 구성기에서 만든다.
 
-`ConfigureTwoF85Colliders`는 현재 asset의 메시 정점을 축약해 일곱 Kinematic proxy를 구성한다. 고정 base, outer knuckle와 finger의 compound, inner knuckle, fingertip proxy는 authored `Gripper` 또는 여섯 joint Entity의 자식이므로 fixed-step ECS 계층의 World 변환을 따른다. 각 hull 정점은 소유 body 또는 joint 원점 기준이다. 초기 자유 공간 손끝 간격 약 85 mm를 보존한다. 개폐 자세는 `GripperState.closureFraction`에서 `GripperKinematics`가 계산하고 `GripperTransformAdapter`가 authored hierarchy에 적용한다. 같은 Dynamic 물체의 서로 반대 면에 양쪽 손끝이 닿으면 grasp adapter가 물체와 그리퍼 사이에 fixed constraint를 만든다. 이 동작은 접촉력이나 개별 손가락 적응을 계산하지 않는다.
+`ConfigureTwoF85Colliders`는 현재 asset의 메시 정점을 축약해 일곱 Kinematic proxy를 구성한다. 고정 base, outer knuckle와 finger의 compound, inner knuckle, fingertip proxy는 authored `Gripper` 또는 여섯 joint Entity의 자식이므로 fixed-step ECS 계층의 World 변환을 따른다.
+
+각 hull 정점은 소유 body 또는 joint 원점 기준이다. 초기 자유 공간 손끝 간격 약 85 mm를 보존한다.
+
+개폐 자세는 `GripperState.closureFraction`에서 `GripperKinematics`가 계산하고 `GripperTransformAdapter`가 authored hierarchy에 적용한다. 같은 Dynamic 물체의 서로 반대 면에 양쪽 손끝이 닿으면 grasp adapter가 물체와 그리퍼 사이에 fixed constraint를 만든다.
+
+이 동작은 접촉력이나 개별 손가락 적응을 계산하지 않는다.
 
 Convex Hull은 원본 메시 형상의 근사이므로 얇거나 작은 부분이 충돌 형상에서 빠질 수 있다. 이 proxy는 관절 축 제약이나 모터 토크를 계산하지 않는다.
 
