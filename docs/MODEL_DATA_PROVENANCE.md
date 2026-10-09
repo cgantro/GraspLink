@@ -1,4 +1,4 @@
-# Model Data Provenance
+# 모델 데이터 출처
 
 ## 왜 출처를 나누는가?
 
@@ -38,7 +38,7 @@
 modules/robotics/include/robotics/models/hanwha/Hcr12a.h
 ```
 
-### 관절 limit / 최대속도 — MANUFACTURER
+### 관절 한계와 최대 속도 — 제조사 자료
 
 현재 runtime specification은 HCR-A(2G) 계열에 사용한 다음 값을 SI 단위로 정규화한다.
 
@@ -58,7 +58,7 @@ rad   = deg * pi / 180
 rad/s = deg/s * pi / 180
 ```
 
-### J1~J6 pivot — CAD-DERIVED
+### J1~J6 pivot — CAD 기반
 
 Pivot은 mesh bounding-box 중심이나 임의의 회전점이 아니다.
 HCR-12A STEP assembly에서 서로 맞물리는 원통형 체결 feature의 중심을 양쪽 부품에서 대조해 결정했다.
@@ -75,12 +75,12 @@ HCR-12A STEP assembly에서 서로 맞물리는 원통형 체결 feature의 중�
 
 ToolFrame bind 위치는 `(0, 1.0150, 0.9145)` m다.
 
-### controller-ready axis — CAD-DERIVED + ASSET-DERIVED
+### Controller에서 쓰는 축 — CAD 및 자산 기반
 
 물리 회전축 방향은 CAD에서 확인했지만, 코드의 `axis`는 현재 controller-ready GLB의 Joint local frame에서 사용하는 단위축이다.
 현재 GLB는 J1~J6 moving node의 bind rotation을 identity로 만들었으므로 physical axis와 runtime local axis가 직접 일치한다.
 
-### Link collider 구성 — ASSET-DERIVED
+### 링크 충돌 형상 — 자산 기반
 
 HCR-12A Link collider는 `HCR12A_2F-85.glb`의 재질 메시에서 삼각형 연결별로 생성한다. 같은 위치의 mesh seam 정점도 이어 분리 부품을 찾는다. 4 cm 미만 부품은 제외하고, 나머지 삼각형은 중심점 기준 관절 좌표계의 16 cm 셀에 묶는다. 삼각형은 셀 경계에서 자르지 않으며 1 cm 미만 셀과 부피가 없는 hull 입력도 제외한다. 방향별 극점으로 축약한 Convex Hull은 오목한 부분을 메울 수 있다. 다음 가동 관절 아래와 Gripper geometry는 `RobotPhysicsAdapter`의 대상에서 제외한다.
 
@@ -98,7 +98,7 @@ HCR-12A Link collider는 `HCR12A_2F-85.glb`의 재질 메시에서 삼각형 연
 modules/robotics/include/robotics/models/robotiq/TwoF85.h
 ```
 
-### rPR / rSP / rFR — MANUFACTURER
+### rPR / rSP / rFR — 제조사 자료
 
 `0..255`는 Robotiq 장치가 사용하는 command 값이다.
 
@@ -111,7 +111,7 @@ rFR  force request     0..255
 이 값은 meter나 radian이 아니다.
 향후 Hardware backend는 장치 register에 매핑하고, Simulation backend는 모델별 기구학 상태로 변환한다.
 
-### 0.7929 rad / mimic 관계 — KINEMATIC-REFERENCE
+### 0.7929 rad와 mimic 관계 — 기구학 참조 모델
 
 `kTwoF85NominalClosedMasterRadians = 0.7929`는 공개 2F-85 kinematic model의 free-space nominal closed master joint 기준값이다.
 
@@ -125,7 +125,7 @@ rFR  force request     0..255
 `masterMultiplier = ±1`도 하나의 actuator command에서 좌우 knuckle/fingertip을 연동하기 위한 free-space mimic 관계다.
 물체 접촉 이후 실제 2F-85의 under-actuated adaptive motion까지 고정 mimic으로 표현하는 값은 아니다.
 
-### pivot / local -Z / joint plane — ASSET-DERIVED
+### pivot, local -Z, joint plane — 자산 기반
 
 다음 값은 현재 `assets/HCR12A_2F-85.glb`에 맞춘 프로젝트 좌표다.
 
@@ -150,7 +150,7 @@ Asset이 바뀌면 다시 검증해야 한다.
 
 ---
 
-## Runtime 변환 경계
+## 런타임 변환 흐름
 
 아래 흐름의 상수는 위에 연결한 model specification header에 있고, Controller 및 adapter 책임은 [Controller Interface](CONTROLLER_INTERFACE.md), [Architecture](ARCHITECTURE.md), [Physics / Flecs Integration](PHYSICS_ECS_INTEGRATION.md)에서 나눠 설명한다.
 

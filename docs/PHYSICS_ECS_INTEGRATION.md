@@ -1,4 +1,4 @@
-# Physics / Flecs Integration
+# Physics와 Flecs 연결
 
 이 문서는 장면의 Entity가 Jolt 물체가 되는 과정, 그리고 두 쪽의 위치가 매 물리 tick마다 어떻게 맞춰지는지를 설명한다. 모듈마다 책임을 나눠 둔 이유는 PhysicsWorld가 장면이나 렌더러에 얽매이지 않게 하기 위해서다.
 
@@ -27,7 +27,7 @@ entity.set<RigidBody>(RigidBody{BodyMotionType::Dynamic})
 
 `Colliders`는 Box 또는 Convex Hull 모양을 하나의 Entity/rigid body에 하나 이상 묶는다. Box는 바닥처럼 크기와 위치가 정해진 단순 형상에 쓰고, Convex Hull은 로봇 link와 그리퍼처럼 GLB 정점에서 만든 볼록 형상에 쓴다. `PhysicsSystemModule`은 두 설정이 모두 있는 Entity의 Body를 만든다. 설정이 바뀌거나 제거되면 기존 Body를 정리한다. Entity가 사라질 때 Flecs가 private binding component를 제거하고, observer가 연결된 Body를 삭제한다.
 
-## Transform과 물리 좌표
+## 변환과 물리 좌표
 
 `TransformSystemModule::UpdateWorldTransforms()`가 Entity 계층의 Local/World 행렬을 계산하는 단일 경로다. Scene-driven Static·Kinematic은 이 결과를 Jolt에 보낸다. Physics-driven Dynamic은 SceneRoot 또는 항등 grouping 조상만 허용해 World≈Local로 다룬다. Jolt의 World 위치·회전을 Local에 직접 기록하므로 부모 역행렬이나 Local 행렬 분해를 사용하지 않는다. 조상 각각이 항등이어야 하며 서로 상쇄되는 부모 변환도 허용하지 않는다.
 
@@ -60,7 +60,7 @@ GripperGraspAdapter::BeforePhysicsStep: 이전 파지 해제 / Body handle 수�
 
 `IsSceneDriven`은 Static·Kinematic, `IsPhysicsDriven`은 Dynamic을 분류한다. Static은 Scene World 목표가 변경될 때만 `SetBodyTransform`으로 배치한다. Kinematic은 목표가 같아도 실제 도달 전에는 `MoveKinematic`을 계속해 이동 속도를 만든다. 도달 후 `StopKinematic`을 한 번 호출해 Step 뒤 남는 속도를 제거하고, 이후 같은 목표의 자세 전달은 생략한다. 도달 판정은 위치 1 μm·quaternion 성분 1e-6 이내이며 quaternion 부호 차이를 허용한다. Dynamic은 PostPhysicsSync에서 Jolt 결과만 읽어 Local 위치·회전을 교체하고 Scale은 유지한다.
 
-## Robot pose와 충돌 프록시
+## 로봇 자세와 충돌 프록시
 
 `RobotKinematics`는 앞 관절까지 누적한 회전을 반영해 bind pivot의 위치를 계산하고, 관절 축과 Controller 각도로 각 링크의 회전과 로봇 기준 위치를 구한다. IK는 TCP 목표를 풀 때 ToolFrame에 고정된 tool 변환을 적용한다. `MovePose`는 현재 관절각을 시작값으로 Damped Least Squares IK를 풀고 결과를 `MoveJoint`에 전달한다. `MoveLinear`는 TCP의 직선 위치와 quaternion 최단 회전 경로를 표본으로 나누어 실행 전에 IK를 계산한 뒤, 저장한 관절 표본을 고정 제어 주기마다 보간한다. IK 반복과 관절 경로 검사는 `LinearPathPlanningJob`이 작은 작업 단위로 나누며, Viewer는 렌더 루프에서 제한된 시간 동안 이를 진행한다. 이때 Jolt와 ECS를 작업자 스레드에서 읽지 않도록 시뮬레이션 갱신을 잠시 멈추고 화면 렌더링은 계속한다. 실행 중에는 설정 속도를 넘는 TCP 추종 오차가 생기는 특이 자세에서만 IK를 다시 계산한다. ToolFrame이 있으면 Controller는 모델에서 계산한 `tcpPoseValid=true`를 보고하지만, 이는 하드웨어 측정값이 아니다. Viewer adapter는 GLB 계층에 관절 회전을 적용하고 Simulation adapter는 Robot Base의 고정 Environment collider를 포함해 별도 Kinematic 충돌 Entity를 갱신한다. 렌더 메시와 Jolt body ID는 서로 별도로 유지한다.
 
@@ -72,7 +72,7 @@ HCR-12A collider는 GLB 재질 메시의 삼각형 연결로 나눈 부품별로
 
 현재 로봇 물리는 controller가 계산한 자세를 따르는 Kinematic 충돌 프록시다. Jolt Kinematic Body는 목표를 장애물 앞에서 막지 않는다. Viewer는 매 고정 갱신에서 Robot과 Gripper의 목표 충돌 형상을 Jolt 형상 검사로 Environment와 비교하고 겹치면 물리 목표를 보내기 전에 직전 안전 관절각으로 복원한다. 이는 각 고정 갱신의 목표 자세를 검사하며 전체 이동 경로를 미리 계획해 장애물을 돌아가지는 않는다. 로봇 관절 torque, 관성, 동역학 기반 grasp는 구현하지 않았다.
 
-## Floor와 디버그 객체
+## 바닥과 디버그 객체
 
 Floor의 `plane.glb` Mesh와 Static Box Collider는 하나의 model root Entity가 소유한다. GLB 평면은 root scale 3으로 X/Z ±3 m 범위이며, Collider도 half-extents `{3, 0.02, 3}` m로 맞춘다. Collider 윗면은 수치 오차 방지를 위해 시각 평면보다 5 mm 위에 둔다. GLB를 Jolt triangle mesh로 변환하지 않는다.
 
@@ -82,7 +82,7 @@ Floor의 `plane.glb` Mesh와 Static Box Collider는 하나의 model root Entity�
 
 `PrefabFactory`는 primitive가 하나인 Node의 Mesh component를 Node Entity에 직접 붙인다. 여러 primitive인 경우에만 primitive별 Render child Entity를 만든다.
 
-## Lifetime과 확장 범위
+## 객체 수명과 확장 범위
 
 `ViewerApp`이 `PhysicsWorld`를 소유하고 `PhysicsSystemModule` 및 어댑터보다 먼저 생성한다. `Scene`은 실행 중 하나만 있고 생성될 때 SceneRoot를 만들며 파괴될 때 자식 계층을 제거한다. 종료할 때 Overlay의 World query와 패널, 어댑터와 Scene Entity를 먼저 정리하고, `PhysicsSystemModule`을 해제한 다음 Flecs World와 `PhysicsWorld`를 파괴한다. Flecs Entity의 제거 observer가 Physics Body도 삭제한다. `GuiModule` backend와 `AssetManager`의 GPU Mesh 참조도 OpenGL Context를 정리하기 전에 해제한다. `ModelResource`는 CPU 모델 데이터만 보관한다.
 

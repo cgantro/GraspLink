@@ -1,8 +1,8 @@
-# HCR-12A + Robotiq 2F-85 Controller-ready GLB 정규화
+# HCR-12A와 Robotiq 2F-85 GLB 정규화
 
 이 문서는 `assets/HCR12A_2F-85.glb`의 좌표와 hierarchy를 설명한다. 팔과 그리퍼 관절을 코드에서 구동할 수 있도록 어떤 기준을 적용했는지, asset을 바꿀 때 무엇을 다시 확인해야 하는지 기록해 두었다. 내용은 2026-10-04 기준이다.
 
-## 1. 현재 자산 contract
+## 1. 현재 자산의 규칙
 
 현재 runtime GLB는 다음 원칙을 사용한다.
 
@@ -17,7 +17,7 @@
 
 ---
 
-## 2. HCR-12A hierarchy
+## 2. HCR-12A 계층 구조
 
 Arm의 논리 hierarchy는 다음과 같다.
 
@@ -51,7 +51,7 @@ CAD 내부의 Housing/Cover/Bolt 같은 상세 assembly hierarchy는 런타임 �
 
 ---
 
-## 3. HCR J1~J6 pivot과 axis
+## 3. HCR J1~J6 pivot과 회전축
 
 Pivot은 mesh 중심이 아니다. STEP assembly에서 서로 맞물리는 원통형 체결 feature의 중심을 양쪽 부품에서 대조해 얻은 기계 회전 중심이다.
 원본 mm 좌표를 runtime에서 meter로 사용한다.
@@ -71,7 +71,7 @@ ToolFrame bind world position은 `(0, 1.0150, 0.9145)` m다.
 
 ---
 
-## 4. 왜 moving Joint bind rotation을 Identity로 바꿨는가
+## 4. 움직이는 Joint의 bind rotation을 identity로 둔 이유
 
 이전 중간 모델에서는 물리축을 모두 local Z처럼 다루기 위해 J1/J2/J3/J5 등에 약 ±90° bind quaternion을 넣는 방식도 사용했다.
 그 방식은 시각적으로는 맞을 수 있지만 런타임에서 다음 두 종류 회전을 동시에 이해해야 한다.
@@ -107,7 +107,7 @@ joint pivot + local axis
 
 ---
 
-## 5. Visual transform bake
+## 5. 화면 형상에 변환 적용하기
 
 Joint frame을 identity bind로 정리하면서 외형이 움직이면 안 된다.
 따라서 기존 visual node에 들어 있던 CAD 정렬 transform을 mesh vertex/normal에 미리 반영했다.
@@ -130,7 +130,7 @@ Arm visual bind-pose 검증에서 최대 world-space vertex 오차는 약 `1.192
 
 ---
 
-## 6. Robotiq 2F-85 현재 hierarchy
+## 6. Robotiq 2F-85 계층 구조
 
 현재 gripper는 단순 `LeftFingerJoint / RightFingerJoint` 두 개가 아니다.
 다음 six-joint free-space linkage 구조를 사용한다.
@@ -167,7 +167,7 @@ Moving gripper joint도 bind rotation은 identity다.
 
 ---
 
-## 7. Gripper geometry 분할
+## 7. 그리퍼 형상 나누기
 
 기존 runtime asset의 좌/우 finger mesh는 여러 실제 rigid part가 하나의 mesh로 합쳐진 상태였다.
 현재 controller-ready 자산에서는 원본 finger geometry의 connected component를 rigid body 단위로 분류해 다음 그룹으로 재구성했다.
@@ -191,7 +191,7 @@ Right : 12,952 -> 12,952
 
 ---
 
-## 8. Gripper animation 제거
+## 8. 그리퍼 animation 제거
 
 검증 단계에서는 `Open -> Close -> Open` animation을 넣어 linkage가 실제로 접히는지 확인했지만, 현재 runtime 자산에서는 제거했다.
 
@@ -227,7 +227,7 @@ GLB 관절 / 기존 7개 Kinematic proxy
 
 ---
 
-## 9. 2F-85 free-space 검증
+## 9. 2F-85 자유 공간 검증
 
 현재 geometry와 linkage frame으로 확인한 nominal free-space 결과:
 
@@ -276,7 +276,7 @@ glTF `[x,y,z,w]`는 로더에서 GLM 생성자 `(w,x,y,z)`로 옮긴다. `NodeDa
 
 ---
 
-## 11. 코드의 source of truth
+## 11. 코드에서 기준이 되는 값
 
 아래 인터페이스 헤더와 구현 파일이 현재 런타임 계약의 코드 기준이다. 로봇·그리퍼 상수는 header-only model specification이므로 별도 `.cpp` 구현 파일은 없다.
 

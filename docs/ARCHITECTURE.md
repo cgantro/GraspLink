@@ -1,8 +1,8 @@
-# Architecture
+# 프로젝트 구조
 
-This page is a map of the simulator. It shows which module owns each part of the work, then follows robot state from a controller command through kinematics, physics, and rendering. The detailed contracts live in the linked documents below each section.
+이 문서는 시뮬레이터가 어떤 모듈로 나뉘고 서로 어떻게 연결되는지 보여 줍니다. Controller 명령이 기구학 계산과 물리 시뮬레이션을 거쳐 화면에 반영되는 흐름도 따라갑니다. 자세한 동작 계약은 각 절에 연결한 문서에서 확인할 수 있습니다.
 
-## Module boundaries
+## 모듈과 책임
 
 ```text
 modules/
@@ -14,7 +14,7 @@ modules/
 └── gui/            ImGui panels and configured collider visualization
 ```
 
-Arrows point from a consumer to its dependency. These are the main target dependencies in CMake:
+아래 화살표는 기능을 사용하는 쪽에서 의존하는 쪽으로 향합니다. CMake 타깃의 주요 의존 관계는 다음과 같습니다.
 
 ```mermaid
 flowchart TD
@@ -38,7 +38,7 @@ flowchart TD
 
 `modules/diagnostics` has no dependency on the simulation or graphics stack. `Logger` sends copied log and semantic metric records through a bounded queue to one file-writing thread. Tracy measures runtime zones and frames without routing timing records through Logger. `ViewerApp` owns the Logger longer than the systems that borrow it, then drains and joins the writer during shutdown. See [Diagnostics](DIAGNOSTICS.md) for the API and output format.
 
-## Robot state flow
+## 로봇 자세가 화면에 반영되는 과정
 
 ```text
 IRobotController
@@ -71,7 +71,7 @@ GUI 요청 → IGripperController / SimGripperController
 
 `GuiModule`은 ImGui context·GLFW/OpenGL backend와 `BeginFrame/EndFrame`, 입력 capture 조회를 담당한다. `ViewerApp`이 `GripperPanel`, `PhysicsDebugPanel`, `ColliderOverlay`를 별도로 만들고 `BeginFrame → GripperPanel → PhysicsDebugPanel → ColliderOverlay → EndFrame` 순서로 조립한다. `GripperPanel`은 호출 중에만 Controller를 빌려 요청·상태를 표시하고, `PhysicsDebugPanel`은 collider 표시 체크박스 상태를 보관한다. `ColliderOverlay`는 World query와 화면 선 캐시를 소유하며 Camera는 Draw 호출 중에만 빌린다. 선은 Jolt 내부 형상 대신 ECS 설정의 깊이 없는 전경 투영이며, 첫 표시·resize와 100 ms 간격으로 갱신한다.
 
-## Transform and fixed-step flow
+## 변환과 고정 주기 흐름
 
 `TransformSystemModule::UpdateWorldTransforms()`는 공통 Local-to-World 계산 경로다. 4 ms 고정 tick에서 두 Controller 상태와 팔·그리퍼 자세를 갱신한 뒤 World 행렬, Kinematic 동기화, Jolt step, Dynamic 결과의 Local 반영 순서로 진행한다. step 뒤 World 행렬을 다시 계산하며 렌더 직전에도 갱신한다.
 
@@ -101,18 +101,18 @@ Physics는 render FPS와 독립된 고정 간격으로 진행한다. `IsSceneDri
 
 물리 Entity와 조상은 unit scale을 사용하며 Static Environment 자신의 시각 scale만 예외다. Collider 치수·offset은 m 단위로 직접 지정한다. 모든 Body는 Dynamic 조상을 금지하고, Dynamic 자체는 조상 각각의 변환이 항등이어야 한다. 실행 중 이 scale·부모 계약이 깨지면 binding과 Body를 제거하고, 복구되면 현재 Scene World 자세로 다시 만든다. 공개 pose는 model/Entity 원점 기준이며 compound의 무게중심 보정은 Jolt 내부 책임이다.
 
-## Scene composition and lifetime
+## 장면 구성과 객체 수명
 
-`ViewerApp` is the Composition Root. It creates Window, renderer, scene, controller, `PhysicsWorld`, adapters, `PhysicsSystemModule`, and `GuiModule` in dependency order. It owns no per-object creation APIs.
+`ViewerApp`은 앱에 필요한 객체를 조립하는 진입점이다. 의존 순서에 맞춰 Window, renderer, scene, controller, `PhysicsWorld`, adapter, `PhysicsSystemModule`, `GuiModule`을 만들고 수명을 관리한다. 개별 장면 객체를 만드는 기능은 각 모듈에 둔다.
 
-`grasplink_scene`, `grasplink_model_data`, and `grasplink_simulation` are built without OpenGL. The first owns Flecs Entities and transforms, the second loads CPU-side GLB data, and the third combines those with robotics and Jolt. Rendering, GPU asset upload, and the simulator window are added only when `GRASPLINK_BUILD_GRAPHICS` is enabled.
+`grasplink_scene`, `grasplink_model_data`, `grasplink_simulation`은 OpenGL 없이 빌드할 수 있다. `grasplink_scene`은 Flecs Entity와 변환을 관리하고, `grasplink_model_data`는 CPU에서 GLB 데이터를 읽는다. `grasplink_simulation`은 이 장면·모델 데이터에 robotics와 Jolt를 연결한다. 화면 렌더링, GPU 자산 업로드, 시뮬레이터 창은 `GRASPLINK_BUILD_GRAPHICS`를 켰을 때 추가된다.
 
 `ConfigureFloor` adds the fixed Box collider beneath the rendered floor. `PickPlaceScenario` creates the pick box and placement area used by the mission, while `grasplink::simulation::scenario` selects their reproducible positions and rotations. `PrefabFactory` builds visual Entities from GLB nodes. A single-primitive Node owns its render components directly; multi-primitive nodes use render child Entities. The GLB loader requires one node tree under the selected scene root and rejects sparse accessors, invalid byte ranges/strides, unsupported matrix transforms, cycles, and multiple parents. It reads only position, normal, and UV vertex attributes; the viewer does not implement normal mapping.
 
 `ViewerApp`은 Flecs World와 PhysicsWorld를 소유한다. `ColliderOverlay`의 World query와 패널을 먼저 해제하고, 어댑터·Scene Entity를 제거한 뒤 Physics integration과 World를 정리한다. Flecs 제거 observer가 Entity의 Jolt Body도 삭제한다. `GuiModule`은 Window의 OpenGL context가 살아 있을 때 backend와 ImGui context를 정리한다.
 
-`Scene` creates one SceneRoot on construction and removes its child Entities on destruction. The Viewer uses one Scene for its lifetime; there is no scene transition or per-scene update lifecycle. Shutdown removes adapters and Scene Entities while physics observers are live, then removes the integration objects and World. CPU-only `ModelResource` data is separate from GPU ownership. `AssetManager` caches GPU Meshes by resource ID and Entities keep shared MeshFilter references, so GPU resources are released before the Window destroys the OpenGL context.
+`Scene`은 생성될 때 `SceneRoot` 하나를 만들고, 소멸할 때 자식 Entity를 정리한다. Viewer는 실행 중 하나의 Scene을 사용하며 장면 전환이나 Scene별 갱신 수명 주기는 없다. 종료할 때는 Physics observer가 살아 있는 동안 adapter와 Scene Entity를 먼저 정리한 뒤 연동 객체와 World를 해제한다. CPU 쪽 `ModelResource`와 GPU 자산의 소유권은 분리돼 있다. `AssetManager`가 resource ID별 GPU Mesh를 보관하고 Entity는 공유 `MeshFilter`를 참조하므로, OpenGL context가 사라지기 전에 GPU 자산이 해제된다.
 
-The renderer keeps multisample antialiasing (MSAA) for smoother object edges and uses a single color pass. It does not allocate a shadow map or run a depth pass.
+renderer는 물체 가장자리를 부드럽게 보이도록 멀티샘플 안티앨리어싱(MSAA)을 사용하고, 색상 렌더 패스를 한 번 실행한다. Shadow map이나 별도 depth pass는 만들지 않는다.
 
 For more detail on collision layers, transform spaces, scale requirements, and deferred robot-physics work, see [Physics / Flecs Integration](PHYSICS_ECS_INTEGRATION.md).

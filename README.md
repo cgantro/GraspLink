@@ -1,14 +1,25 @@
 # GraspLink
 
-GraspLink is a simulator for a Hanwha HCR-12A robot arm with a Robotiq 2F-85 gripper. I built it to explore robot motion, collision checks, and pick-and-place behavior in a scene that can run on Windows or in a browser.
+Hanwha HCR-12A 로봇 팔과 Robotiq 2F-85 그리퍼의 움직임을 살펴볼 수 있는 시뮬레이터입니다. 로봇의 관절 제어와 경로 계획, 물리 기반 장면을 하나의 앱에서 확인할 수 있고, Windows와 웹 빌드를 지원합니다.
 
-The simulator brings together C++17, OpenGL, Flecs, and Jolt Physics. It includes forward and inverse kinematics, joint and Cartesian motion planning, and a simple contact-based grasp model. That grasp model attaches an object after both fingers touch it; it does not calculate grip force or reproduce the real gripper’s adaptive mechanism.
+## 시연
 
-GraspLink is software for simulation. It does not connect to or control a physical robot. Motion limits and gripper behavior are simulation settings, not validated operating specifications for hardware.
+아래 영상에서 로봇이 물체를 집어 옮기는 과정을 볼 수 있습니다.
 
-## Build on Windows
+<video controls preload="metadata" width="100%">
+  <source src="https://raw.githubusercontent.com/cgantro/GraspLink/master/assets/%EC%8B%9C%EC%97%B0.webm" type="video/webm">
+  브라우저에서 영상을 재생할 수 없습니다.
+</video>
 
-Use a Visual Studio Developer PowerShell or x64 Native Tools prompt with CMake, Ninja, and MSVC available.
+[시연 영상 파일 열기](assets/시연.webm)
+
+GraspLink는 C++17, OpenGL, Flecs, Jolt Physics를 사용합니다. 정·역기구학, 관절 공간과 TCP 직선 이동, 충돌 검사, 픽앤플레이스 동작을 구현했습니다. 물체를 집을 때는 양쪽 손끝이 같은 물체에 닿으면 고정 constraint를 연결합니다. 실제 그리퍼의 파지력이나 손가락별 적응 동작을 계산하는 모델은 아닙니다.
+
+이 프로젝트는 시뮬레이션 전용입니다. 실제 로봇에 연결하거나 장비를 제어하지 않습니다. 관절 가속도와 그리퍼 동작에 쓰는 값도 제조사에서 검증한 운전 사양이 아니라 시뮬레이션 설정입니다.
+
+## Windows에서 빌드하기
+
+CMake, Ninja, MSVC가 준비된 Visual Studio Developer PowerShell 또는 x64 Native Tools 명령 프롬프트에서 실행합니다.
 
 ```powershell
 cmake --preset ninja
@@ -16,39 +27,44 @@ cmake --build --preset ninja-debug
 ctest --test-dir build-ninja-debug --output-on-failure
 ```
 
-For a release build, use the `ninja-release` configure and build presets. Start the simulator from its build directory so it can find the copied models and shaders:
+Release 빌드는 `ninja-release` configure preset과 `ninja-release` build preset을 사용합니다. 실행 파일이 모델과 셰이더를 찾을 수 있도록 빌드 디렉터리에서 실행하세요.
 
 ```powershell
 cd build-ninja-debug
 .\grasplink_simulator.exe
 ```
 
-The control panel can open or close the gripper and start, pause, resume, reset, or stop the pick-and-place task. The collider view shows the simplified shapes used by the simulator, rather than Jolt’s generated contact geometry.
+제어 패널에서 그리퍼를 열고 닫거나 픽앤플레이스 작업을 시작하고, 일시 정지·재개·초기화·정지할 수 있습니다. 충돌 표시에는 화면 메시가 아니라 시뮬레이터가 충돌 계산에 쓰는 단순화 형상이 나타납니다.
 
-## Build for the browser
+## 웹 빌드
 
-Install and activate the Emscripten SDK, then run:
+Emscripten SDK를 설치하고 활성화한 뒤 threaded 웹 빌드를 만듭니다.
 
 ```powershell
 emcmake cmake --preset emscripten-web
 cmake --build --preset emscripten-web
 ```
 
-The build writes `build-emscripten-web/index.html`, with the runtime and assets packaged into that file. The threaded version uses browser workers, so it needs a browser origin that permits workers and provides cross-origin isolation. The Portfolio site is configured for that deployment. Opening the threaded build as a `file://` URL does not provide those browser features.
+결과물은 `build-emscripten-web/index.html`입니다. 런타임과 모델 데이터는 HTML에 포함되지만, pthreads를 사용하는 빌드는 브라우저 Worker와 cross-origin isolation을 지원하는 웹 출처에서 실행해야 합니다. `file://`로 직접 열면 필요한 브라우저 기능을 사용할 수 없습니다. 배포본은 [Portfolio에서 실행](https://cgantro.github.io/Portfolio/minibcg/index.html)할 수 있습니다.
 
-If you need a build without pthreads, use the `emscripten-single-thread` preset instead. It writes `build-emscripten-single-thread/index.html`.
+스레드를 지원하지 않는 환경용으로 단일 스레드 빌드도 제공합니다.
 
-## Where things live
+```powershell
+emcmake cmake --preset emscripten-single-thread
+cmake --build --preset emscripten-single-thread
+```
 
-- `apps/simulator` starts the application and runs its main loop.
-- `modules/application` coordinates the pick-and-place task.
-- `modules/robotics` contains the robot model, kinematics, and controller interfaces.
-- `modules/simulation` connects scene entities to physics.
-- `modules/physics` wraps the Jolt world and its body handles.
-- `modules/gui` contains the simulator controls.
-- `modules/viewer` loads models and renders the scene.
-- `docs` explains the architecture, motion behavior, model data, and diagnostics.
+## 프로젝트 구조
 
-## Documentation
+- `apps/simulator` — 앱 초기화와 메인 루프
+- `modules/application` — 픽앤플레이스 작업 흐름
+- `modules/robotics` — 로봇 모델, 기구학, Controller 인터페이스
+- `modules/simulation` — 장면 Entity와 물리 시뮬레이션 연결
+- `modules/physics` — Jolt 물리 월드
+- `modules/gui` — 시뮬레이터 제어 패널
+- `modules/viewer` — 모델 로딩과 화면 렌더링
+- `docs` — 구조, 제어 동작, 모델 데이터, 진단 문서
 
-Start with the [documentation guide](docs/README.md) if you are looking for a particular topic. The most useful references are [architecture](docs/ARCHITECTURE.md), [controller interface](docs/CONTROLLER_INTERFACE.md), [robot motion and grasping](docs/ROBOT_MOTION_AND_GRASP.md), [physics and Flecs](docs/PHYSICS_ECS_INTEGRATION.md), and [diagnostics](docs/DIAGNOSTICS.md).
+## 문서
+
+문서 목록은 [문서 안내](docs/README.md)에서 확인할 수 있습니다. 처음 보는 분은 [아키텍처](docs/ARCHITECTURE.md)부터 읽고, 제어 흐름은 [Controller 인터페이스](docs/CONTROLLER_INTERFACE.md), 이동과 파지는 [로봇 이동과 그리퍼 파지](docs/ROBOT_MOTION_AND_GRASP.md), 물리 연동은 [Physics와 Flecs](docs/PHYSICS_ECS_INTEGRATION.md)를 참고하세요.

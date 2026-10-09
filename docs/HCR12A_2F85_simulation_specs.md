@@ -1,4 +1,4 @@
-# HCR-12A + Robotiq 2F-85 Simulation Specification
+# HCR-12A와 Robotiq 2F-85 시뮬레이션 사양
 
 이 문서는 시뮬레이터가 쓰는 HCR-12A와 2F-85 수치를 한곳에 모은다. 제조사 자료에서 온 값, 공개 기구학 모델을 참고한 값, 현재 GLB에 맞춰 계산한 값을 구별해 적었다. 이 숫자들이 모두 제조사 공식 사양이라고 받아들이지 않도록 출처도 함께 설명한다.
 
@@ -19,7 +19,7 @@
 
 ---
 
-## 2. Hanwha HCR-12A 기본 규격 — MANUFACTURER
+## 2. Hanwha HCR-12A 기본 규격 — 제조사 자료
 
 | 항목 | 값 |
 |---|---:|
@@ -45,7 +45,7 @@
 
 ---
 
-## 3. HCR 기계 pivot — CAD-DERIVED
+## 3. HCR 기계 pivot — CAD 기반
 
 현재 J1~J6 pivot은 mesh 중심이나 임의 추정점이 아니다.
 STEP assembly에서 서로 맞물리는 원통형 체결 feature의 중심이 양쪽 부품에서 일치하는지 확인해 결정했다.
@@ -69,7 +69,7 @@ ToolFrame bind world position:
 
 ---
 
-## 4. HCR controller-ready GLB contract — ASSET-DERIVED
+## 4. HCR 제어용 GLB 규칙 — 자산 기반
 
 현재 `assets/HCR12A_2F-85.glb`는 다음 contract를 사용한다.
 
@@ -100,7 +100,7 @@ Pivot translation은 GLB hierarchy에 이미 존재하므로 매 frame 코드에
 
 ---
 
-## 5. Robotiq 2F-85 제조사 수준 규격 — MANUFACTURER
+## 5. Robotiq 2F-85 제조사 규격
 
 대표 장비 규격:
 
@@ -117,7 +117,7 @@ Pivot translation은 GLB hierarchy에 이미 존재하므로 매 frame 코드에
 2F-85는 rotational adaptive / under-actuated gripper다.
 손가락은 단순 prismatic slider처럼 좌우로 평행 이동하지 않고 knuckle/linkage 회전으로 열리고 닫힌다.
 
-### 장치 command/state
+### 장치 명령과 상태
 
 | 값 | 의미 | 범위 |
 |---|---|---:|
@@ -139,7 +139,7 @@ rPR != rad
 
 ---
 
-## 6. 2F-85 free-space kinematic reference — KINEMATIC-REFERENCE
+## 6. 2F-85 자유 공간 기구학 참조 모델
 
 현재 프로젝트는 공개 2F-85 kinematic model의 master/mimic 개념을 자유 공간 자세 기준으로 사용한다.
 
@@ -166,7 +166,7 @@ Free-space mimic 관계:
 
 ---
 
-## 7. 현재 GLB의 2F-85 pivot/axis — ASSET-DERIVED
+## 7. 현재 GLB의 2F-85 pivot과 회전축 — 자산 기반
 
 현재 `assets/HCR12A_2F-85.glb`에 맞춘 Gripper-local frame 값:
 
@@ -189,7 +189,7 @@ joint plane Z = 0.0934257339 m
 
 ---
 
-## 8. 현재 Gripper hierarchy
+## 8. 현재 그리퍼 계층 구조
 
 과거의 `LeftFingerJoint / RightFingerJoint` 두-node 모델은 폐기됐다.
 현재 구조:
@@ -226,7 +226,7 @@ Moving gripper joints의 bind rotation도 identity다.
 
 ---
 
-## 9. Gripper geometry/동작 검증
+## 9. 그리퍼 형상과 동작 검증
 
 현재 linkage geometry 기준 자유 공간 검증:
 
@@ -289,7 +289,7 @@ Watchdog / E-Stop state / Zero Offset
 
 ---
 
-## 11. 현재 gripper runtime 흐름
+## 11. 현재 그리퍼 런타임 흐름
 
 자유 공간:
 
@@ -329,7 +329,7 @@ object grasp
 
 ---
 
-## 12. Source of truth
+## 12. 코드에서 기준이 되는 값
 
 모델 규격 코드:
 

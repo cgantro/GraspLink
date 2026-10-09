@@ -8,7 +8,7 @@
 
 관절각에서 TCP 자세를 계산하는 것을 정방향 기구학(FK)이라 하고, 원하는 TCP 자세를 만드는 관절각을 찾는 것을 역기구학(IK)이라 한다. MoveL은 IK 결과를 한 번만 계산하지 않는다. TCP 직선 위의 여러 자세에서 IK를 풀고, 각 관절 자세 사이의 경로도 확인해야 하기 때문이다.
 
-## Damped Least Squares의 원리
+## Damped Least Squares 계산 원리
 
 Jacobian `J`는 관절을 조금 움직였을 때 TCP의 위치와 방향이 얼마나 바뀌는지를 나타낸다. 현재 TCP와 목표 TCP 사이의 오차를 `e`라고 하면, Damped Least Squares(DLS)는 다음 관절 변화량을 계산한다.
 
@@ -29,7 +29,7 @@ Jacobian `J`는 관절을 조금 움직였을 때 TCP의 위치와 방향이 얼
 
 이 축약 예는 방향 성분, 다른 다섯 관절, 관절 한계와 반복 갱신을 제외한 설명용 계산이다. 실제 HCR-12A IK는 Robot base에서 계산한 6축 Jacobian과 위치·방향 오차를 사용해 반복하며, 매 반복에서 관절 제한과 수렴 상태를 확인한다.
 
-## MoveL 내부 흐름
+## MoveL이 경로를 계획하는 순서
 
 현재 `SimRobotController::BeginLinearPathPlanning`은 다음 순서로 동작한다.
 

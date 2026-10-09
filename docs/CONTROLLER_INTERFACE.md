@@ -39,7 +39,7 @@ modules/robotics/
 
 namespace root는 `grasplink::robotics`다.
 
-## Model
+## 로봇 모델 정보
 
 `models/`는 장치에 고정된 상수의 source of truth다.
 
@@ -61,7 +61,7 @@ Robotiq 2F-85:
 새 로봇은 `models/<manufacturer>/<Model>.h`에 `RobotSpecification`을 추가한다.
 Simulation/Hardware backend는 이 specification을 주입받는다.
 
-## Controller contract
+## Controller가 보장하는 동작
 
 `IRobotController`:
 
@@ -137,7 +137,7 @@ Simulation이 사용하는 주요 `ErrorCode` 분류는 다음과 같다. 이 �
 
 `RobotMode::Planning`은 계획 작업 중 관절 자세를 유지하는 상태이고 `Moving`은 실행 중이다. `Stopped`는 소프트웨어 정지를 나타낸다. Gripper에서는 `mode`가 연결·활성화·실행 상태를, `objectStatus`가 이동·접촉·요청 위치 도달을 나타낸다. `Stopped`인데 `objectStatus == AtRequestedPosition`이 아닐 수 있으므로 두 필드를 함께 읽는다.
 
-## Simulation backend
+## 시뮬레이션 backend
 
 `SimRobotController`는 `RobotSpecification`을 생성자에서 받고 모델의 joint count/limit/max velocity를 그대로 사용한다.
 Controller는 관절 목표를 검증하고, 관절 속도·Simulation 가속 제한과 TCP 목표 IK, 표본 기반 직선 경로 실행, Stop, 모델 기반 상태 제공을 담당한다. `MoveJoint` 가속도는 모델 사양에 없는 제조사 한계를 가정하지 않도록 최대 관절 속도에서 유도한 Simulation 정책으로 제한한다. 기본 `accelerationScale=1.0`은 최대 속도까지 0.20초 동안 가속하는 설정이다.
@@ -154,7 +154,7 @@ Controller는 관절 목표를 검증하고, 관절 속도·Simulation 가속 �
 
 `forceRequest`는 범위만 검사하고 전류와 실제 힘은 계산하지 않으므로 `currentValid=false`다. 물리 접촉은 `GripperGraspAdapter`가 전달하며 Controller는 접촉 시 현재 위치에서 멈추고 `ContactWhileOpening` 또는 `ContactWhileClosing`을 보고한다. 양쪽 손끝이 같은 Dynamic 물체를 서로 반대 방향에서 만지면 adapter가 고정 constraint로 물체를 유지한다. 실제 마찰 파지력과 개별 손가락 적응은 계산하지 않는다. 세부 상태 전이는 [그리퍼 런타임 설계](GRIPPER_RUNTIME_DESIGN.md)를 참고한다.
 
-## Simulation adapters
+## 시뮬레이션 adapter
 
 ```text
 modules/simulation/include/simulation/robotics/RobotTransformAdapter.h
@@ -167,7 +167,7 @@ modules/simulation/src/robotics/GripperTransformAdapter.cpp
 
 `GripperKinematics`는 분기형 여섯 관절의 master/mimic Local 회전 변화만 계산한다. `GripperTransformAdapter`는 저장한 bind 회전에 변화량을 오른쪽으로 곱하고 원본 Local 위치·크기·장착 변환을 보존한다. 고정 tick에서는 파지 해제와 안전 자세 저장 뒤 두 Controller를 갱신하고, 팔·그리퍼 자세를 적용한다. World 변환을 갱신한 다음 collision guard가 겹침을 검사하고 필요하면 안전 관절 자세를 복원한다. 이어서 Jolt step과 접촉 피드백·파지 연결을 수행하고 World 변환을 다시 갱신한다. 세부 호출 순서는 [Physics / Flecs Integration](PHYSICS_ECS_INTEGRATION.md)을 참고한다. 기존 일곱 그리퍼 proxy는 관절 자식이므로 같은 World 변환을 따른다. GUI는 Controller에 요청을 보내고 상태 복사본과 실제 접촉·파지 상태를 표시한다.
 
-## Hardware backend 예정
+## 아직 구현하지 않은 Hardware backend
 
 ```text
 robotics/backends/hardware/hanwha/
