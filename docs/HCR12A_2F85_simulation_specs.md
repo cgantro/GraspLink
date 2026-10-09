@@ -258,7 +258,8 @@ RobotSpecification / GripperSpecification
 Hcr12a model specification
 TwoF85 model specification
 SimRobotController : IRobotController
-SimGripperController : IGripperController (자유공간 개폐)
+SimGripperController : IGripperController (자유공간 개폐와 접촉 피드백)
+GripperGraspAdapter (접촉 정지와 양쪽 손끝의 fixed constraint 파지)
 RobotTransformAdapter
 RobotKinematics (FK / ToolFrame calculation)
 GripperKinematics (master/mimic Local 회전)
@@ -270,21 +271,21 @@ Gripper Kinematic collision proxies 7개
 GUI 그리퍼 요청 / 상태 표시
 Joint angle limit 검증
 Joint max velocity 기반 target 추종
+관절 공간과 Cartesian 경로의 Simulation 가속도 제한
 software Stop
 ```
 
 ### 아직 미구현/후순위
 
 ```text
-관절 공간 `MoveJoint`와 Cartesian 경로의 Simulation 가속도 제한 구현됨
 Hardware Robot backend
 Hardware Gripper backend
-Gripper force / current
-Contact-based adaptive grasp
+실제 힘·전류 계산
+접촉 뒤 개별 손가락 under-actuated adaptive motion
 Watchdog / E-Stop state / Zero Offset
 ```
 
-그리퍼 개폐와 물리 접촉 정지, 양쪽 손끝의 고정 constraint 파지를 연결했다. DLS IK와 TCP 자세·직선 이동도 제공하며 [로봇 이동과 파지](ROBOT_MOTION_AND_GRASP.md)에 상세 원리를 정리한다. 실제 힘·전류·개별 손가락의 접촉 적응과 Hardware backend는 후속 작업이다.
+현재 그리퍼는 자유 공간 개폐, 물리 접촉에 따른 닫힘 정지, 같은 물체의 반대 면에 닿은 양쪽 손끝을 이용한 fixed constraint 파지를 지원한다. 이 constraint는 물체와 그리퍼 사이의 상대 자세를 유지하는 시뮬레이션 연결이며, 손끝 힘이나 마찰로 유지되는 실제 파지력을 계산하지 않는다. 실제 힘·전류 feedback, 마찰 기반 파지 안정성, 접촉 뒤 개별 손가락 적응과 Hardware backend는 구현되지 않았다. DLS IK와 TCP 자세·직선 이동 원리는 [로봇 이동과 파지](ROBOT_MOTION_AND_GRASP.md)를 참고한다.
 
 ---
 
@@ -359,20 +360,12 @@ docs/GRIPPER_RUNTIME_DESIGN.md
 
 ## 13. 현재 Physics 구현 상태
 
-HCR-12A의 GLB link geometry에서 만든 Convex Hull을 별도 Kinematic proxy Entity에 연결한다.
-Controller의 관절 상태로 계산한 FK link pose를 proxy의 Local 값에 저장하고, Physics integration이
-The Simulation adapter converts these local poses to World poses and sends them to Jolt. It creates a fixed Environment collider for Robot Base and Kinematic colliders for Link1 through Link6. The Gripper collider is built separately.
-`ConfigureTwoF85Colliders`가 현재 asset의 메시별 축약 Convex Hull로 일곱 Kinematic proxy를 구성한다.
-고정 base, outer knuckle+finger compound, inner knuckle, fingertip proxy는 authored `Gripper` 또는
-6개 joint Entity의 자식이라 ECS 계층의 fixed-step World transform을 따른다. 각 hull 정점은 owning
-body/joint origin 기준으로 표현되며, 초기 자유공간 open gap 약 85 mm를 보존한다. 개폐 자세의 기준은
-The open/close state follows `GripperState.closureFraction`, calculated by `GripperKinematics` and applied to the authored hierarchy by `GripperTransformAdapter`. When both fingertips contact opposite sides of the same Dynamic object, the grasp adapter connects the object to the gripper with a fixed constraint. This does not simulate finger force or individual finger adaptation.
-Collider hulls are approximations of the source mesh geometry; thin or small features may not be represented.
-이 proxy는 관절 축 제약이나 모터 토크를 계산하지 않는다.
+HCR-12A GLB의 link geometry에서 만든 Convex Hull은 별도 Kinematic proxy Entity에 연결한다. Simulation adapter는 이 Entity들의 Local 자세를 World 자세로 바꾸어 Jolt에 전달하며, Robot Base에는 고정 Environment collider를, Link1~Link6에는 Kinematic collider를 둔다. Gripper collider는 별도 구성기에서 만든다.
 
-2F-85에는 현재 `IGripperController` contract와 model specification, 자유공간 Simulation controller·기구학·GLB adapter 및
-메시 기반 gripper Collider proxy가 있다. force는 raw 범위만 검사하고 전류는 제공하지 않는다.
-관절 공간 `MoveJoint`와 Cartesian 경로 모두 Simulation 가속도 제한을 적용한다. 관절 ramp의 기본값은 최대 각속도까지 0.20초이며 제조사 가속도 사양이 아니다.
-angle이며 실제 motor shaft angle이나 접촉 후 finger 자세를 뜻하지 않는다.
+`ConfigureTwoF85Colliders`는 현재 asset의 메시 정점을 축약해 일곱 Kinematic proxy를 구성한다. 고정 base, outer knuckle와 finger의 compound, inner knuckle, fingertip proxy는 authored `Gripper` 또는 여섯 joint Entity의 자식이므로 fixed-step ECS 계층의 World 변환을 따른다. 각 hull 정점은 소유 body 또는 joint 원점 기준이다. 초기 자유 공간 손끝 간격 약 85 mm를 보존한다. 개폐 자세는 `GripperState.closureFraction`에서 `GripperKinematics`가 계산하고 `GripperTransformAdapter`가 authored hierarchy에 적용한다. 같은 Dynamic 물체의 서로 반대 면에 양쪽 손끝이 닿으면 grasp adapter가 물체와 그리퍼 사이에 fixed constraint를 만든다. 이 동작은 접촉력이나 개별 손가락 적응을 계산하지 않는다.
+
+Convex Hull은 원본 메시 형상의 근사이므로 얇거나 작은 부분이 충돌 형상에서 빠질 수 있다. 이 proxy는 관절 축 제약이나 모터 토크를 계산하지 않는다.
+
+2F-85의 `IGripperController` contract, model specification, 자유공간 Simulation controller·기구학·GLB adapter, 메시 기반 collider proxy와 접촉 파지 adapter가 현재 구성되어 있다. force 요청은 raw 범위만 검사하며 전류와 실제 힘은 계산하지 않는다. `0.7929 rad`는 자유공간 linkage의 nominal master angle이며 실제 motor shaft angle이나 접촉 후 손가락 자세를 뜻하지 않는다.
 
 Physics/Flecs 설정, ownership, fixed-step 및 좌표 변환은 [`PHYSICS_ECS_INTEGRATION.md`](PHYSICS_ECS_INTEGRATION.md)에 정리한다.

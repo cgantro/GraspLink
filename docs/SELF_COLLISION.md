@@ -1,6 +1,6 @@
 # 로봇 자가 충돌 검사
 
-`RobotEnvironmentCollisionGuard`는 후보 관절 자세를 FK로 씬에 적용한 뒤, 환경 충돌과 로봇 자가 충돌을 함께 검사한다. 자가 충돌 검사는 현재 Jolt Body의 이전 자세를 읽지 않고, 두 프록시의 후보 월드 변환을 각각 전달해 shape 쌍을 직접 비교한다. 따라서 Kinematic Body가 다음 물리 tick까지 이동하지 않은 상태에서도 후보 자세를 검사할 수 있다.
+`RobotEnvironmentCollisionGuard`는 후보 관절 자세의 FK와 각 proxy의 후보 World 변환을 계산해 환경 충돌과 로봇 자가 충돌을 검사한다. 후보 자세를 실제 Scene Entity에 적용하지 않으며, 두 프록시의 후보 변환을 Jolt shape 쌍 검사에 직접 전달한다. 따라서 Kinematic Body가 다음 물리 tick까지 이동하지 않은 상태에서도 Scene을 변경하지 않고 후보 자세를 검사할 수 있다.
 
 허용 충돌 정책은 `RobotSelfCollisionPolicy.h`에 모여 있다. HCR-12A의 이웃 링크 쌍, Base와 Link1 베어링, Link6와 그리퍼 몸체 연결부만 허용한다. 나머지 링크 쌍은 겹치면 후보 자세를 거부한다. 일반 물리 접촉에서는 로봇 링크끼리 계속 제외하므로 시뮬레이션 접촉 신호와 접촉량은 바뀌지 않는다.
 

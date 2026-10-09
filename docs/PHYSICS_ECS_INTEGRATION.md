@@ -6,7 +6,9 @@
 | --- | --- |
 | `modules/physics` | Jolt 초기화, Body·접촉 snapshot·constraint 수명, 고정 스텝, pose 조회·변경 |
 | `modules/robotics` | Robot/Gripper Controller 상태, 팔 FK·DLS IK·직선 이동, 그리퍼 master/mimic Local 회전 계산 |
-| `modules/viewer` | Flecs Scene, 화면 Transform, GLB·OpenGL 표현 |
+| `modules/scene` | Flecs Entity·Scene과 Local/World Transform 계산 |
+| `modules/model` | GLB를 읽은 CPU 측 모델 데이터 |
+| `modules/viewer` | OpenGL 창·렌더링, GPU 자산과 화면 표현 |
 | `modules/simulation` | 물리 설정 컴포넌트, Entity와 Body 연결, 로봇 충돌 프록시, 시뮬레이션 Scene 구성 |
 | `ViewerApp` | 모듈을 만들고 실행 순서를 연결하는 Composition Root |
 
@@ -44,7 +46,7 @@ RobotController / GripperController Update
 → PhysicsWorld Step
 → PostPhysicsSync: Dynamic Jolt pose → Entity Local 위치·회전 직접 저장
 → GripperGraspAdapter: 접촉 상태 / 개폐 정지 / 같은 물체 양쪽 파지 검사
-→ Viewer: 다음 Robot 또는 Gripper 목표가 Environment와 겹치면 물리 반영 전에 직전 안전 관절각을 복원하고 Fault 정지
+→ Viewer: 각 fixed tick에서 갱신한 Robot·Gripper 자세의 Environment 또는 허용되지 않은 자가 충돌을 물리 반영 전에 검사; 겹침이면 직전 안전 관절각으로 복원하고 오류 code를 기록한 뒤 Controller를 Idle로 둠
 → TransformSystemModule: World matrix 재갱신
 ```
 

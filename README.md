@@ -43,8 +43,9 @@ docs/                               # 설계 / 사양 문서
 | Controller 계약과 실행 주기 | [Controller Interface](docs/CONTROLLER_INTERFACE.md), [Control Simulation Goals](docs/CONTROL_SIMULATION_GOALS.md) |
 | 로봇·그리퍼 모델과 데이터 출처 | [HCR-12A + 2F-85 Simulation Specs](docs/HCR12A_2F85_SIMULATION_SPECS.md), [Model Data Provenance](docs/MODEL_DATA_PROVENANCE.md), [GLB Normalization](docs/HCR12A_GLB_NORMALIZATION.md) |
 | 물리, 충돌, 이동·파지 동작 | [Physics / ECS Integration](docs/PHYSICS_ECS_INTEGRATION.md), [Self-Collision](docs/SELF_COLLISION.md), [Robot Motion and Grasp](docs/ROBOT_MOTION_AND_GRASP.md), [Gripper Runtime Design](docs/GRIPPER_RUNTIME_DESIGN.md) |
+| IK·MoveL 학습 예제 | [HCR-12A TCP 이동 튜토리얼](docs/IK_MOVEL_TUTORIAL.md) |
 | 진단 도구 | [Diagnostics](docs/DIAGNOSTICS.md) |
-| 개발 이력과 경험 기록 | [STAR 기록 색인](docs/diary/README.md), [감사 결과](docs/history/) |
+| 개발 이력과 경험 기록 | [STAR 기록 색인](docs/diary/README.md), [감사 결과](docs/history) |
 
 설계 문서는 현재 구조와 제약을 설명하고, `docs/diary`는 시점별 작업·검증 이력을 보존한다. 두 곳의 상태 설명이 다르면 각 기록의 날짜와 근거 범위를 확인한다. 대화 요약과 커밋 목록은 사건의 맥락을 찾는 자료이며, 테스트 결과나 현재 코드 동작을 대신 증명하지 않는다.
 

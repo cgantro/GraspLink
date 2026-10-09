@@ -90,7 +90,7 @@ FixedControlLoop
 → Render frame: TransformSystemModule / RenderSystemModule
 ```
 
-Physics는 render FPS와 독립된 고정 간격으로 진행한다. `IsSceneDriven`은 Static·Kinematic, `IsPhysicsDriven`은 Dynamic을 분류한다. Static은 Scene 목표가 바뀔 때만 `SetBodyTransform`을 호출한다. Kinematic은 같은 목표라도 실제 도달 전에는 `MoveKinematic`을 계속하고, 도달 뒤 `StopKinematic`을 한 번 호출해 잔류 속도를 지운 다음 같은 목표의 동기화를 생략한다. 위치·회전이 바뀌면 다시 이동한다. Kinematic 로봇은 환경과 접촉해도 Jolt가 목표를 자동으로 막지 않으므로 Viewer가 새로 생기거나 3 mm 넘게 깊어진 Robot-Environment 접촉 뒤 직전 관절 자세를 복원하고 Fault로 멈춘다. 이는 사전 충돌 회피 경로 계획이 아니다.
+Physics는 render FPS와 독립된 고정 간격으로 진행한다. `IsSceneDriven`은 Static·Kinematic, `IsPhysicsDriven`은 Dynamic을 분류한다. Static은 Scene 목표가 바뀔 때만 `SetBodyTransform`을 호출한다. Kinematic은 같은 목표라도 실제 도달 전에는 `MoveKinematic`을 계속하고, 도달 뒤 `StopKinematic`을 한 번 호출해 잔류 속도를 지운 다음 같은 목표의 동기화를 생략한다. 위치·회전이 바뀌면 다시 이동한다. Kinematic 로봇은 환경과 겹쳐도 Jolt가 목표를 자동으로 막지 않는다. Controller의 경로 검사는 후보 자세를 사전에 검사하며, 각 fixed tick 뒤 guard도 다음 물리 step 전에 현재 Robot·Gripper 형상의 환경 또는 허용되지 않은 자가 충돌을 검사한다. 겹침이 있으면 직전 안전 관절 자세로 복원하고 오류 code를 기록한 채 Controller를 Idle로 둔다. 이는 Fault 상태 전이나 사전 충돌 회피 경로 계획이 아니다.
 
 물리 Entity와 조상은 unit scale을 사용하며 Static Environment 자신의 시각 scale만 예외다. Collider 치수·offset은 m 단위로 직접 지정한다. 모든 Body는 Dynamic 조상을 금지하고, Dynamic 자체는 조상 각각의 변환이 항등이어야 한다. 실행 중 이 scale·부모 계약이 깨지면 binding과 Body를 제거하고, 복구되면 현재 Scene World 자세로 다시 만든다. 공개 pose는 model/Entity 원점 기준이며 compound의 무게중심 보정은 Jolt 내부 책임이다.
 
