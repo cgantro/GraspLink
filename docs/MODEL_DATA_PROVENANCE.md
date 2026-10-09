@@ -19,6 +19,19 @@
 
 `KINEMATIC-REFERENCE`와 `ASSET-DERIVED`는 제조사의 내부 모터 설계값을 의미하지 않는다.
 
+## 출처 추적 범위
+
+이 표는 각 값이 어떤 종류의 근거에서 왔다고 코드와 문서가 분류하는지 보여 준다. 분류와 repository 내 상수 경로만으로 원자료를 독립 재현할 수 있는 것은 아니다.
+
+| 값 분류 | 현재 저장소에서 따라갈 수 있는 내용 | 아직 기록되지 않은 추적 정보 |
+|---|---|---|
+| HCR 제조사 limit·속도, Robotiq raw code | 모델 header에 정규화한 값과 일반 출처 설명이 있다. 아래 runtime 요약에서 상수 header를 연결한다. | 확인한 제조사 문서의 정확한 제목·revision·페이지·URL과 각 숫자의 직접 인용 위치가 없다. |
+| HCR pivot | STEP assembly의 체결 원통 feature에서 읽은 mm 값을 meter로 저장했다고 기록돼 있다. | 원본 CAD 파일 revision, 측정 feature 목록과 좌표를 다시 산출한 절차/도구가 함께 보존돼 있지 않다. |
+| 2F-85 kinematic reference | 공개 기구 모델을 바탕으로 한 자유공간 기준으로 분류하고 `0.7929 rad`와 mimic 관계를 model header에 둔다. | 사용한 upstream model의 revision/URL 및 값별 원본 식별자가 없다. 이 값은 제조사 내부 motor specification이 아니다. |
+| GLB-derived 좌표·geometry | asset 이름, hierarchy 기준과 주요 normalization 계약을 문서화했다. | 일부 pivot, triangle 재구성 수와 vertex error 수치의 재계산 명령 또는 변환 script가 기록돼 있지 않아 독립 재현성이 제한된다. |
+
+따라서 이 문서의 provenance tag는 알려진 출처 유형을 구분하지만, primary-source citation이나 재현 패키지를 대신하지 않는다. 위 자료가 확보되지 않은 항목에는 문서명·URL·측정 절차를 추정해 채우지 않는다. 모델 좌표 변환은 [GLB 정규화](HCR12A_GLB_NORMALIZATION.md), 현재 runtime 사양과 접촉 동작은 [HCR-12A + 2F-85 Simulation Specification](HCR12A_2F85_simulation_specs.md)를 참고한다.
+
 ---
 
 ## HCR-12A
@@ -142,6 +155,8 @@ Asset이 바뀌면 다시 검증해야 한다.
 ---
 
 ## Runtime 변환 경계
+
+아래 흐름의 상수는 위에 연결한 model specification header에 있고, Controller 및 adapter 책임은 [Controller Interface](CONTROLLER_INTERFACE.md), [Architecture](ARCHITECTURE.md), [Physics / Flecs Integration](PHYSICS_ECS_INTEGRATION.md)에서 나눠 설명한다.
 
 HCR-12A:
 

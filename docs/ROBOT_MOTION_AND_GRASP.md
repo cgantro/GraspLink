@@ -56,4 +56,6 @@ J6 회전축은 보통 파지한 상자 중심을 지나지 않는다. 따라서
 
 Viewer의 TCP는 열린 손끝 메시 두 개의 중심 사이로 정하고 방향은 Gripper 축을 사용한다. GLB의 실제 장착 변환을 반영한 고정 기준이며 제조사 보정값이 아니다. 그리퍼를 닫아도 이 보정값은 변하지 않는다.
 
+수식과 독립 C++ 호출 예제를 따라가려면 [HCR-12A TCP 이동 튜토리얼](IK_MOVEL_TUTORIAL.md)을 참고한다. Controller 요청·상태 계약은 [Controller Interface](CONTROLLER_INTERFACE.md), 접촉 상태 전이는 [Gripper Runtime Design](GRIPPER_RUNTIME_DESIGN.md)에 정리돼 있다.
+
 장면에는 한 변 40 mm의 파란 `GraspBox`를 추가했다. 먼저 상자 위 접근점을 골라 이동하고, 상자 중심을 골라 직선으로 내려간 뒤 `Gripper control`에서 Close를 누른다. 양쪽 접촉과 `Object held`를 확인한 다음 목표를 100 mm 올려 이동하고 Open으로 놓는다. 실제로 잡은 물체는 팔과 함께 이동하며 Open 후에는 중력으로 떨어진다. 기존 물리 시연의 한 변 120 mm 상자는 열린 손끝 간격 85 mm보다 크므로 이 파지 확인용 상자와 구별한다.

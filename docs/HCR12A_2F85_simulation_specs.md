@@ -15,7 +15,7 @@
 | `KINEMATIC-REFERENCE` | 공개 URDF/Xacro 등 시뮬레이션 기구학 모델 기준 |
 | `ASSET-DERIVED` | 현재 controller-ready GLB 좌표계에 맞춰 변환한 값 |
 
-상세 provenance는 `docs/MODEL_DATA_PROVENANCE.md`를 기준으로 한다.
+출처 유형과 추적 한계는 [Model Data Provenance](MODEL_DATA_PROVENANCE.md), GLB hierarchy/정규화 계약은 [HCR-12A + 2F-85 GLB Normalization](HCR12A_GLB_NORMALIZATION.md)을 참고한다.
 
 ---
 

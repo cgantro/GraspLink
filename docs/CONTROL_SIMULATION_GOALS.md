@@ -70,6 +70,10 @@ Static Body는 Scene이 정한 자세를 유지한다. Kinematic Body는 Scene�
 
 Release 벤치마크 숫자를 공유할 때는 실행 날짜, 빌드 설정, seed와 case 수, callback이 실제 충돌 검사인지 dummy인지 함께 기록한다. 측정값은 해당 실행의 표본 결과이며 모든 목표에서 성공한다는 보장은 아니다.
 
+## 역할별 상세 참조
+
+이 문서는 요구사항과 구현 여부의 상태 요약이다. 호출 전제와 오류 확인은 [Controller Interface](CONTROLLER_INTERFACE.md), 모듈 소유권과 fixed tick 순서는 [Architecture](ARCHITECTURE.md) 및 [Physics / Flecs Integration](PHYSICS_ECS_INTEGRATION.md), 이동 동작은 [Robot Motion and Grasp](ROBOT_MOTION_AND_GRASP.md), benchmark counter와 측정 한계는 [Diagnostics](DIAGNOSTICS.md)에서 확인한다.
+
 ## 다음 검토 범위
 
 - 그리퍼 손가락의 self-collision과 파지 형상별 회귀 범위를 결정한다.

@@ -13,7 +13,7 @@
 3. Arm visual geometry는 기존 bind pose가 바뀌지 않도록 vertex에 transform을 bake한다.
 4. Gripper는 단순 좌/우 translation finger가 아니라 outer/inner knuckle와 fingertip joint로 분리한다.
 5. Runtime GLB에는 **그리퍼 open/close baked animation을 넣지 않는다.** 움직임은 C++ controller와 기구학 계산이 만든다.
-6. 물체 접촉 이후 2F-85의 under-actuated adaptive motion은 후속 Physics 작업이며 아직 구현하지 않았다.
+6. 물체 접촉 뒤 각 손가락이 독립적으로 적응하는 under-actuated motion은 아직 구현하지 않았다. 현재는 양쪽 손끝 접촉 조건을 만족하면 고정 constraint로 물체와 그리퍼를 연결한다.
 
 과거 문서의 `BindTransform * JointRotation` 전제와 `LeftFingerJoint/RightFingerJoint` 두 개만 사용하는 구조는 현재 자산 기준으로 폐기됐다.
 
@@ -241,8 +241,7 @@ nominal closed master q    ≈ 0.7929 rad
 
 `0.7929 rad`는 공개 kinematic reference의 master linkage 기준각이며 실제 내부 motor shaft angle이 아니다.
 
-실제 2F-85는 under-actuated 구조다. 물체가 먼저 한 phalanx에 접촉하면 이후 joint 관계가 고정 mimic animation과 달라질 수 있다.
-따라서 접촉 이후 동작은 향후 Jolt Physics의 contact/constraint/motor force 계층에서 처리한다.
+실제 2F-85는 under-actuated 구조다. 물체가 먼저 한 phalanx에 접촉하면 이후 joint 관계가 자유 공간의 고정 mimic 관계와 달라질 수 있다. 현재 구현은 접촉에 따른 그리퍼 닫힘 정지와 양쪽 손끝이 같은 Dynamic 물체의 반대 면에 닿았을 때 만드는 고정 constraint를 지원한다. 접촉 뒤 개별 손가락의 적응 움직임과 힘·마찰 기반 파지 안정성 계산은 구현하지 않았다.
 
 ---
 
@@ -281,31 +280,23 @@ glTF `[x,y,z,w]`는 로더에서 GLM 생성자 `(w,x,y,z)`로 옮긴다. `NodeDa
 
 ## 11. 코드의 source of truth
 
-모델 상수:
+아래 인터페이스 헤더와 구현 파일이 현재 런타임 계약의 코드 기준이다. 로봇·그리퍼 상수는 header-only model specification이므로 별도 `.cpp` 구현 파일은 없다.
 
-```text
-modules/robotics/include/robotics/models/hanwha/Hcr12a.h
-modules/robotics/include/robotics/models/robotiq/TwoF85.h
-```
-
-Controller:
-
-```text
-modules/robotics/include/robotics/core/IRobotController.h
-modules/robotics/include/robotics/backends/simulation/SimRobotController.h
-```
-
-Viewer 반영:
-
-```text
-modules/scene/include/viewer/robotics/RobotTransformAdapter.h
-modules/scene/src/robotics/RobotTransformAdapter.cpp
-```
-
-수치 출처/변환 성격:
-
-```text
-docs/MODEL_DATA_PROVENANCE.md
-```
+| 책임 | 인터페이스 또는 상수 | 구현 |
+|---|---|---|
+| HCR-12A 모델 상수 | `modules/robotics/include/robotics/models/hanwha/Hcr12a.h` | Header-only |
+| 2F-85 모델 상수 | `modules/robotics/include/robotics/models/robotiq/TwoF85.h` | Header-only |
+| Robot Controller 계약 | `modules/robotics/include/robotics/core/IRobotController.h` | Interface only |
+| Simulation Robot Controller | `modules/robotics/include/robotics/backends/simulation/SimRobotController.h` | `modules/robotics/src/backends/simulation/SimRobotController.cpp` |
+| Robot FK | `modules/robotics/include/robotics/kinematics/RobotKinematics.h` | `modules/robotics/src/kinematics/RobotKinematics.cpp` |
+| Gripper FK | `modules/robotics/include/robotics/kinematics/GripperKinematics.h` | `modules/robotics/src/kinematics/GripperKinematics.cpp` |
+| Robot GLB transform adapter | `modules/simulation/include/simulation/robotics/RobotTransformAdapter.h` | `modules/simulation/src/robotics/RobotTransformAdapter.cpp` |
+| Robot physics proxy adapter | `modules/simulation/include/simulation/robotics/RobotPhysicsAdapter.h` | `modules/simulation/src/robotics/RobotPhysicsAdapter.cpp` |
+| Gripper GLB transform adapter | `modules/simulation/include/simulation/robotics/GripperTransformAdapter.h` | `modules/simulation/src/robotics/GripperTransformAdapter.cpp` |
+| Gripper contact / fixed-constraint adapter | `modules/simulation/include/simulation/robotics/GripperGraspAdapter.h` | `modules/simulation/src/robotics/GripperGraspAdapter.cpp` |
+| Gripper collision proxy setup | `modules/simulation/include/simulation/robotics/GripperColliders.h` | `modules/simulation/src/robotics/GripperColliders.cpp` |
+| Robot collision geometry builder | `modules/simulation/include/simulation/robotics/RobotCollisionGeometryBuilder.h` | `modules/simulation/src/robotics/RobotCollisionGeometryBuilder.cpp` |
+| Physics ECS synchronization | `modules/simulation/include/simulation/systems/PhysicsSystemModule.h` | `modules/simulation/src/systems/PhysicsSystemModule.cpp` |
+| Numeric provenance and transform classification | [Model Data Provenance](MODEL_DATA_PROVENANCE.md) | Documentation |
 
 이 문서보다 코드/자산이 변경되면 위 source-of-truth를 먼저 확인하고 문서를 함께 갱신한다.

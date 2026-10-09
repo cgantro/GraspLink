@@ -28,8 +28,7 @@ modules/
 ├─ simulation/                     # ECS 물리 연결 / 로봇 충돌 프록시 / 바닥 설정
 ├─ gui/                            # ImGui / 설정된 collider 표시
 └─ viewer/                         # OpenGL/Flecs/GLB visualization
-   ├─ include/viewer/robotics/     # Robot state -> Flecs transform adapter
-   └─ src/robotics/
+   └─ include/graphics/            # Window, camera, and rendering APIs
 
 assets/                             # GLB / shaders
 docs/                               # 설계 / 사양 문서
@@ -41,7 +40,7 @@ docs/                               # 설계 / 사양 문서
 | --- | --- |
 | 모듈 책임과 의존성 | [Architecture](docs/ARCHITECTURE.md) |
 | Controller 계약과 실행 주기 | [Controller Interface](docs/CONTROLLER_INTERFACE.md), [Control Simulation Goals](docs/CONTROL_SIMULATION_GOALS.md) |
-| 로봇·그리퍼 모델과 데이터 출처 | [HCR-12A + 2F-85 Simulation Specs](docs/HCR12A_2F85_SIMULATION_SPECS.md), [Model Data Provenance](docs/MODEL_DATA_PROVENANCE.md), [GLB Normalization](docs/HCR12A_GLB_NORMALIZATION.md) |
+| 로봇·그리퍼 모델과 데이터 출처 | [HCR-12A + 2F-85 Simulation Specs](docs/HCR12A_2F85_simulation_specs.md), [Model Data Provenance](docs/MODEL_DATA_PROVENANCE.md), [GLB Normalization](docs/HCR12A_GLB_NORMALIZATION.md) |
 | 물리, 충돌, 이동·파지 동작 | [Physics / ECS Integration](docs/PHYSICS_ECS_INTEGRATION.md), [Self-Collision](docs/SELF_COLLISION.md), [Robot Motion and Grasp](docs/ROBOT_MOTION_AND_GRASP.md), [Gripper Runtime Design](docs/GRIPPER_RUNTIME_DESIGN.md) |
 | IK·MoveL 학습 예제 | [HCR-12A TCP 이동 튜토리얼](docs/IK_MOVEL_TUTORIAL.md) |
 | 진단 도구 | [Diagnostics](docs/DIAGNOSTICS.md) |
@@ -61,9 +60,12 @@ Application / IK / Planner
          RobotState
             ↓
       RobotKinematics
-            ├─ RobotTransformAdapter → Flecs / GLB
-            └─ RobotPhysicsAdapter → Kinematic collider Entity
+            └─ RobotKinematicState
+                  ├─ RobotTransformAdapter → Flecs / GLB
+                  └─ RobotPhysicsAdapter → Kinematic collider Entity
 ```
+
+`RobotTransformAdapter`와 `RobotPhysicsAdapter` 구현은 `modules/simulation`에 있다. 앞의 adapter는 GLB 관절 Entity를 갱신하고, 뒤의 adapter는 별도 충돌 Entity를 갱신한다. `modules/viewer`는 렌더링을 담당한다.
 
 `models/`는 로봇이 무엇인지 정의하고, `backends/`는 그 모델을 어떻게 움직이는지 구현한다. 현재 실행 가능한 backend는 시뮬레이션용이며 실제 하드웨어 backend는 제공하지 않는다.
 새 로봇을 추가할 때 기존 Controller interface를 수정하지 않고 `models/<manufacturer>/<model>.h`를 추가하는 방향을 기준으로 한다.

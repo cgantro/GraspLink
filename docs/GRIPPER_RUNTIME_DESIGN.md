@@ -76,6 +76,25 @@ raw speed는 사양의 최소..최대 범위를 위 각속도에 선형 대응�
 
 한쪽 접촉과 양쪽 파지를 구분한다. 양쪽 손끝이 같은 Dynamic 물체에 서로 반대 방향으로 닿으면 본체와 물체의 상대 자세를 유지하는 Jolt 고정 constraint를 만든다. 열기·Reset·Disconnect·Body 삭제나 교체에서는 해제한다. 개별 손가락 적응과 힘·마찰 안정성 계산은 지원하지 않는다. 자세한 원리와 앱 갱신 순서는 [로봇 이동과 파지](ROBOT_MOTION_AND_GRASP.md)를 참고한다.
 
+### 상태 전이 빠른 참조
+
+아래 표는 `SimGripperController`와 접촉 adapter의 동작을 요약한다. `mode`는 연결·활성화·실행 상태이고 `objectStatus`는 접촉 또는 목표 도달 분류이므로 함께 읽는다.
+
+| 동작 또는 조건 | `mode` / `goToActive` | `objectStatus` 및 효과 |
+|---|---|---|
+| `Connect` 성공 | `Inactive` / false | 초기 열린 위치에서 `AtRequestedPosition`; feedback valid |
+| `Activate` 성공 | `Idle` / false | 위치가 기존 목표에 있으면 `AtRequestedPosition`, 다르면 `Moving`; 활성화해도 그 자체로 이동을 시작하지 않음 |
+| 유효한 `Command`가 현재 위치와 다른 목표를 설정 | `Moving` / true | `Moving`; 연속 `closureFraction`이 목표를 향해 진행 |
+| 유효한 `Command`가 현재 위치를 목표로 설정 | `Idle` / false | `AtRequestedPosition` |
+| 닫는 동안 한쪽 손끝만 접촉 | 유지 / 유지 | 정지시키지 않고 반대 손끝이 닿을 기회를 둠 |
+| 닫는 동안 양쪽 손끝이 같은 Dynamic 물체를 반대 방향에서 접촉 | `Stopped` / false | `ContactWhileClosing`; 손가락 닫힘을 멈추고 adapter가 고정 constraint를 생성 |
+| 여는 동안 접촉면이 손가락의 움직임을 막음 | `Stopped` / false | `ContactWhileOpening`; 열림 진행을 멈춤 |
+| `Stop` 중 목표에 도달하지 않음 | `Stopped` / false | `Moving` 분류를 유지해 목표 미도달을 나타냄 |
+| `Reset` 성공 | `Inactive` / false | 현재 위치를 유지; 목표 미도달이면 `Moving` 분류가 남을 수 있음 |
+| `Disconnect` | `Disconnected` / false | 상태 snapshot invalid, `closureFractionValid=false`; constraint 해제 |
+
+이 표는 Simulation backend에 한정된다. `SimGripperController`는 요청 입력을 처리하고 `GripperGraspAdapter`는 Jolt 접촉과 fixed constraint를 관리한다. 구현 기준은 `modules/robotics/src/backends/simulation/SimGripperController.cpp`, `modules/simulation/src/robotics/GripperGraspAdapter.cpp`다.
+
 ## 검증
 
 CPU 회귀는 연결·활성화·raw 범위·속도·dt·목표 교체·정지·reset·재연결·상태 복사,

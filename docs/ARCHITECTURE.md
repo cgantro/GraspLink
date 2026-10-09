@@ -49,6 +49,8 @@ IRobotController
 
 `RobotKinematics` is the shared source of robot pose. It derives parent-relative offsets from consecutive base-frame bind pivots and accumulates joint rotations for the serial chain. Viewer and Physics consume the same result instead of separately interpreting joint axes and angles. Robotics model data uses plain scalar/vector/quaternion types and does not depend on GLM, Flecs, or Jolt.
 
+Controller 호출 계약과 status/error 구분은 [Controller Interface](CONTROLLER_INTERFACE.md), HCR-12A 및 2F-85 수치의 출처 분류는 [Model Data Provenance](MODEL_DATA_PROVENANCE.md)와 [Simulation Specification](HCR12A_2F85_simulation_specs.md)을 참고한다.
+
 FK는 모델에 ToolFrame이 있으면 `toolFrameInBaseFrame`을 제공한다. `DampedLeastSquaresIk`는 ToolFrame에 고정 공구 변환을 더해 TCP 목표를 만드는 관절각을 계산한다. `SimRobotController::MovePose`는 현재 자세 seed의 IK 결과를 관절 공간에서 검증해 이동하며, 미션은 비동기 `BeginPosePlanning`을 사용한다. MoveJ는 직접 관절 경로가 막힐 때 제한된 RRT-Connect를 시도하지만 TCP 직선은 보장하지 않는다. `MoveLinear`은 TCP의 직선 위치와 최단 회전 경로를 따라가며, 직전 표본 해를 seed로 이어갈 수 없을 때만 대체 IK 분기를 탐색한다. `tcpPoseValid=true`인 시뮬레이션 상태는 Robot base 기준 모델 FK 결과이며 실제 장치 측정값이 아니다. 관절과 TCP의 속도·가속도는 시뮬레이션 궤적 정책으로 제한하지만, 로봇 토크·질량·관성 기반 동역학은 구현하지 않았다. Hardware Gripper backend도 구현하지 않았다. 상세 계약은 [로봇 이동과 파지](ROBOT_MOTION_AND_GRASP.md)를 참고한다.
 
 `RobotTransformAdapter`는 계산한 자세를 GLB 관절 계층에 적용한다. `RobotPhysicsAdapter`는 연결된 GLB 메시에서 각 링크의 Convex Hull을 만들고, 그리퍼 형상은 별도 설정 함수가 처리한다. Robot base에도 고정 Environment 충돌 형상을 둔다. `ConfigureTwoF85Colliders`는 GLB 메시를 축약한 hull로 Gripper-layer Kinematic proxy 7개를 만들며, 각 proxy의 위치는 소유 body 또는 joint를 기준으로 둔다. Robot과 Gripper의 충돌 프록시는 Kinematic이며 관절 동역학은 계산하지 않는다.
@@ -78,13 +80,16 @@ GUI 요청 → IGripperController / SimGripperController
 ```text
 FixedControlLoop
 → GripperGraspAdapter BeforePhysicsStep: 파지 해제와 Body 수명 확인
+→ RobotCollisionGuard CaptureSafeJointPose
 → RobotController + GripperController Update
 → RobotKinematics + GripperKinematics
-→ Viewer + Simulation pose adapters
+→ Simulation pose adapters: GLB 관절과 Kinematic collision Entity 갱신
 → TransformSystemModule World transforms
-→ PhysicsSystemModule PrePhysicsSync: 설정 재구성 / Scene-driven 목표 전달
-→ PhysicsWorld Step
-→ PhysicsSystemModule PostPhysicsSync: Physics-driven Dynamic 결과를 Local에 직접 저장
+→ RobotCollisionGuard: 후보 충돌 검사, 겹치면 안전 자세 복원
+→ PhysicsSystemModule::Step
+   ├─ PrePhysicsSync: 설정 재구성 / Scene-driven 목표 전달
+   ├─ PhysicsWorld Step
+   └─ PostPhysicsSync: Physics-driven Dynamic 결과를 Local에 직접 저장
 → GripperGraspAdapter AfterPhysicsStep: 접촉 피드백과 양쪽 파지 연결
 → TransformSystemModule World transforms 재갱신
 → Render frame: TransformSystemModule / RenderSystemModule

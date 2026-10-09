@@ -115,6 +115,8 @@ int main()
 
 이 코드는 현 API를 이용한 독립적인 Simulation 예제다. 목표는 FK로 생성하므로 끝점은 모델상 도달 가능한 자세지만, 임의의 실제 작업 경로가 성공한다는 보장은 아니다. 시뮬레이터에서 사용하려면 기존 앱처럼 `SetJointStateValidityChecker`로 충돌 검사를 연결하고, 각 고정 tick에서 Controller·FK·World 변환·Physics를 정해진 순서로 갱신해야 한다. 동작 수락 결과와 목표 도달은 별개이므로 마지막 `GetState()`의 유효성, `mode`, `tcpPoseValid`를 확인한다.
 
+예제의 마지막 `Idle` 검사는 동작이 끝났음을 확인하지만 목표 TCP 오차 자체를 검사하지는 않는다. 결과를 수치로 확인하려면 최종 `jointPositionRadians`를 `DampedLeastSquaresIk::EvaluateTcp`에 넣어 `targetPoses`의 목표와 위치·방향 오차를 비교한다. 코드의 경로 검증 기준은 위치 1 mm와 방향 0.001 rad이며 표본 기반 허용치다. 요청이 수락됐거나 Controller가 `Idle`이라는 사실만으로 이 오차 검사를 통과했다고 해석하지 않는다.
+
 ## 확인 기준과 저장소 내 검증 위치
 
 경로가 수락됐는지만으로 끝점을 확인했다고 볼 수 없다. 검증할 때는 시작과 완료의 `RobotState`에서 `valid`, `tcpPoseValid`, `mode`를 확인하고, 최종 관절각을 `DampedLeastSquaresIk::EvaluateTcp`에 다시 넣어 요청한 TCP 끝점과 비교한다. 경로의 중간 표본도 요청한 선에서 벗어나는 정도를 확인한다. 기본 경로 정책은 TCP 위치 오차 1 mm, 방향 오차 0.001 rad 이하를 기준으로 표본을 보정하지만, 표본 사이의 모든 자세에 대한 증명이나 환경 전체에서의 성공을 뜻하지 않는다. 충돌을 확인하려면 실제 앱의 Jolt 검사 callback도 연결해야 한다.

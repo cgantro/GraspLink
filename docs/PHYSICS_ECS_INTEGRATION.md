@@ -14,6 +14,8 @@
 
 `PhysicsWorld`는 Flecs와 OpenGL을 모른다. `PhysicsSystemModule`은 `modules/simulation`에서 Flecs 설정을 Jolt Body로 연결한다. `PhysicsBodyHandle`은 Physics API 내부의 불투명 핸들이며, 앱과 Entity 생성 코드는 이를 보관하지 않는다.
 
+이 문서는 fixed tick, Transform 좌표계와 physics-body 수명 세부 계약을 다룬다. 상위 모듈 의존성은 [Architecture](ARCHITECTURE.md), 후보 self-collision 허용 쌍은 [Self-Collision](SELF_COLLISION.md), Controller API 상태는 [Controller Interface](CONTROLLER_INTERFACE.md)를 참고한다.
+
 물리 객체는 Entity에 설정 컴포넌트를 붙여 선언한다.
 
 ```cpp
@@ -31,22 +33,24 @@ Entity의 `Rotation, Local`은 단위 `glm::quat`이다. FK quaternion은 정규
 
 Physics가 있는 Entity와 모든 조상 Entity는 unit scale이어야 한다. 단, Static Environment collider는 Entity 자신의 시각 scale을 허용한다. Floor Mesh의 authored scale은 Render 표현에만 쓰고, collider 크기와 offset은 meter 단위로 직접 지정한다. Jolt rigid body pose에는 scale이 포함되지 않는다.
 
-4 ms 고정 스텝 흐름은 다음과 같다.
+4 ms 고정 tick은 아래 순서로 진행된다. `PhysicsSystemModule::Step()` 안에서 PrePhysicsSync, Jolt step, PostPhysicsSync가 이어진다. 충돌 guard는 Controller 갱신과 FK 적용 뒤, physics step 전에 현재 후보 자세를 검사한다.
 
 ```text
-GripperGraspAdapter: 이전 파지 해제 / Body handle 수명 확인
-RobotController / GripperController Update
+GripperGraspAdapter::BeforePhysicsStep: 이전 파지 해제 / Body handle 수명 확인
+→ RobotCollisionGuard::CaptureSafeJointPose
+→ RobotController / GripperController Update
 → RobotKinematics: RobotState → joint rotation / link pose
 → RobotTransformAdapter: joint rotation → GLB Joint Entity
 → RobotPhysicsAdapter: link pose → Kinematic collision Entity
 → GripperKinematics: 연속 closureFraction → master/mimic Local 회전
 → GripperTransformAdapter: bind 회전과 결합 → GLB 관절 Local 회전
 → TransformSystemModule: Local → World matrix
-→ PrePhysicsSync: Body 설정 재구성 / Static·Kinematic Scene 목표 → Jolt
-→ PhysicsWorld Step
-→ PostPhysicsSync: Dynamic Jolt pose → Entity Local 위치·회전 직접 저장
-→ GripperGraspAdapter: 접촉 상태 / 개폐 정지 / 같은 물체 양쪽 파지 검사
-→ Viewer: 각 fixed tick에서 갱신한 Robot·Gripper 자세의 Environment 또는 허용되지 않은 자가 충돌을 물리 반영 전에 검사; 겹침이면 직전 안전 관절각으로 복원하고 오류 code를 기록한 뒤 Controller를 Idle로 둠
+→ RobotCollisionGuard::RestoreSafePoseIfOverlapping: 후보 자세 검사; 겹치면 직전 안전 관절각으로 복원하고 오류 code 기록 및 Controller Idle 전환
+→ PhysicsSystemModule::Step
+   ├─ PrePhysicsSync: Body 설정 재구성 / Static·Kinematic Scene 목표 → Jolt
+   ├─ PhysicsWorld Step
+   └─ PostPhysicsSync: Dynamic Jolt pose → Entity Local 위치·회전 직접 저장
+→ GripperGraspAdapter::AfterPhysicsStep: 접촉 상태 / 개폐 정지 / 같은 물체 양쪽 파지 검사
 → TransformSystemModule: World matrix 재갱신
 ```
 

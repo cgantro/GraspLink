@@ -117,6 +117,28 @@ Time            s
 
 위 quaternion 순서는 `CartesianPose`의 배열 기준이다. 모델/FK의 `QuaternionWxyz`는 wxyz 순서이며, 어댑터가 타입에 맞춰 명시적으로 변환한다.
 
+## 호출 전제와 상태 확인
+
+`Result`가 성공이면 요청을 받았다는 뜻이다. 관절 또는 TCP 목표 도달은 `GetState()`에서 `valid`, `mode`, `errorCode`를 확인해 판단한다. 비동기 계획의 완료는 계획 결과와 동작 완료를 구분한다.
+
+| 호출 | Simulation의 주요 전제 | 실패 또는 완료 확인 |
+|---|---|---|
+| `MoveJoint` | 연결됨; 목표 관절 수가 모델과 같고 각도가 한계 안에 있음; `velocityScale`, `accelerationScale`이 유한한 `(0,1]` 값 | 연결되지 않으면 `NotConnected`, 잘못된 입력이면 `InvalidCommand`, 계획 중이면 `Busy`; 성공 뒤 `GetState().mode`가 `Idle`인지 확인 |
+| `MovePose` / `BeginPosePlanning` | 연결됨; ToolFrame이 있는 모델; 목표는 Robot base 기준 | 도구 frame이 없으면 `Unsupported`; IK·경로 실패는 `errorCode`/`Result.code`; 계획 완료 후에도 이동 종료를 `GetState()`로 확인 |
+| `MoveLinearPath` / `BeginLinearPathPlanning` | 연결됨; 비어 있지 않은 waypoint; 각 속도·가속도 제한이 유한한 양수; ToolFrame이 있는 모델 | 비동기 시작 뒤 `IsMotionPlanning()`이 false가 될 때 `TakeMotionPlanningResult()`를 읽고, 성공 결과와 이후 `GetState()`의 동작 상태를 각각 확인 |
+| `IGripperController::Command` (Simulation) | 연결과 활성화가 완료됨; 위치·속도·힘 code가 각 specification 범위 안에 있음 | 연결 없음은 `NotConnected`, 미활성화는 `Busy`, 범위 밖 code는 `InvalidCommand`; 도달·접촉은 `GetState().objectStatus`로 구별 |
+
+Simulation이 사용하는 주요 `ErrorCode` 분류는 다음과 같다. 이 표는 공통 분류를 찾기 위한 것이며, 하드웨어 backend의 장치별 원본 오류 code를 해석하지 않는다.
+
+| 분류 | 확인할 상황 |
+|---|---|
+| `NotConnected`, `Busy`, `InvalidCommand`, `Unsupported` | 연결, 다른 계획 진행 여부, 요청값, backend 기능 지원 확인 |
+| `Unreachable`, `JointLimitReached`, `IkDidNotConverge` | 각각 보수적 도달 거리 한계, 해당 IK seed에서 관절 한계에 의한 정체, 반복 한도 또는 국소 정체. 후자의 두 결과는 다른 seed에서도 해가 없음을 증명하지 않는다. |
+| `EnvironmentContact`, `SelfCollision`, `AttachedObjectCollision` | 충돌 검사에서 거부된 환경·자가 충돌·부착 물체 상태. `EnvironmentContact`는 Viewer의 현재 tick 복원도 나타낼 수 있다. |
+| `Cancelled`, `Fault`, `TransportError` | 취소된 소프트웨어 작업, 구현 오류, 통신 오류. 공통 `Fault`만으로 장비 보호 정지를 추정하지 않는다. |
+
+`RobotMode::Planning`은 계획 작업 중 관절 자세를 유지하는 상태이고 `Moving`은 실행 중이다. `Stopped`는 소프트웨어 정지를 나타낸다. Gripper에서는 `mode`가 연결·활성화·실행 상태를, `objectStatus`가 이동·접촉·요청 위치 도달을 나타낸다. `Stopped`인데 `objectStatus == AtRequestedPosition`이 아닐 수 있으므로 두 필드를 함께 읽는다.
+
 ## Simulation backend
 
 `SimRobotController`는 `RobotSpecification`을 생성자에서 받고 모델의 joint count/limit/max velocity를 그대로 사용한다.
@@ -134,7 +156,7 @@ Controller는 관절 목표를 검증하고, 관절 속도·Simulation 가속 �
 
 `forceRequest`는 범위만 검사하고 전류와 실제 힘은 계산하지 않으므로 `currentValid=false`다. 물리 접촉은 `GripperGraspAdapter`가 전달하며 Controller는 접촉 시 현재 위치에서 멈추고 `ContactWhileOpening` 또는 `ContactWhileClosing`을 보고한다. 양쪽 손끝이 같은 Dynamic 물체를 서로 반대 방향에서 만지면 adapter가 고정 constraint로 물체를 유지한다. 실제 마찰 파지력과 개별 손가락 적응은 계산하지 않는다. 세부 상태 전이는 [그리퍼 런타임 설계](GRIPPER_RUNTIME_DESIGN.md)를 참고한다.
 
-## Viewer adapter
+## Simulation adapters
 
 ```text
 modules/simulation/include/simulation/robotics/RobotTransformAdapter.h
@@ -143,9 +165,9 @@ modules/simulation/include/simulation/robotics/GripperTransformAdapter.h
 modules/simulation/src/robotics/GripperTransformAdapter.cpp
 ```
 
-`RobotKinematics`가 `RobotState`를 pose로 바꾸고, `RobotTransformAdapter`는 그 결과를 Flecs/GLB transform으로 표현한다. Viewer는 FK나 제어 로직을 수행하지 않는다. 그리퍼의 기구학은 robotics 모듈이 계산하고, simulation adapter가 GLB 관절과 충돌 프록시 변환에 반영한다.
+`RobotKinematics`가 `RobotState`를 pose로 바꾸고, `RobotTransformAdapter`는 그 결과를 Flecs/GLB transform으로 표현한다. 두 adapter의 구현은 `modules/simulation`에 있다. Viewer는 FK나 제어 로직을 수행하지 않는다. 그리퍼의 기구학은 robotics 모듈이 계산하고, simulation adapter가 GLB 관절을 갱신한다. 관절 자식인 그리퍼 충돌 프록시는 계층 변환을 따라가므로 별도 pose adapter가 없다.
 
-`GripperKinematics`는 분기형 여섯 관절의 master/mimic Local 회전 변화만 계산한다. `GripperTransformAdapter`는 저장한 bind 회전에 변화량을 오른쪽으로 곱하고 원본 Local 위치·크기·장착 변환을 보존한다. 앱은 4 ms마다 파지 해제 확인 → 두 Controller 갱신 → 팔·그리퍼 자세 적용 → World 변환 갱신 → Jolt step → 접촉 피드백과 파지 연결 → World 변환 재갱신 순서를 연결한다. 기존 일곱 그리퍼 proxy는 관절 자식이므로 같은 World 변환을 따른다. GUI는 Controller에 요청을 보내고 상태 복사본과 실제 접촉·파지 상태를 표시한다.
+`GripperKinematics`는 분기형 여섯 관절의 master/mimic Local 회전 변화만 계산한다. `GripperTransformAdapter`는 저장한 bind 회전에 변화량을 오른쪽으로 곱하고 원본 Local 위치·크기·장착 변환을 보존한다. 고정 tick에서는 파지 해제와 안전 자세 저장 뒤 두 Controller를 갱신하고, 팔·그리퍼 자세를 적용한다. World 변환을 갱신한 다음 collision guard가 겹침을 검사하고 필요하면 안전 관절 자세를 복원한다. 이어서 Jolt step과 접촉 피드백·파지 연결을 수행하고 World 변환을 다시 갱신한다. 세부 호출 순서는 [Physics / Flecs Integration](PHYSICS_ECS_INTEGRATION.md)을 참고한다. 기존 일곱 그리퍼 proxy는 관절 자식이므로 같은 World 변환을 따른다. GUI는 Controller에 요청을 보내고 상태 복사본과 실제 접촉·파지 상태를 표시한다.
 
 ## Hardware backend 예정
 
@@ -156,3 +178,7 @@ robotics/backends/hardware/robotiq/
 
 Hanwha backend는 HCR TCP/IP/Modbus TCP/Rodi adapter를 내부에 숨긴다.
 Robotiq backend는 Modbus RTU RS-485 register packing/parsing을 내부에 숨긴다.
+
+## 더 읽기와 코드 기준
+
+이 문서는 공통 Controller 계약과 현재 Simulation backend의 차이를 요약한다. 이동·waypoint 의미는 [로봇 이동과 파지](ROBOT_MOTION_AND_GRASP.md), TCP 호출 예제는 [IK·MoveL 튜토리얼](IK_MOVEL_TUTORIAL.md), 고정 tick과 physics 연결 순서는 [Physics / Flecs Integration](PHYSICS_ECS_INTEGRATION.md)에 있다. 공통 계약은 `modules/robotics/include/robotics/core/IRobotController.h` 및 `IGripperController.h`, Simulation 동작은 `modules/robotics/src/backends/simulation/SimRobotController.cpp`와 `SimGripperController.cpp`가 코드 기준이다.
