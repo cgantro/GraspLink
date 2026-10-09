@@ -10,6 +10,7 @@
 #include "scene/Scene.h"
 #include "simulation/components/PhysicsComponents.h"
 #include "scene/TransformSystemModule.h"
+#include "physics/PhysicsWorld.h"
 
 #include <imgui.h>
 
@@ -101,6 +102,7 @@ TEST(GuiComposition, DrawingPreservesControllerAndColliderVisibility)
         Window window(properties);
         flecs::world world;
         world.import<TransformSystemModule>();
+        grasplink::physics::PhysicsWorld physicsRuntime;
         auto scene = std::make_unique<Scene>(world);
         Check(scene->GetSceneRoot().is_alive(), "Scene owns a live hierarchy root");
         Entity collider = scene->CreateEntity("ConfiguredShapes");
@@ -144,6 +146,19 @@ TEST(GuiComposition, DrawingPreservesControllerAndColliderVisibility)
         };
 
         Check(drawFrame(true) > 0, "configured shapes generate foreground wire lines");
+        grasplink::physics::CollisionShapeDescription box;
+        box.type = grasplink::physics::CollisionShapeType::Box;
+        box.halfExtentsMeters = glm::vec3(0.25F);
+        collider.set(Colliders{{box}});
+        const int boxVertices = drawFrame(true);
+        grasplink::physics::CollisionShapeDescription hull;
+        hull.type = grasplink::physics::CollisionShapeType::ConvexHull;
+        for (int corner = 0; corner < 8; ++corner)
+            hull.pointsMeters.push_back({(corner & 1) ? 0.25F : -0.25F,
+                (corner & 2) ? 0.25F : -0.25F, (corner & 4) ? 0.25F : -0.25F});
+        collider.set(Colliders{{hull}});
+        Check(drawFrame(true) == boxVertices,
+            "convex hull overlay draws the same twelve real edges as an equivalent box");
         // 표시를 껐다가 다시 켜면 이전 선이 남지 않고 상자와 볼록 껍질이 각각 새 선을 만드는지 확인한다.
         for (const auto& shape : ConfiguredShapes().shapes)
         {

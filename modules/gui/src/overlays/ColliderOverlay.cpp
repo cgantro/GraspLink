@@ -4,6 +4,8 @@
 #include "simulation/components/PhysicsComponents.h"
 #include "scene/TransformComponents.h"
 
+#include <Jolt/Jolt.h>
+#include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
 #include <imgui.h>
 #include <glm/gtx/matrix_decompose.hpp>
 #include <glm/gtx/quaternion.hpp>
@@ -11,6 +13,9 @@
 #include <array>
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace grasplink::gui
@@ -84,48 +89,77 @@ void DrawBox(std::vector<ScreenLine>& lines, const grasplink::physics::Collision
                     viewProjection, displaySize, color);
 }
 
-/** @brief Hull에 입력된 정점을 화면에 투영한 다음 2D 바깥 윤곽선을 만든다. 실제 3D 면이나 모서리 정보는 사용하지 않는다. */
-void DrawConvexHull(std::vector<ScreenLine>& lines, const grasplink::physics::CollisionShapeDescription& shape,
-    const glm::mat4& entityWorld, const glm::mat4& viewProjection,
-    const ImVec2& displaySize, ImU32 color)
+/** @brief Jolt가 구성한 3D 볼록 껍질의 실제 모서리를 저장한다. */
+struct HullWireframe
 {
-    const glm::mat4 world = entityWorld * LocalShapeMatrix(shape.localTransform);
-    std::vector<ImVec2> points;
-    points.reserve(shape.pointsMeters.size());
-    for (const glm::vec3& point : shape.pointsMeters)
-    {
-        ImVec2 screen;
-        if (Project(glm::vec3{world * glm::vec4{point, 1.0F}}, viewProjection, displaySize, screen))
-            points.push_back(screen);
-    }
-    if (points.size() < 3) return;
+    std::vector<glm::vec3> sourcePoints;
+    std::vector<std::pair<glm::vec3, glm::vec3>> edges;
+};
 
-    // 투영된 점들을 둘러싸는 2D 볼록 윤곽을 연결한다. 이는 카메라 화면에서의 외곽선이며 3D 볼록 껍질의 실제 모서리를 복원하지 않는다.
-    std::sort(points.begin(), points.end(), [](const ImVec2& a, const ImVec2& b)
-        { return a.x == b.x ? a.y < b.y : a.x < b.x; });
-    auto cross = [](const ImVec2& a, const ImVec2& b, const ImVec2& c)
-        { return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x); };
-    std::vector<ImVec2> hull;
-    hull.reserve(points.size() * 2);
-    for (const ImVec2& point : points)
-    {
-        while (hull.size() >= 2 && cross(hull[hull.size() - 2], hull.back(), point) <= 0.0F)
-            hull.pop_back();
-        hull.push_back(point);
-    }
-    const std::size_t lowerSize = hull.size();
-    for (auto iterator = points.rbegin() + 1; iterator != points.rend(); ++iterator)
-    {
-        while (hull.size() > lowerSize && cross(hull[hull.size() - 2], hull.back(), *iterator) <= 0.0F)
-            hull.pop_back();
-        hull.push_back(*iterator);
-    }
-    if (hull.size() > 2) hull.pop_back();
-    for (std::size_t i = 0; i < hull.size(); ++i)
-        lines.push_back({hull[i], hull[(i + 1) % hull.size()], color});
+bool HasSamePoints(const HullWireframe& wireframe,
+    const grasplink::physics::CollisionShapeDescription& shape)
+{
+    if (wireframe.sourcePoints.size() != shape.pointsMeters.size())
+        return false;
+    return std::equal(wireframe.sourcePoints.begin(), wireframe.sourcePoints.end(),
+        shape.pointsMeters.begin(), [](const glm::vec3& left, const glm::vec3& right)
+        {
+            return left.x == right.x && left.y == right.y && left.z == right.z;
+        });
 }
 
-/** @brief PhysicsDebugPanel의 범례와 같은 색을 충돌 그룹마다 선택한다. */
+HullWireframe BuildHullWireframe(const grasplink::physics::CollisionShapeDescription& shape)
+{
+    HullWireframe wireframe;
+    wireframe.sourcePoints = shape.pointsMeters;
+    if (shape.pointsMeters.size() < 4)
+        return wireframe;
+
+    JPH::Array<JPH::Vec3> points;
+    points.reserve(shape.pointsMeters.size());
+    for (const glm::vec3& point : shape.pointsMeters)
+        points.emplace_back(point.x, point.y, point.z);
+    const JPH::ConvexHullShapeSettings settings(points, 0.0F);
+    const auto result = settings.Create();
+    if (result.HasError())
+        return wireframe;
+
+    const auto* hull = static_cast<const JPH::ConvexHullShape*>(result.Get().GetPtr());
+    const JPH::Vec3 centerOfMass = hull->GetCenterOfMass();
+    std::unordered_set<std::uint64_t> seenEdges;
+    std::vector<JPH::uint> faceVertices(hull->GetNumPoints());
+    for (JPH::uint face = 0; face < hull->GetNumFaces(); ++face)
+    {
+        const JPH::uint vertexCount = hull->GetFaceVertices(face,
+            static_cast<JPH::uint>(faceVertices.size()), faceVertices.data());
+        for (JPH::uint index = 0; index < vertexCount; ++index)
+        {
+            const JPH::uint first = faceVertices[index];
+            const JPH::uint second = faceVertices[(index + 1) % vertexCount];
+            const auto low = std::min(first, second);
+            const auto high = std::max(first, second);
+            const std::uint64_t key = (static_cast<std::uint64_t>(low) << 32U) | high;
+            if (!seenEdges.insert(key).second)
+                continue;
+
+            const JPH::Vec3 firstPoint = hull->GetPoint(first) + centerOfMass;
+            const JPH::Vec3 secondPoint = hull->GetPoint(second) + centerOfMass;
+            wireframe.edges.emplace_back(
+                glm::vec3{firstPoint.GetX(), firstPoint.GetY(), firstPoint.GetZ()},
+                glm::vec3{secondPoint.GetX(), secondPoint.GetY(), secondPoint.GetZ()});
+        }
+    }
+    return wireframe;
+}
+
+void DrawConvexHull(std::vector<ScreenLine>& lines, const grasplink::physics::CollisionShapeDescription& shape,
+    const HullWireframe& wireframe, const glm::mat4& entityWorld,
+    const glm::mat4& viewProjection, const ImVec2& displaySize, ImU32 color)
+{
+    const glm::mat4 world = entityWorld * LocalShapeMatrix(shape.localTransform);
+    for (const auto& [from, to] : wireframe.edges)
+        DrawLine(lines, from, to, world, viewProjection, displaySize, color);
+}
 ImU32 LayerColor(grasplink::physics::CollisionLayer layer)
 {
     switch (layer)
@@ -158,6 +192,7 @@ struct ColliderOverlay::Impl
     // ECS에 지정된 Collider 형상과 최신 World 행렬을 읽어 선을 만든다. Jolt가 내부에서 최적화하거나 바꾼 실제 충돌 형상은 읽지 않는다.
     flecs::query<const RigidBody, const Colliders, const grasplink::scene::TransformMatrix> colliderQuery;
     std::vector<ScreenLine> collisionLines;
+    std::unordered_map<const grasplink::physics::CollisionShapeDescription*, HullWireframe> hullWireframes;
     std::chrono::steady_clock::time_point nextCollisionRefresh{};
     ImVec2 cachedDisplaySize{};
     bool wasVisible = false;
@@ -178,7 +213,7 @@ struct ColliderOverlay::Impl
             {
                 RefreshCollisionLines(camera, viewportSize);
                 cachedDisplaySize = viewportSize;
-                nextCollisionRefresh = now + std::chrono::milliseconds(100);
+                nextCollisionRefresh = now + std::chrono::milliseconds(50);
             }
             // 픽셀 좌표를 캐시하므로 카메라가 움직여도 다음 갱신 전까지는 이전 위치의 선을 표시한다.
             // 전경 draw list는 깊이 버퍼를 확인하지 않으므로 다른 물체 뒤에 가려진 Collider 선도 화면에 나타난다.
@@ -196,6 +231,7 @@ struct ColliderOverlay::Impl
     void RefreshCollisionLines(const grasplink::graphics::Camera& camera, const ImVec2& displaySize)
     {
         collisionLines.clear();
+        std::unordered_set<const grasplink::physics::CollisionShapeDescription*> visibleHulls;
         // View와 Projection 행렬을 차례로 적용해 Scene 좌표를 화면 투영 전 좌표로 옮긴다.
         // PhysicsTransform에서 제외한 Entity 크기 배율은 이 선에도 적용하지 않는다.
         const glm::mat4 viewProjection = camera.GetProjectionMatrix() * camera.GetViewMatrix();
@@ -212,11 +248,25 @@ struct ColliderOverlay::Impl
                     DrawBox(collisionLines, shape, entityWorld, viewProjection, displaySize, color);
                     break;
                 case grasplink::physics::CollisionShapeType::ConvexHull:
-                    DrawConvexHull(collisionLines, shape, entityWorld, viewProjection, displaySize, color);
+                {
+                    visibleHulls.insert(&shape);
+                    auto [wireframe, inserted] = hullWireframes.try_emplace(&shape);
+                    if (inserted || !HasSamePoints(wireframe->second, shape))
+                        wireframe->second = BuildHullWireframe(shape);
+                    DrawConvexHull(collisionLines, shape, wireframe->second,
+                        entityWorld, viewProjection, displaySize, color);
                     break;
+                }
                 }
             }
         });
+        for (auto wireframe = hullWireframes.begin(); wireframe != hullWireframes.end();)
+        {
+            if (visibleHulls.count(wireframe->first) == 0)
+                wireframe = hullWireframes.erase(wireframe);
+            else
+                ++wireframe;
+        }
     }
 };
 

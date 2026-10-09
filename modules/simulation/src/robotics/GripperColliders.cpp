@@ -12,6 +12,7 @@
 
 #include <array>
 #include <cmath>
+#include <iterator>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -24,7 +25,7 @@ namespace grasplink::simulation
 using grasplink::model::MeshData;
 using grasplink::model::ModelResource;
 using grasplink::model::NodeData;
-using grasplink::model::Vertex;
+using grasplink::model::SubMeshInfo;
 using grasplink::scene::Entity;
 using grasplink::scene::Scene;
 
@@ -72,7 +73,7 @@ bool HasName(const Entity& entity, const std::string& expected)
     return name != nullptr && expected == name;
 }
 
-std::vector<glm::vec3> MeshPoints(const ModelResource& model,
+std::vector<physics::CollisionShapeDescription> MeshShapes(const ModelResource& model,
     const std::vector<glm::mat4>& nodeTransforms, std::size_t meshNodeIndex, std::size_t rootIndex)
 {
     const NodeData& node = model.nodes[meshNodeIndex];
@@ -82,18 +83,41 @@ std::vector<glm::vec3> MeshPoints(const ModelResource& model,
     // 모델 작성자가 지정한 소유 root 변환은 proxy의 부모 계층에 남겨 둔다. 실행 중 Scene이 이 변환을 한 번 적용한다.
     const glm::mat4 meshToRoot = glm::inverse(nodeTransforms[rootIndex]) * nodeTransforms[meshNodeIndex];
     const MeshData& mesh = model.meshes[static_cast<std::size_t>(node.meshIndex)];
-    std::vector<glm::vec3> vertices;
-    for (const Vertex& vertex : mesh.vertices)
+    std::vector<physics::CollisionShapeDescription> shapes;
+    for (const SubMeshInfo& primitive : mesh.subMeshes)
     {
-        if (!Finite(vertex.position)) throw std::invalid_argument("TwoF85 mesh has a non-finite vertex.");
-        const glm::vec4 transformed = meshToRoot * glm::vec4(vertex.position, 1.0F);
-        const glm::vec3 point(transformed);
-        if (!Finite(point)) throw std::invalid_argument("TwoF85 mesh transform is not finite.");
-        vertices.push_back(point);
+        const std::size_t end = static_cast<std::size_t>(primitive.indexStart) + primitive.indexCount;
+        if (end > mesh.indices.size())
+            throw std::invalid_argument("TwoF85 mesh primitive has an invalid index range.");
+
+        std::vector<bool> usedVertices(mesh.vertices.size(), false);
+        std::vector<glm::vec3> vertices;
+        vertices.reserve(primitive.indexCount);
+        for (std::size_t index = primitive.indexStart; index < end; ++index)
+        {
+            const std::uint32_t vertexIndex = mesh.indices[index];
+            if (vertexIndex >= mesh.vertices.size())
+                throw std::invalid_argument("TwoF85 mesh primitive has an invalid vertex index.");
+            if (usedVertices[vertexIndex])
+                continue;
+            usedVertices[vertexIndex] = true;
+            const glm::vec3& position = mesh.vertices[vertexIndex].position;
+            if (!Finite(position)) throw std::invalid_argument("TwoF85 mesh has a non-finite vertex.");
+            const glm::vec3 point(meshToRoot * glm::vec4(position, 1.0F));
+            if (!Finite(point)) throw std::invalid_argument("TwoF85 mesh transform is not finite.");
+            vertices.push_back(point);
+        }
+
+        auto support = detail::BuildConvexSupportPoints(vertices);
+        if (!detail::HasHullVolume(support))
+            continue;
+        physics::CollisionShapeDescription shape;
+        shape.type = physics::CollisionShapeType::ConvexHull;
+        shape.pointsMeters = std::move(support);
+        shapes.push_back(std::move(shape));
     }
-    const auto support = detail::BuildConvexSupportPoints(vertices);
-    if (!detail::HasHullVolume(support)) throw std::invalid_argument("TwoF85 mesh has a degenerate collision hull.");
-    return support;
+    if (shapes.empty()) throw std::invalid_argument("TwoF85 mesh has no non-degenerate collision primitive.");
+    return shapes;
 }
 }
 
@@ -208,10 +232,9 @@ void ConfigureTwoF85Colliders(Scene& scene, const Entity& robotRoot, const Model
                 modelMeshAncestor = static_cast<std::size_t>(parentIndex);
                 sceneAncestor = sceneAncestor.GetParent();
             }
-            physics::CollisionShapeDescription shape;
-            shape.type = physics::CollisionShapeType::ConvexHull;
-            shape.pointsMeters = MeshPoints(model, nodeTransforms, meshIndex, rootIndex);
-            prepared[p].shapes.push_back(std::move(shape));
+            auto shapes = MeshShapes(model, nodeTransforms, meshIndex, rootIndex);
+            prepared[p].shapes.insert(prepared[p].shapes.end(),
+                std::make_move_iterator(shapes.begin()), std::make_move_iterator(shapes.end()));
         }
     }
 

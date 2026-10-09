@@ -11,6 +11,7 @@
 #include "robotics/models/robotiq/TwoF85.h"
 #include "scene/Scene.h"
 #include "simulation/components/PhysicsComponents.h"
+#include "simulation/components/RobotCollisionProxy.h"
 #include "simulation/robotics/GripperColliders.h"
 #include "simulation/systems/PhysicsSystemModule.h"
 #include "scene/TransformSystemModule.h"
@@ -186,6 +187,9 @@ struct Fixture
             ASSERT_TRUE_MESSAGE(static_cast<bool>(proxy), "proxy remains under owning joint");
             ASSERT_TRUE_MESSAGE(proxy.Get<RigidBody>().motionType == BodyMotionType::Kinematic &&
                     proxy.Get<RigidBody>().collisionLayer == CollisionLayer::Gripper, "proxy motion and layer unchanged");
+            if (std::string(owner) == "Gripper")
+                ASSERT_TRUE(proxy.Get<Colliders>().shapes.size() > 1)
+                    << "separate GLB primitives retain separate gripper body hulls";
             RequireMatrix(proxy.GetWorldMatrix(), joint.GetWorldMatrix(), "proxy shares owning joint World pose");
             ++count;
         };
@@ -464,6 +468,193 @@ void CheckCandidateValidationDoesNotChangeScene()
             "candidate validation leaves every Scene world transform unchanged");
     }
 }
+
+void CheckCandidateProxyTransformsMatchScene()
+{
+    Fixture fixture;
+    fixture.robotRoot.SetLocalPosition({0.31F, 0.08F, -0.27F});
+    fixture.robotRoot.SetLocalRotation(glm::angleAxis(0.63F, glm::normalize(glm::vec3{0.2F, 1.0F, -0.3F})));
+
+    grasplink::simulation::RobotPhysicsAdapter armColliders(
+        *fixture.scene, fixture.robotRoot, models::hanwha::kHcr12a, fixture.model);
+    TransformSystemModule::UpdateWorldTransforms(fixture.world);
+    fixture.integration->Step(0.004);
+
+    const glm::mat4 rootWorld = fixture.robotRoot.GetWorldMatrix();
+    const auto buildRobotCandidates = [&](const grasplink::robotics::RobotState& state,
+                                          std::vector<grasplink::simulation::RobotPhysicsAdapter::CandidateWorldTransform>& output)
+    {
+        armColliders.BuildCandidateWorldTransforms(fixture.armMath.Update(state), rootWorld, output);
+    };
+
+    std::vector<grasplink::simulation::RobotPhysicsAdapter::CandidateWorldTransform> initialRobotCandidates;
+    buildRobotCandidates(fixture.armState, initialRobotCandidates);
+    const auto link6Candidate = std::find_if(initialRobotCandidates.begin(), initialRobotCandidates.end(),
+        [](auto candidate)
+        {
+            return candidate.entity.Has<RobotCollisionProxy>() &&
+                candidate.entity.Get<RobotCollisionProxy>().linkIndex == 5;
+        });
+    ASSERT_TRUE_MESSAGE(link6Candidate != initialRobotCandidates.end(), "initial Link6 candidate exists");
+    const glm::mat4 gripperRootInLink6 = glm::inverse(link6Candidate->worldTransform) * fixture.gripper.GetWorldMatrix();
+
+    fixture.armState.jointPositionRadians = {
+        1.21, -0.44, 0.73, -1.08, 0.92, 2.31};
+    const auto robotState = fixture.armMath.Update(fixture.armState);
+    fixture.armAdapter->Apply(robotState);
+    armColliders.Apply(robotState);
+    TransformSystemModule::UpdateWorldTransforms(fixture.world);
+
+    std::vector<grasplink::simulation::RobotPhysicsAdapter::CandidateWorldTransform> robotCandidates;
+    armColliders.BuildCandidateWorldTransforms(robotState, fixture.robotRoot.GetWorldMatrix(), robotCandidates);
+    for (auto& candidate : robotCandidates)
+        RequireMatrix(candidate.worldTransform, candidate.entity.GetWorldMatrix(),
+            "candidate robot collider frame matches the live Scene frame at a nonzero joint pose");
+
+    for (auto& candidate : robotCandidates)
+    {
+        if (!candidate.entity.Has<RobotCollisionProxy>() ||
+            candidate.entity.Get<RobotCollisionProxy>().linkIndex == RobotCollisionProxy::InvalidLinkIndex)
+            continue;
+
+        const std::size_t linkIndex = candidate.entity.Get<RobotCollisionProxy>().linkIndex;
+        const std::string linkName(models::hanwha::kHcr12a.links[linkIndex].name);
+        std::vector<glm::vec3> renderedVertices;
+        for (std::size_t nodeIndex = 0; nodeIndex < fixture.model.nodes.size(); ++nodeIndex)
+        {
+            const auto& node = fixture.model.nodes[nodeIndex];
+            if (node.meshIndex < 0)
+                continue;
+
+            std::size_t ancestor = nodeIndex;
+            bool belongsToLink = false;
+            while (true)
+            {
+                const auto& ancestorNode = fixture.model.nodes[ancestor];
+                if (ancestorNode.name == linkName)
+                {
+                    belongsToLink = true;
+                    break;
+                }
+                const bool isMovingJoint = std::any_of(
+                    models::hanwha::kHcr12a.joints,
+                    models::hanwha::kHcr12a.joints + models::hanwha::kHcr12a.jointCount,
+                    [&](const auto& joint) { return joint.name == ancestorNode.name; });
+                if (isMovingJoint || ancestorNode.name == "Gripper" || ancestorNode.parentIndex < 0)
+                    break;
+                ancestor = static_cast<std::size_t>(ancestorNode.parentIndex);
+            }
+            if (!belongsToLink)
+                continue;
+
+            const auto& mesh = fixture.model.meshes[static_cast<std::size_t>(node.meshIndex)];
+            const glm::mat4 meshWorld = fixture.nodes[nodeIndex].GetWorldMatrix();
+            for (const auto& vertex : mesh.vertices)
+                renderedVertices.emplace_back(meshWorld * glm::vec4(vertex.position, 1.0F));
+        }
+        ASSERT_FALSE(renderedVertices.empty()) << "rendered mesh vertices exist for " << linkName;
+
+        const auto& shapes = candidate.entity.Get<Colliders>().shapes;
+        for (const auto& shape : shapes)
+            for (const glm::vec3& point : shape.pointsMeters)
+            {
+                const glm::vec3 worldPoint = glm::vec3(candidate.worldTransform * glm::vec4(point, 1.0F));
+                const bool matchesRenderedVertex = std::any_of(
+                    renderedVertices.begin(), renderedVertices.end(),
+                    [&](const glm::vec3& vertex)
+                    {
+                        const glm::vec3 difference = vertex - worldPoint;
+                        return glm::dot(difference, difference) < 1.0e-8F;
+                    });
+                ASSERT_TRUE(matchesRenderedVertex)
+                    << linkName << " collider point is not in the rendered mesh world frame: "
+                    << worldPoint.x << ", " << worldPoint.y << ", " << worldPoint.z;
+            }
+    }
+
+    const auto link6 = std::find_if(robotCandidates.begin(), robotCandidates.end(),
+        [](auto candidate)
+        {
+            return candidate.entity.Has<RobotCollisionProxy>() &&
+                candidate.entity.Get<RobotCollisionProxy>().linkIndex == 5;
+        });
+    ASSERT_TRUE_MESSAGE(link6 != robotCandidates.end(), "posed Link6 candidate exists");
+    const glm::mat4 candidateGripperRoot = link6->worldTransform * gripperRootInLink6;
+
+    std::vector<Entity> gripperProxies;
+    std::vector<Entity> pending{fixture.robotRoot};
+    while (!pending.empty())
+    {
+        Entity entity = pending.back();
+        pending.pop_back();
+        if (entity.Has<GripperCollisionProxy>())
+            gripperProxies.push_back(entity);
+        const auto children = entity.GetChildren();
+        pending.insert(pending.end(), children.begin(), children.end());
+    }
+    ASSERT_FALSE(gripperProxies.empty()) << "gripper collision proxies exist";
+
+    std::vector<glm::mat4> candidateGripperTransforms;
+    fixture.gripperAdapter->BuildCandidateWorldTransforms(
+        fixture.gripperMath.Update(fixture.controller.GetState()), candidateGripperRoot,
+        gripperProxies, candidateGripperTransforms);
+    ASSERT_EQ(candidateGripperTransforms.size(), gripperProxies.size());
+    for (std::size_t index = 0; index < gripperProxies.size(); ++index)
+    {
+        RequireMatrix(candidateGripperTransforms[index], gripperProxies[index].GetWorldMatrix(),
+            "candidate gripper collider frame matches the live Scene frame at a nonzero arm pose");
+
+        const char* ownerName = gripperProxies[index].GetParent().GetHandle().name();
+        ASSERT_NE(ownerName, nullptr);
+        std::vector<glm::vec3> renderedVertices;
+        for (std::size_t nodeIndex = 0; nodeIndex < fixture.model.nodes.size(); ++nodeIndex)
+        {
+            const auto& node = fixture.model.nodes[nodeIndex];
+            if (node.meshIndex < 0)
+                continue;
+
+            std::size_t ancestor = nodeIndex;
+            bool belongsToOwner = false;
+            while (true)
+            {
+                const auto& ancestorNode = fixture.model.nodes[ancestor];
+                if (ancestorNode.name == ownerName)
+                {
+                    belongsToOwner = true;
+                    break;
+                }
+                if (ancestorNode.parentIndex < 0)
+                    break;
+                ancestor = static_cast<std::size_t>(ancestorNode.parentIndex);
+            }
+            if (!belongsToOwner)
+                continue;
+
+            const auto& mesh = fixture.model.meshes[static_cast<std::size_t>(node.meshIndex)];
+            const glm::mat4 meshWorld = fixture.nodes[nodeIndex].GetWorldMatrix();
+            for (const auto& vertex : mesh.vertices)
+                renderedVertices.emplace_back(meshWorld * glm::vec4(vertex.position, 1.0F));
+        }
+        ASSERT_FALSE(renderedVertices.empty()) << "rendered mesh vertices exist for " << ownerName;
+
+        for (const auto& shape : gripperProxies[index].Get<Colliders>().shapes)
+            for (const glm::vec3& point : shape.pointsMeters)
+            {
+                const glm::vec3 worldPoint = glm::vec3(candidateGripperTransforms[index] * glm::vec4(point, 1.0F));
+                const bool matchesRenderedVertex = std::any_of(
+                    renderedVertices.begin(), renderedVertices.end(),
+                    [&](const glm::vec3& vertex)
+                    {
+                        const glm::vec3 difference = vertex - worldPoint;
+                        return glm::dot(difference, difference) < 1.0e-8F;
+                    });
+                ASSERT_TRUE(matchesRenderedVertex)
+                    << ownerName << " collider point is not in the rendered mesh world frame: "
+                    << worldPoint.x << ", " << worldPoint.y << ", " << worldPoint.z;
+            }
+    }
+}
+
 }
 
 /** @brief 실제 GLB의 갈라진 관절 계층에서 연속 개폐가 화면 Entity와 Jolt 충돌 형상에 같은 자세로 반영되는지 확인한다. */
@@ -485,4 +676,9 @@ TEST(GripperPoseIntegration, ColliderFollowsGripperAndSceneCleanup)
 TEST(GripperPoseIntegration, CandidateCollisionValidationLeavesSceneUnchanged)
 {
     CheckCandidateValidationDoesNotChangeScene();
+}
+
+TEST(GripperPoseIntegration, CandidateProxyTransformsMatchScene)
+{
+    CheckCandidateProxyTransformsMatchScene();
 }
