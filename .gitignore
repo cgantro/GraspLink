@@ -45,6 +45,11 @@ _deps/
 *.userosscache
 *.sln.docstates
 /docs/diary/
+!/docs/diary/
+/docs/diary/*
+!/docs/diary/archive/
+!/docs/diary/archive/**
+!/docs/diary/interview-one-page.md
 
 # Operating system files
 .DS_Store
