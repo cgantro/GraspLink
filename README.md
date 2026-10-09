@@ -1,20 +1,14 @@
 # GraspLink
 
-GraspLink is a C++17 simulator for a Hanwha HCR-12A robot arm and Robotiq 2F-85 gripper. It combines OpenGL rendering, Flecs entities, and Jolt Physics to test robot motion and pick-and-place behavior on Windows and in WebAssembly-enabled browsers.
+GraspLink is a simulator for a Hanwha HCR-12A robot arm with a Robotiq 2F-85 gripper. I built it to explore robot motion, collision checks, and pick-and-place behavior in a scene that can run on Windows or in a browser.
 
-## Features
+The simulator brings together C++17, OpenGL, Flecs, and Jolt Physics. It includes forward and inverse kinematics, joint and Cartesian motion planning, and a simple contact-based grasp model. That grasp model attaches an object after both fingers touch it; it does not calculate grip force or reproduce the real gripper’s adaptive mechanism.
 
-- Forward kinematics updates the rendered robot and its physics collision proxies from joint state.
-- Damped least-squares inverse kinematics supports joint-space moves and straight TCP paths.
-- Pick-and-place planning combines collision-checked RRT-Connect travel with linear approach and retreat moves.
-- Jolt Physics simulates the environment and dynamic objects. Grasp attachment is a simplified contact-based constraint, not a force-accurate gripper model.
-- Emscripten builds provide a WebGL 2 browser version with multithreading and a separate single-threaded option.
-
-The simulator backend is software-only. It does not connect to or control physical robot hardware. Robot acceleration and gripper mapping values are configurable simulation policies, not manufacturer-validated specifications.
+GraspLink is software for simulation. It does not connect to or control a physical robot. Motion limits and gripper behavior are simulation settings, not validated operating specifications for hardware.
 
 ## Build on Windows
 
-Open a Visual Studio Developer PowerShell or x64 Native Tools prompt with CMake, Ninja, and MSVC available.
+Use a Visual Studio Developer PowerShell or x64 Native Tools prompt with CMake, Ninja, and MSVC available.
 
 ```powershell
 cmake --preset ninja
@@ -22,55 +16,39 @@ cmake --build --preset ninja-debug
 ctest --test-dir build-ninja-debug --output-on-failure
 ```
 
-To build the release configuration, use `ninja-release` and `build-ninja-release` in the corresponding commands.
-
-Run the simulator from its build directory so the copied shaders and models are available:
+For a release build, use the `ninja-release` configure and build presets. Start the simulator from its build directory so it can find the copied models and shaders:
 
 ```powershell
 cd build-ninja-debug
 .\grasplink_simulator.exe
 ```
 
-The GUI can open or close the gripper and start, pause, reset, or stop the pick-and-place sequence. The configured-collider view shows the simulator's collision proxies; it does not query Jolt's generated contact geometry.
+The control panel can open or close the gripper and start, pause, resume, reset, or stop the pick-and-place task. The collider view shows the simplified shapes used by the simulator, rather than Jolt’s generated contact geometry.
 
 ## Build for the browser
 
-Install and activate the Emscripten SDK, then configure and build the threaded target:
+Install and activate the Emscripten SDK, then run:
 
 ```powershell
 emcmake cmake --preset emscripten-web
 cmake --build --preset emscripten-web
 ```
 
-The output is `build-emscripten-web/index.html`. It contains the browser runtime and assets in one file and can be opened directly for local use. The threaded static deployment is hosted through the Portfolio site, which supplies the cross-origin isolation setup required for `SharedArrayBuffer`.
+The build writes `build-emscripten-web/index.html`, with the runtime and assets packaged into that file. The threaded version uses browser workers, so it needs a browser origin that permits workers and provides cross-origin isolation. The Portfolio site is configured for that deployment. Opening the threaded build as a `file://` URL does not provide those browser features.
 
-For browsers without pthread support, build the single-threaded version:
+If you need a build without pthreads, use the `emscripten-single-thread` preset instead. It writes `build-emscripten-single-thread/index.html`.
 
-```powershell
-emcmake cmake --preset emscripten-single-thread
-cmake --build --preset emscripten-single-thread
-```
+## Where things live
 
-That output is `build-emscripten-single-thread/index.html` and runs Jolt and the logger without worker threads.
-
-## Project structure
-
-| Path | Purpose |
-| --- | --- |
-| `apps/simulator` | Application setup and main loop |
-| `modules/application` | Pick-and-place mission and application flow |
-| `modules/robotics` | Robot models, kinematics, and controller interfaces |
-| `modules/simulation` | Flecs entities and physics synchronization |
-| `modules/physics` | Jolt world and body interfaces |
-| `modules/gui` | ImGui panels and simulation controls |
-| `modules/viewer` | OpenGL rendering and browser graphics backend |
-| `docs` | Architecture, model provenance, and design notes |
+- `apps/simulator` starts the application and runs its main loop.
+- `modules/application` coordinates the pick-and-place task.
+- `modules/robotics` contains the robot model, kinematics, and controller interfaces.
+- `modules/simulation` connects scene entities to physics.
+- `modules/physics` wraps the Jolt world and its body handles.
+- `modules/gui` contains the simulator controls.
+- `modules/viewer` loads models and renders the scene.
+- `docs` explains the architecture, motion behavior, model data, and diagnostics.
 
 ## Documentation
 
-- [Architecture](docs/ARCHITECTURE.md)
-- [Controller interface](docs/CONTROLLER_INTERFACE.md)
-- [Robot and gripper specifications](docs/HCR12A_2F85_simulation_specs.md)
-- [Physics and ECS integration](docs/PHYSICS_ECS_INTEGRATION.md)
-- [Robot motion and grasp behavior](docs/ROBOT_MOTION_AND_GRASP.md)
-- [Diagnostics](docs/DIAGNOSTICS.md)
+Start with the [documentation guide](docs/README.md) if you are looking for a particular topic. The most useful references are [architecture](docs/ARCHITECTURE.md), [controller interface](docs/CONTROLLER_INTERFACE.md), [robot motion and grasping](docs/ROBOT_MOTION_AND_GRASP.md), [physics and Flecs](docs/PHYSICS_ECS_INTEGRATION.md), and [diagnostics](docs/DIAGNOSTICS.md).

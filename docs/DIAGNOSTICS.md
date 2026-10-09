@@ -1,8 +1,10 @@
 # 진단 도구
 
-`grasplink_diagnostics`는 비동기 로그와 의미 지표를 기록한다. `Logger`는 각 기록을 크기가 제한된 큐에 복사하고, 작업자 스레드 하나가 기본 경로 `logs/grasplink.jsonl`에 JSON Lines 형식으로 쓴다. 큐가 가득 차면 제어 주기가 디스크 기록을 기다리지 않도록 새 기록을 버린다. 다만 Error 로그는 큐에 있던 metric 또는 Debug/Info 로그를 대신할 수 있다. `Flush()`는 이미 받은 기록을 모두 쓸 때까지 기다리고, `Shutdown()`은 새 기록을 받지 않고 큐를 비운 뒤 작업자 스레드를 종료한다. Logger를 사용하는 시스템이 모두 종료될 때까지 Logger를 유지해야 한다.
+이 문서는 두 가지 도구를 다룬다. `Logger`는 로그와 임무 결과 같은 기록을 파일에 남기고, Tracy는 프레임과 코드 구간에 걸린 시간을 잰다. 둘은 목적이 다르므로 Logger 기록을 실행 시간 측정으로 읽으면 안 된다.
 
-Logger 구현은 `modules/diagnostics`가 기준이며, frame/zone 측정은 Tracy에서 제공한다. 아래 benchmark 설명은 결과 counter의 의미를 설명하고 현재 시점의 실행 결과를 보증하지 않는다. Benchmark 정의는 `benchmarks/RoboticsBenchmarks.cpp`에 있고 Logger API는 `modules/diagnostics/include/diagnostics/Logger.h`, 구현은 `modules/diagnostics/src/Logger.cpp`에 있다.
+Logger는 기록을 크기가 제한된 큐에 복사한 뒤, 전용 작업자 스레드 하나로 `logs/grasplink.jsonl`에 JSON Lines 형식으로 쓴다. 큐가 가득 차면 제어 주기가 디스크 쓰기를 기다리지 않도록 새 Debug/Info 로그나 metric을 버릴 수 있다. Error 로그는 큐 안의 낮은 우선순위 기록을 대신할 수 있다. `Flush()`는 접수된 기록을 모두 쓸 때까지 기다리고, `Shutdown()`은 새 기록을 받지 않은 뒤 큐를 비우고 작업자 스레드를 종료한다. Logger를 참조하는 시스템이 모두 끝날 때까지 Logger를 유지해야 한다.
+
+구현은 `modules/diagnostics`에, benchmark 정의는 `benchmarks/RoboticsBenchmarks.cpp`에 있다. 아래 설명은 각 counter가 무엇을 뜻하는지 안내한다. 측정 결과는 실행 시점과 구성에 따라 달라지며, 이 문서가 현재 성능을 보증하지는 않는다.
 
 ## 목차
 
@@ -15,9 +17,7 @@ Logger 구현은 `modules/diagnostics`가 기준이며, frame/zone 측정은 Tra
 - [기타 카운터와 callback](#기타-카운터와-callback)
 - [Viewer Tracy 구간](#viewer-tracy-구간)
 
-Logger 구현은 `modules/diagnostics`가 기준이며, frame/zone 측정은 Tracy에서 제공한다. 아래 benchmark 설명은 결과 counter의 의미를 설명하고 현재 시점의 실행 결과를 보증하지 않는다.
-
-실행 중 성능은 Tracy로 확인한다. 시뮬레이터는 프레임 전체와 `Frame`, `FixedTick`, `RobotUpdate`, `CollisionCheck`, `PhysicsStep`, `Render` 구간을 기록한다. `TRACY_ON_DEMAND`를 켜면 Tracy Profiler가 연결될 때 기록을 시작한다. 시뮬레이터를 빌드하고 Tracy Profiler를 실행한 다음, 실행 중인 시뮬레이터에 연결해 각 구간의 시간을 살펴본다. Tracy CMake client는 `v0.14.1`로 고정되어 있다. Logger는 로그와 임무 결과 같은 의미 지표를 기록하며, 실행 시간 측정에는 사용하지 않는다.
+실행 중 성능은 Tracy Profiler에서 확인한다. 시뮬레이터는 프레임 전체와 `Frame`, `FixedTick`, `RobotUpdate`, `CollisionCheck`, `PhysicsStep`, `Render` 구간을 기록한다. `TRACY_ON_DEMAND`가 켜져 있으면 Profiler가 연결된 뒤 측정을 시작한다. 시뮬레이터와 Profiler를 실행한 다음 서로 연결하면 각 구간에 걸린 시간을 볼 수 있다. Tracy CMake client는 `v0.14.1`을 사용한다.
 
 ## RuntimeLinearPathStress
 
