@@ -6,12 +6,12 @@
 
 ```text
 modules/
-├── diagnostics/   Asynchronous logs, numeric metrics, and profiling records
-├── robotics/       Robot models, controller contracts, backends, forward kinematics
-├── physics/        Jolt wrapper and engine-independent physics types
-├── viewer/         Flecs scene, transforms, GLB assets, OpenGL rendering
-├── simulation/     Physics ECS integration, robot collision proxies, floor setup
-└── gui/            ImGui panels and configured collider visualization
+├── diagnostics/   비동기 로그, 수치 지표, 프로파일링 기록
+├── robotics/       로봇 모델, Controller 계약, backend, 정기구학
+├── physics/        Jolt 연동과 엔진 독립 물리 타입
+├── viewer/         Flecs 장면, 변환, GLB 자산, OpenGL 렌더링
+├── simulation/     Physics-ECS 연동, 로봇 충돌 프록시, 바닥 설정
+└── gui/            ImGui 패널과 충돌 형상 표시
 ```
 
 아래 화살표는 기능을 사용하는 쪽에서 의존하는 쪽으로 향합니다. CMake 타깃의 주요 의존 관계는 다음과 같습니다.
@@ -19,9 +19,9 @@ modules/
 ```mermaid
 flowchart TD
     App[ViewerApp] --> GUI[GUI]
-    App --> Simulation[Simulation]
-    App --> Viewer[Viewer]
-    App --> Diagnostics[Diagnostics]
+    App --> Simulation[시뮬레이션]
+    App --> Viewer[뷰어]
+    App --> Diagnostics[진단]
     GUI --> Simulation
     GUI --> ImGui
     Simulation --> Viewer
@@ -29,14 +29,14 @@ flowchart TD
     Simulation --> Physics
     Simulation --> Diagnostics
     Viewer --> Robotics
-    Viewer --> Graphics[OpenGL graphics]
+    Viewer --> Graphics[OpenGL 렌더링]
     Viewer --> Flecs
     Physics --> Jolt
 ```
 
-`modules/physics` does not depend on Flecs, Viewer, or OpenGL. Jolt-specific types stay inside that module. `modules/simulation` owns Flecs physics configuration and the private runtime binding between an Entity and `PhysicsBodyHandle`.
+`modules/physics`는 Flecs, Viewer, OpenGL에 의존하지 않는다. Jolt 전용 타입도 이 모듈 안에 둔다. Flecs에서 사용하는 물리 설정과 Entity를 `PhysicsBodyHandle`에 연결하는 런타임 binding은 `modules/simulation`이 관리한다.
 
-`modules/diagnostics` has no dependency on the simulation or graphics stack. `Logger` sends copied log and semantic metric records through a bounded queue to one file-writing thread. Tracy measures runtime zones and frames without routing timing records through Logger. `ViewerApp` owns the Logger longer than the systems that borrow it, then drains and joins the writer during shutdown. See [Diagnostics](DIAGNOSTICS.md) for the API and output format.
+`modules/diagnostics`는 시뮬레이션이나 그래픽 모듈에 의존하지 않는다. `Logger`는 로그와 의미 지표를 크기가 제한된 큐에 복사하고, 전용 스레드가 파일에 기록한다. 실행 시간은 Logger에 섞지 않고 Tracy로 측정한다. `ViewerApp`은 Logger를 빌려 쓰는 시스템보다 오래 보관하며, 종료할 때 기록을 모두 비우고 작업자 스레드를 기다린다. API와 출력 형식은 [진단 도구](DIAGNOSTICS.md)에 설명했다.
 
 ## 로봇 자세가 화면에 반영되는 과정
 
@@ -45,13 +45,13 @@ IRobotController
 → RobotState
 → RobotKinematics
 → RobotKinematicState
-   ├── RobotTransformAdapter → GLB Joint Entity transforms
-   └── RobotPhysicsAdapter → Kinematic link collision Entities
+   ├── RobotTransformAdapter → GLB Joint Entity 변환
+   └── RobotPhysicsAdapter → Kinematic 링크 충돌 Entity
 ```
 
-`RobotKinematics` is the shared source of robot pose. It derives parent-relative offsets from consecutive base-frame bind pivots and accumulates joint rotations for the serial chain. Viewer and Physics consume the same result instead of separately interpreting joint axes and angles. Robotics model data uses plain scalar/vector/quaternion types and does not depend on GLM, Flecs, or Jolt.
+`RobotKinematics`가 로봇 자세를 계산하는 공통 경로다. 연속된 관절의 base-frame bind pivot에서 부모 기준 offset을 구하고, 직렬 관절의 회전을 차례로 누적한다. Viewer와 Physics는 관절축과 각도를 따로 해석하지 않고 같은 계산 결과를 사용한다. Robotics 모델은 기본 scalar, vector, quaternion 타입으로 표현하므로 GLM, Flecs, Jolt에 의존하지 않는다.
 
-Controller 호출 계약과 status/error 구분은 [Controller Interface](CONTROLLER_INTERFACE.md), HCR-12A 및 2F-85 수치의 출처 분류는 [Model Data Provenance](MODEL_DATA_PROVENANCE.md)와 [Simulation Specification](HCR12A_2F85_simulation_specs.md)을 참고한다.
+Controller 호출 계약과 상태·오류 구분은 [Controller 인터페이스](CONTROLLER_INTERFACE.md)를, HCR-12A 및 2F-85 수치의 출처는 [모델 데이터 출처](MODEL_DATA_PROVENANCE.md)와 [시뮬레이션 사양](HCR12A_2F85_simulation_specs.md)을 참고한다.
 
 FK는 모델에 ToolFrame이 있으면 `toolFrameInBaseFrame`을 제공한다. `DampedLeastSquaresIk`는 ToolFrame에 고정 공구 변환을 더해 TCP 목표를 만드는 관절각을 계산한다. `SimRobotController::MovePose`는 현재 자세 seed의 IK 결과를 관절 공간에서 검증해 이동하며, 미션은 비동기 `BeginPosePlanning`을 사용한다. MoveJ는 직접 관절 경로가 막힐 때 제한된 RRT-Connect를 시도하지만 TCP 직선은 보장하지 않는다. `MoveLinear`은 TCP의 직선 위치와 최단 회전 경로를 따라가며, 직전 표본 해를 seed로 이어갈 수 없을 때만 대체 IK 분기를 탐색한다. `tcpPoseValid=true`인 시뮬레이션 상태는 Robot base 기준 모델 FK 결과이며 실제 장치 측정값이 아니다. 관절과 TCP의 속도·가속도는 시뮬레이션 궤적 정책으로 제한하지만, 로봇 토크·질량·관성 기반 동역학은 구현하지 않았다. Hardware Gripper backend도 구현하지 않았다. 상세 계약은 [로봇 이동과 파지](ROBOT_MOTION_AND_GRASP.md)를 참고한다.
 
@@ -107,7 +107,7 @@ Physics는 render FPS와 독립된 고정 간격으로 진행한다. `IsSceneDri
 
 `grasplink_scene`, `grasplink_model_data`, `grasplink_simulation`은 OpenGL 없이 빌드할 수 있다. `grasplink_scene`은 Flecs Entity와 변환을 관리하고, `grasplink_model_data`는 CPU에서 GLB 데이터를 읽는다. `grasplink_simulation`은 이 장면·모델 데이터에 robotics와 Jolt를 연결한다. 화면 렌더링, GPU 자산 업로드, 시뮬레이터 창은 `GRASPLINK_BUILD_GRAPHICS`를 켰을 때 추가된다.
 
-`ConfigureFloor` adds the fixed Box collider beneath the rendered floor. `PickPlaceScenario` creates the pick box and placement area used by the mission, while `grasplink::simulation::scenario` selects their reproducible positions and rotations. `PrefabFactory` builds visual Entities from GLB nodes. A single-primitive Node owns its render components directly; multi-primitive nodes use render child Entities. The GLB loader requires one node tree under the selected scene root and rejects sparse accessors, invalid byte ranges/strides, unsupported matrix transforms, cycles, and multiple parents. It reads only position, normal, and UV vertex attributes; the viewer does not implement normal mapping.
+`ConfigureFloor`는 화면 바닥 아래에 고정 Box 충돌체를 추가한다. `PickPlaceScenario`는 작업에 필요한 상자와 놓을 영역을 만들고, `grasplink::simulation::scenario`는 재현 가능한 위치와 회전을 선택한다. `PrefabFactory`는 GLB 노드에서 화면에 표시할 Entity를 구성한다. primitive가 하나인 Node는 렌더링 component를 직접 소유하고, primitive가 여러 개면 각각을 자식 Entity로 만든다. GLB loader는 선택한 scene root 아래에 하나의 노드 트리를 요구한다. sparse accessor, 잘못된 byte 범위나 stride, 지원하지 않는 matrix 변환, 순환 참조, 여러 부모가 있는 구조는 거부한다. 정점에서 position, normal, UV만 읽으며 normal mapping은 지원하지 않는다.
 
 `ViewerApp`은 Flecs World와 PhysicsWorld를 소유한다. `ColliderOverlay`의 World query와 패널을 먼저 해제하고, 어댑터·Scene Entity를 제거한 뒤 Physics integration과 World를 정리한다. Flecs 제거 observer가 Entity의 Jolt Body도 삭제한다. `GuiModule`은 Window의 OpenGL context가 살아 있을 때 backend와 ImGui context를 정리한다.
 
@@ -115,4 +115,4 @@ Physics는 render FPS와 독립된 고정 간격으로 진행한다. `IsSceneDri
 
 renderer는 물체 가장자리를 부드럽게 보이도록 멀티샘플 안티앨리어싱(MSAA)을 사용하고, 색상 렌더 패스를 한 번 실행한다. Shadow map이나 별도 depth pass는 만들지 않는다.
 
-For more detail on collision layers, transform spaces, scale requirements, and deferred robot-physics work, see [Physics / Flecs Integration](PHYSICS_ECS_INTEGRATION.md).
+충돌 layer, 변환 좌표계, scale 조건과 아직 구현하지 않은 로봇 물리 기능은 [Physics와 Flecs 연결](PHYSICS_ECS_INTEGRATION.md)에서 더 자세히 설명한다.
