@@ -406,6 +406,7 @@ if(GRASPLINK_BUILD_GRAPHICS)
     )
     set_property(TARGET grasplink_simulator APPEND PROPERTY LINK_DEPENDS
       "${CMAKE_SOURCE_DIR}/apps/simulator/web_shell.html"
+      "${CMAKE_SOURCE_DIR}/third_party/coi-serviceworker.min.js"
       "${CMAKE_SOURCE_DIR}/cmake/EmbedEmscriptenPackage.py"
     )
   target_link_options(grasplink_simulator PRIVATE
@@ -419,6 +420,9 @@ if(GRASPLINK_BUILD_GRAPHICS)
         "${CMAKE_SOURCE_DIR}/cmake/EmbedEmscriptenPackage.py"
         "$<TARGET_FILE:grasplink_simulator>"
         "$<TARGET_FILE_DIR:grasplink_simulator>/index.data"
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/third_party/coi-serviceworker.min.js"
+        "$<TARGET_FILE_DIR:grasplink_simulator>/coi-serviceworker.min.js"
       VERBATIM
     )
   endif()

@@ -30,6 +30,8 @@ cmake --build --preset emscripten-web
 
 결과물은 `build-emscripten-web/index.html`입니다. 멀티스레드 빌드는 `file://`에서 실행할 수 없습니다. [배포 사이트에서 실행](https://cgantro.github.io/Portfolio/minibcg/index.html)
 
+GitHub Pages 배포 주소: [GraspLink 웹 시뮬레이터](https://cgantro.github.io/GraspLink/)
+
 단일 스레드 빌드는 `emscripten-single-thread` preset으로 설정하고 빌드합니다.
 
 ```powershell
