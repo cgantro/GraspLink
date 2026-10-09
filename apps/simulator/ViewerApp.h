@@ -9,6 +9,8 @@
 #include "robotics/models/hanwha/Hcr12a.h"
 
 #include <flecs.h>
+#include <cstddef>
+#include <cstdint>
 #include <memory>
 
 namespace grasplink::graphics
@@ -82,6 +84,8 @@ namespace grasplink::simulator
 struct ViewerOptions
 {
     bool smokeTest = false;
+    std::size_t pickPlaceStressRuns = 0;
+    std::uint32_t pickPlaceStressSeed = 1;
 };
 
 /**
@@ -124,6 +128,12 @@ private:
 
     // 입력, 누적 Fixed Update, 렌더 프레임 처리를 서로 다른 주기로 반복한다.
     void MainLoop();
+    int RunPickPlaceStress();
+    void AdvanceSimulationTick(double fixedDeltaSeconds);
+    bool AdvancePlanningBudget();
+    bool UpdateMission();
+    void RandomizeScenario();
+    bool ResetStressEpisode();
 
     // 초기화가 일부만 성공한 경우에도 호출된다. ECS observer가 Body를 정리하고 GPU 자원이 해제될 수 있도록 World와 OpenGL Context 수명을 고려해 정리한다.
     void Shutdown();
