@@ -54,6 +54,9 @@
 #include <limits>
 #include <sstream>
 #include <stdexcept>
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
 #if GRASPLINK_ENABLE_TRACY
 #include <tracy/Tracy.hpp>
 #else
@@ -85,7 +88,6 @@ namespace
 // Viewer 창은 시작할 때 이 픽셀 크기로 요청한다. 실제 렌더 대상 크기는 DPI 배율에 따라 framebuffer에서 다시 읽는다.
 constexpr int kWindowWidth = 1280;
 constexpr int kWindowHeight = 720;
-constexpr float kControlSidebarWidth = 390.0F;
 
 // 로봇 제어기와 물리 시뮬레이션은 화면 프레임률과 관계없이 250 Hz, 즉 4 ms 간격으로 갱신한다.
 constexpr double kControlFrequencyHz = 250.0;
@@ -94,7 +96,7 @@ constexpr double kControlFixedDeltaSeconds = 1.0 / kControlFrequencyHz;
 // 창 이동이나 디버거 정지 뒤 긴 시간이 쌓여도 한 프레임에서 최대 100 ms만 시뮬레이션에 누적한다.
 constexpr double kMaxFrameDeltaSeconds = 0.1;
 
-const char* kWindowTitle = "GraspLink Viewer";
+const char* kWindowTitle = "Simulation | GraspLink";
 
 // 카메라의 시작 위치와 바라볼 지점은 모두 Scene의 World 좌표 [m]로 지정한다.
 const glm::vec3 kCameraPosition{2.0F, 1.35F, 1.15F};
@@ -642,112 +644,159 @@ void ViewerApp::MainLoop()
 {
     using Clock = std::chrono::steady_clock;
 
-    auto lastFrameTime = Clock::now();
-    std::size_t renderedFrames = 0;
+    m_LastFrameTime = Clock::now();
+    m_RenderedFrames = 0;
 
+#ifdef __EMSCRIPTEN__
+    emscripten_set_main_loop_arg([](void* userData)
+    {
+        auto* app = static_cast<ViewerApp*>(userData);
+        if (app->m_Window->ShouldClose())
+        {
+            app->Shutdown();
+            emscripten_cancel_main_loop();
+            return;
+        }
+        try
+        {
+            app->MainLoopFrame();
+        }
+        catch (const std::exception& error)
+        {
+            std::cerr << "[Fatal Error] " << error.what() << std::endl;
+            app->Shutdown();
+            emscripten_cancel_main_loop();
+        }
+    }, this, 0, 1);
+#else
     while (!m_Window->ShouldClose())
     {
-        ZoneScopedN("Frame");
-        FrameMark;
-        const auto currentFrameTime = Clock::now();
-        const double frameDeltaSeconds = m_Options.smokeTest ? 1.0 / 60.0
-            : std::chrono::duration<double>(currentFrameTime - lastFrameTime).count();
-
-        lastFrameTime = currentFrameTime;
-
-        // 디버거 정지 등으로 한 프레임이 길어져도 설정한 최대 시간만 제어 및 물리 누적기에 전달한다.
-        const double clampedFrameDeltaSeconds = std::min(frameDeltaSeconds, kMaxFrameDeltaSeconds);
-        const float renderDeltaSeconds = static_cast<float>(clampedFrameDeltaSeconds);
-        // 창 이벤트를 처리하고, ImGui가 마우스를 사용하지 않을 때만 카메라 입력을 전달한다.
-        m_Window->PollEvents();
-        if (!m_GuiModule->WantsMouse())
-            m_CameraController->OnUpdate();
-
-        const bool planningFrame = m_RobotController->IsMotionPlanning();
-        if (planningFrame)
-            AdvancePlanningBudget();
-
-        // 경로 계획 중에는 Jolt와 로봇 상태를 고정해 계획에 사용한 충돌 환경을 유지한다.
-        // PhysicsSystem은 Kinematic Body의 목표 자세를 Jolt에 보내고, Dynamic Body가 계산한 결과를 ECS Local 값으로 되돌린다.
-        // 물리 step 뒤 World 행렬을 다시 계산해야 다음 렌더가 부모와 자식의 최신 자세를 사용한다. 창이 최소화되어도 이 시뮬레이션 갱신은 계속된다.
-        if (!planningFrame)
-        {
-            m_ControlLoop.Advance(frameDeltaSeconds, [this](double fixedDeltaSeconds)
-            {
-                ZoneScopedN("FixedTick");
-                AdvanceSimulationTick(fixedDeltaSeconds);
-            });
-        }
-
-        UpdateMission();
-        const auto boxPose = ToRobotBasePose(m_RobotRoot, m_GraspBox.GetWorldMatrix(), 0.0F);
-        const auto placementPose = ToRobotBasePose(m_RobotRoot, m_PlacementArea.GetWorldMatrix(),
-            grasplink::application::pick_place::config::boxSideMeters * 0.5F);
-        // 최소화된 창은 framebuffer의 가로 또는 세로가 0일 수 있으므로, 이때 GPU 렌더링 단계만 건너뛴다.
-        int framebufferWidth = 0;
-        int framebufferHeight = 0;
-
-        m_Window->GetFramebufferSize(framebufferWidth, framebufferHeight);
-
-        if (framebufferWidth <= 0 || framebufferHeight <= 0)
-            continue;
-
-        m_Renderer->Resize(framebufferWidth, framebufferHeight);
-        m_GuiModule->BeginFrame();
-
-        const ImGuiIO& guiIo = ImGui::GetIO();
-        const float displayWidth = std::max(guiIo.DisplaySize.x, 1.0F);
-        const float displayHeight = std::max(guiIo.DisplaySize.y, 1.0F);
-        const float sidebarWidth = std::min(kControlSidebarWidth, displayWidth * 0.42F);
-        const float horizontalScale = static_cast<float>(framebufferWidth) / displayWidth;
-        const int sceneWidth = std::clamp(
-            static_cast<int>(std::lround((displayWidth - sidebarWidth) * horizontalScale)),
-            1, framebufferWidth);
-        const float aspectRatio = static_cast<float>(sceneWidth) / static_cast<float>(framebufferHeight);
-        m_Camera->SetAspectRatio(aspectRatio);
-        m_Renderer->SetSceneViewport(0, 0, sceneWidth, framebufferHeight);
-
-        // Scene은 화면 왼쪽 viewport에 그린다. 오른쪽 ImGui sidebar는 같은 창 위에 고정 배치한다.
-        {
-            ZoneScopedN("Render");
-            m_Renderer->BeginFrame();
-
-            TransformSystemModule::UpdateWorldTransforms(m_World);
-            m_World.progress(renderDeltaSeconds);
-            const auto graspState = m_GripperGraspAdapter->GetState();
-            const float sidebarX = displayWidth - sidebarWidth;
-            ImGui::SetNextWindowPos(ImVec2(sidebarX, 0.0F), ImGuiCond_Always);
-            ImGui::SetNextWindowSize(ImVec2(sidebarWidth, displayHeight), ImGuiCond_Always);
-            constexpr ImGuiWindowFlags sidebarFlags = ImGuiWindowFlags_NoTitleBar |
-                ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse |
-                ImGuiWindowFlags_NoSavedSettings;
-            ImGui::Begin("Robot controls", nullptr, sidebarFlags);
-            ImGui::TextUnformatted("GraspLink | HCR-12A");
-            ImGui::Separator();
-            const auto& robotState = m_RobotController->GetStateView();
-            const auto mission = m_PickPlaceMission.Snapshot();
-            const grasplink::gui::RobotPanelMissionView missionView{mission.stageLabel, mission.lastMessage,
-                mission.completedCount, grasplink::application::pick_place::config::linearVelocityMetersPerSecond,
-                grasplink::application::pick_place::config::angularVelocityRadiansPerSecond, mission.paused, mission.missionSucceeded,
-                mission.autoRepeat, mission.hasResult, mission.lastRequestAccepted, mission.canStart};
-            const grasplink::gui::RobotPanelView robotPanelView{robotState,
-                m_RobotController->GetSpecification(), boxPose, placementPose, missionView};
-            const auto panelActions = m_RobotPanel->DrawContents(robotPanelView);
-            m_PickPlaceMission.ApplyActions(grasplink::application::PickPlaceMissionActions{
-                panelActions.start, panelActions.resume, panelActions.stop},
-                m_RobotController->GetStateView(), *m_RobotController, graspState.grasped, boxPose);
-            m_GripperPanel->DrawContents(*m_GripperController, &graspState, !m_RobotController->IsMotionPlanning());
-            m_PhysicsDebugPanel->DrawContents();
-            ImGui::End();
-            m_ColliderOverlay->Draw(*m_Camera, m_PhysicsDebugPanel->IsColliderVisible(),
-                ImVec2(displayWidth - sidebarWidth, displayHeight));
-            m_Renderer->EndFrame();
-            m_GuiModule->EndFrame();
-            m_Window->SwapBuffers();
-        }
-        if (m_Options.smokeTest && ++renderedFrames >= 8)
+        MainLoopFrame();
+        if (m_Options.smokeTest && m_RenderedFrames >= 8)
             break;
     }
+#endif
+}
+
+void ViewerApp::MainLoopFrame()
+{
+    using Clock = std::chrono::steady_clock;
+
+    ZoneScopedN("Frame");
+    FrameMark;
+    const auto currentFrameTime = Clock::now();
+    const double frameDeltaSeconds = m_Options.smokeTest ? 1.0 / 60.0
+        : std::chrono::duration<double>(currentFrameTime - m_LastFrameTime).count();
+
+    m_LastFrameTime = currentFrameTime;
+
+    // 디버거 정지 등으로 한 프레임이 길어져도 제어와 물리 누적기에 최대 100 ms만 전달한다.
+    const double clampedFrameDeltaSeconds = std::min(frameDeltaSeconds, kMaxFrameDeltaSeconds);
+    const float renderDeltaSeconds = static_cast<float>(clampedFrameDeltaSeconds);
+    // 창 이벤트를 처리하고, ImGui가 마우스를 사용하지 않을 때만 카메라 입력을 전달한다.
+    m_Window->PollEvents();
+    if (!m_GuiModule->WantsMouse())
+        m_CameraController->OnUpdate();
+
+    const bool planningFrame = m_RobotController->IsMotionPlanning();
+    if (planningFrame)
+        AdvancePlanningBudget();
+
+    // 경로 계획 중에는 Jolt와 로봇 상태를 고정해 계획에 사용한 충돌 환경을 유지한다.
+    // 일반 tick에서는 Jolt에 Kinematic 목표를 보내고 Dynamic 결과를 ECS에 반영한 뒤 World 행렬을 다시 계산한다.
+    if (!planningFrame)
+    {
+        m_ControlLoop.Advance(frameDeltaSeconds, [this](double fixedDeltaSeconds)
+        {
+            ZoneScopedN("FixedTick");
+            AdvanceSimulationTick(fixedDeltaSeconds);
+        });
+    }
+
+    UpdateMission();
+    const auto boxPose = ToRobotBasePose(m_RobotRoot, m_GraspBox.GetWorldMatrix(), 0.0F);
+    const auto placementPose = ToRobotBasePose(m_RobotRoot, m_PlacementArea.GetWorldMatrix(),
+        grasplink::application::pick_place::config::boxSideMeters * 0.5F);
+    int framebufferWidth = 0;
+    int framebufferHeight = 0;
+
+    m_Window->GetFramebufferSize(framebufferWidth, framebufferHeight);
+
+    // 최소화된 창이나 아직 크기가 정해지지 않은 canvas는 렌더링만 건너뛴다.
+    if (framebufferWidth <= 0 || framebufferHeight <= 0)
+        return;
+
+    m_Renderer->Resize(framebufferWidth, framebufferHeight);
+    m_GuiModule->BeginFrame();
+
+    const ImGuiIO& guiIo = ImGui::GetIO();
+    const float displayWidth = std::max(guiIo.DisplaySize.x, 1.0F);
+    const float displayHeight = std::max(guiIo.DisplaySize.y, 1.0F);
+    const float sidebarWidth = std::min(displayWidth * 0.48F,
+        std::clamp(displayWidth * 0.36F, 260.0F, 460.0F));
+    const float sceneDisplayWidth = std::max(displayWidth - sidebarWidth, 1.0F);
+    const float horizontalScale = static_cast<float>(framebufferWidth) / displayWidth;
+    const int sceneWidth = std::clamp(static_cast<int>(std::lround(sceneDisplayWidth * horizontalScale)),
+        1, framebufferWidth);
+    const float aspectRatio = static_cast<float>(sceneWidth) / static_cast<float>(framebufferHeight);
+    m_Camera->SetAspectRatio(aspectRatio);
+    m_Renderer->SetSceneViewport(0, 0, sceneWidth, framebufferHeight);
+
+    {
+        ZoneScopedN("Render");
+        m_Renderer->BeginFrame();
+
+        TransformSystemModule::UpdateWorldTransforms(m_World);
+        m_World.progress(renderDeltaSeconds);
+        const auto graspState = m_GripperGraspAdapter->GetState();
+        ImGui::SetNextWindowPos(ImVec2(sceneDisplayWidth, 0.0F), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(sidebarWidth, displayHeight), ImGuiCond_Always);
+        constexpr ImGuiWindowFlags controlWindowFlags = ImGuiWindowFlags_NoTitleBar |
+            ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse |
+            ImGuiWindowFlags_NoSavedSettings;
+        ImGui::Begin("GUI | Control Center  /  HCR-12A", nullptr, controlWindowFlags);
+        ImGui::TextDisabled("GRASPLINK     SIMULATION CONSOLE");
+        ImGui::Spacing();
+        const auto& robotState = m_RobotController->GetStateView();
+        const auto mission = m_PickPlaceMission.Snapshot();
+        const grasplink::gui::RobotPanelMissionView missionView{mission.stageLabel, mission.lastMessage,
+            mission.completedCount, grasplink::application::pick_place::config::linearVelocityMetersPerSecond,
+            grasplink::application::pick_place::config::angularVelocityRadiansPerSecond, mission.paused, mission.missionSucceeded,
+            mission.autoRepeat, mission.hasResult, mission.lastRequestAccepted, mission.canStart};
+        const grasplink::gui::RobotPanelView robotPanelView{robotState,
+            m_RobotController->GetSpecification(), boxPose, placementPose, missionView};
+        grasplink::gui::RobotPanelActions panelActions;
+        if (ImGui::BeginTabBar("Control sections"))
+        {
+            if (ImGui::BeginTabItem("Robot"))
+            {
+                panelActions = m_RobotPanel->DrawContents(robotPanelView);
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("Gripper"))
+            {
+                m_GripperPanel->DrawContents(*m_GripperController, &graspState,
+                    !m_RobotController->IsMotionPlanning());
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("Physics"))
+            {
+                m_PhysicsDebugPanel->DrawContents();
+                ImGui::EndTabItem();
+            }
+            ImGui::EndTabBar();
+        }
+        m_PickPlaceMission.ApplyActions(grasplink::application::PickPlaceMissionActions{
+            panelActions.start, panelActions.resume, panelActions.stop},
+            m_RobotController->GetStateView(), *m_RobotController, graspState.grasped, boxPose);
+        ImGui::End();
+        m_ColliderOverlay->Draw(*m_Camera, m_PhysicsDebugPanel->IsColliderVisible(),
+            ImVec2(sceneDisplayWidth, displayHeight));
+        m_Renderer->EndFrame();
+        m_GuiModule->EndFrame();
+        m_Window->SwapBuffers();
+    }
+    ++m_RenderedFrames;
 }
 
 void ViewerApp::Shutdown()

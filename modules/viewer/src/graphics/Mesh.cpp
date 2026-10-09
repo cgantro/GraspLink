@@ -4,7 +4,7 @@
 #include "graphics/VertexArray.h"
 #include "graphics/VertexBuffer.h"
 
-#include <glad/glad.h>
+#include "graphics/GlApi.h"
 
 #include <cstddef>
 #include <limits>

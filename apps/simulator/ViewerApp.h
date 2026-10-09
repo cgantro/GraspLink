@@ -11,6 +11,7 @@
 #include <flecs.h>
 #include <cstddef>
 #include <cstdint>
+#include <chrono>
 #include <memory>
 
 namespace grasplink::graphics
@@ -128,6 +129,7 @@ private:
 
     // 입력, 누적 Fixed Update, 렌더 프레임 처리를 서로 다른 주기로 반복한다.
     void MainLoop();
+    void MainLoopFrame();
     int RunPickPlaceStress();
     void AdvanceSimulationTick(double fixedDeltaSeconds);
     bool AdvancePlanningBudget();
@@ -179,6 +181,8 @@ private:
 
     // 렌더 프레임 시간과 분리해 Controller 및 Physics를 고정 간격으로 실행한다.
     grasplink::robotics::runtime::FixedControlLoop m_ControlLoop;
+    std::chrono::steady_clock::time_point m_LastFrameTime{};
+    std::size_t m_RenderedFrames = 0;
 
     // 충돌 형상과 강체 상태를 보관하고 시뮬레이션하는 Jolt World를 소유한다.
     std::unique_ptr<grasplink::physics::PhysicsWorld> m_PhysicsWorld;

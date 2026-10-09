@@ -1,6 +1,6 @@
 #include "graphics/IndexBuffer.h"
 
-#include <glad/glad.h>
+#include "graphics/GlApi.h"
 #include <stdexcept>
 
 namespace grasplink::graphics

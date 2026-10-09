@@ -32,7 +32,27 @@ Logger::Logger(LoggerOptions options)
     if (m_Options.queueCapacity == 0)
         m_Options.queueCapacity = 1;
 
+#if !defined(__EMSCRIPTEN__) || defined(__EMSCRIPTEN_PTHREADS__)
     m_Worker = std::thread(&Logger::Consume, this);
+#else
+    try
+    {
+        const std::filesystem::path outputPath(m_Options.filePath);
+        if (outputPath.has_parent_path())
+            std::filesystem::create_directories(outputPath.parent_path());
+        m_Output.open(outputPath, std::ios::out | std::ios::app);
+    }
+    catch (...)
+    {
+    }
+
+    if (!m_Output.is_open())
+    {
+        m_WriteFailures.fetch_add(1, std::memory_order_relaxed);
+        std::cerr << "Logger could not open output file: " << m_Options.filePath << '\n';
+    }
+    m_Output.imbue(std::locale::classic());
+#endif
 }
 
 Logger::~Logger()
@@ -66,6 +86,7 @@ void Logger::RecordMetric(const std::string& name, double value, const std::stri
 
 void Logger::Flush() noexcept
 {
+#if !defined(__EMSCRIPTEN__) || defined(__EMSCRIPTEN_PTHREADS__)
     try
     {
         std::unique_lock<std::mutex> lock(m_Mutex);
@@ -74,10 +95,21 @@ void Logger::Flush() noexcept
     catch (...)
     {
     }
+#else
+    try
+    {
+        if (m_Output.is_open())
+            m_Output.flush();
+    }
+    catch (...)
+    {
+    }
+#endif
 }
 
 void Logger::Shutdown() noexcept
 {
+#if !defined(__EMSCRIPTEN__) || defined(__EMSCRIPTEN_PTHREADS__)
     std::lock_guard<std::mutex> lifecycleLock(m_LifecycleMutex);
     {
         std::lock_guard<std::mutex> lock(m_Mutex);
@@ -86,6 +118,11 @@ void Logger::Shutdown() noexcept
     m_QueueChanged.notify_one();
     if (m_Worker.joinable())
         m_Worker.join();
+#else
+    Flush();
+    if (m_Output.is_open())
+        m_Output.close();
+#endif
 }
 
 std::uint64_t Logger::GetDroppedRecordCount() const noexcept
@@ -105,8 +142,13 @@ void Logger::Enqueue(Record record) noexcept
         const auto now = std::chrono::system_clock::now();
         record.timestampMilliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(
             now.time_since_epoch()).count();
+#if !defined(__EMSCRIPTEN__) || defined(__EMSCRIPTEN_PTHREADS__)
         record.threadId = static_cast<std::uint64_t>(std::hash<std::thread::id>{}(std::this_thread::get_id()));
+#else
+        record.threadId = 0;
+#endif
 
+#if !defined(__EMSCRIPTEN__) || defined(__EMSCRIPTEN_PTHREADS__)
         {
             std::lock_guard<std::mutex> lock(m_Mutex);
             if (!m_Accepting)
@@ -131,6 +173,18 @@ void Logger::Enqueue(Record record) noexcept
             m_Queue.push_back(std::move(record));
         }
         m_QueueChanged.notify_one();
+#else
+        WriteRecord(record);
+        if (m_Output.is_open())
+        {
+            m_Output.flush();
+            if (!m_Output)
+            {
+                m_WriteFailures.fetch_add(1, std::memory_order_relaxed);
+                m_Output.close();
+            }
+        }
+#endif
     }
     catch (...)
     {
@@ -138,6 +192,7 @@ void Logger::Enqueue(Record record) noexcept
     }
 }
 
+#if !defined(__EMSCRIPTEN__) || defined(__EMSCRIPTEN_PTHREADS__)
 void Logger::Consume()
 {
     try
@@ -213,6 +268,7 @@ void Logger::Consume()
 
     m_Drained.notify_all();
 }
+#endif
 
 void Logger::WriteRecord(const Record& record)
 {

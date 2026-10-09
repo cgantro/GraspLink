@@ -1,6 +1,6 @@
 #include "graphics/VertexBuffer.h"
 
-#include <glad/glad.h>
+#include "graphics/GlApi.h"
 
 namespace grasplink::graphics
 {

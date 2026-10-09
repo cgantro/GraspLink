@@ -10,6 +10,28 @@ if(MSVC)
   add_compile_options(/utf-8 "$<$<COMPILE_LANGUAGE:CXX>:/EHsc>")
 endif()
 
+if(EMSCRIPTEN)
+  set(BUILD_TESTING OFF CACHE BOOL "Disable native tests for the browser build" FORCE)
+  set(GRASPLINK_ENABLE_TRACY OFF CACHE BOOL "Disable Tracy for the browser build" FORCE)
+  set(GRASPLINK_BUILD_BENCHMARKS OFF CACHE BOOL "Disable native benchmarks for the browser build" FORCE)
+  option(GRASPLINK_WEB_PTHREADS "Enable pthreads in the Emscripten build" ON)
+  if(GRASPLINK_WEB_PTHREADS)
+    add_compile_options(-pthread)
+  endif()
+  add_link_options(
+    "-sALLOW_MEMORY_GROWTH=1"
+    "-sUSE_GLFW=3"
+    "-sFULL_ES3=1"
+    "-sINITIAL_MEMORY=67108864"
+    "-sSINGLE_FILE=1"
+    "-sSINGLE_FILE_BINARY_ENCODE=0"
+    "SHELL:-sSTACK_SIZE=8388608"
+  )
+  if(GRASPLINK_WEB_PTHREADS)
+    add_link_options(-pthread "-sPTHREAD_POOL_SIZE=8")
+  endif()
+endif()
+
 include(cmake/Dependencies.cmake)
 grasplink_add_common_dependencies()
 include(CTest)
@@ -254,10 +276,12 @@ if(GRASPLINK_BUILD_GRAPHICS)
   # Viewer가 사용하는 OpenGL, GLFW, Flecs, TinyGLTF 등의 외부 의존성을 구성한다.
   grasplink_add_graphics_dependencies()
 
-  add_library(grasplink_glad STATIC third_party/glad/src/glad.c)
-  target_include_directories(grasplink_glad PUBLIC third_party/glad/include)
+  if(NOT EMSCRIPTEN)
+    add_library(grasplink_glad STATIC third_party/glad/src/glad.c)
+    target_include_directories(grasplink_glad PUBLIC third_party/glad/include)
+  endif()
 
-  add_library(grasplink_graphics STATIC
+  set(GRASPLINK_GRAPHICS_SOURCES
     modules/viewer/src/graphics/Camera.cpp
     modules/viewer/src/graphics/OrbitCameraController.cpp
     modules/viewer/src/graphics/IndexBuffer.cpp
@@ -269,14 +293,25 @@ if(GRASPLINK_BUILD_GRAPHICS)
     modules/viewer/src/graphics/VertexArray.cpp
     modules/viewer/src/graphics/VertexBuffer.cpp
     modules/viewer/src/graphics/Window.cpp
-    modules/viewer/src/graphics/MultisampleFramebuffer.cpp
   )
+  if(NOT EMSCRIPTEN)
+    list(APPEND GRASPLINK_GRAPHICS_SOURCES
+      modules/viewer/src/graphics/MultisampleFramebuffer.cpp
+    )
+  endif()
+
+  add_library(grasplink_graphics STATIC ${GRASPLINK_GRAPHICS_SOURCES})
   target_include_directories(grasplink_graphics PUBLIC
     modules/viewer/include
   )
   target_link_libraries(grasplink_graphics PUBLIC
-    grasplink_glad glfw glm::glm grasplink_model OpenGL::GL
+    glfw glm::glm grasplink_model
   )
+  if(EMSCRIPTEN)
+    target_link_libraries(grasplink_graphics PUBLIC OpenGL::GL)
+  else()
+    target_link_libraries(grasplink_graphics PUBLIC grasplink_glad OpenGL::GL)
+  endif()
   target_compile_definitions(grasplink_graphics PUBLIC GLFW_INCLUDE_NONE)
 
   # ImGui UI backend는 공통 그래픽 코드와 분리해 GUI 모듈 의존성으로 구성한다.
@@ -361,6 +396,33 @@ if(GRASPLINK_BUILD_GRAPHICS)
     ${GRASPLINK_APP_SOURCES}
   )
 
+  if(EMSCRIPTEN)
+    set_target_properties(grasplink_simulator PROPERTIES
+      OUTPUT_NAME index
+      SUFFIX .html
+    )
+    target_link_options(grasplink_simulator PRIVATE
+      "--shell-file=${CMAKE_SOURCE_DIR}/apps/simulator/web_shell.html"
+    )
+    set_property(TARGET grasplink_simulator APPEND PROPERTY LINK_DEPENDS
+      "${CMAKE_SOURCE_DIR}/apps/simulator/web_shell.html"
+      "${CMAKE_SOURCE_DIR}/cmake/EmbedEmscriptenPackage.py"
+    )
+  target_link_options(grasplink_simulator PRIVATE
+      "--preload-file=${CMAKE_SOURCE_DIR}/assets/shaders@/shaders"
+      "--preload-file=${CMAKE_SOURCE_DIR}/assets/HCR12A_2F-85.glb@/HCR12A_2F-85.glb"
+      "--preload-file=${CMAKE_SOURCE_DIR}/assets/plane.glb@/plane.glb"
+    )
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    add_custom_command(TARGET grasplink_simulator POST_BUILD
+      COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/cmake/EmbedEmscriptenPackage.py"
+        "$<TARGET_FILE:grasplink_simulator>"
+        "$<TARGET_FILE_DIR:grasplink_simulator>/index.data"
+      VERBATIM
+    )
+  endif()
+
   target_include_directories(grasplink_simulator PRIVATE
     apps/simulator
   )
@@ -388,6 +450,7 @@ if(GRASPLINK_BUILD_GRAPHICS)
   #
   # 실행 파일이 자산을 찾을 수 있도록 Shader와 GLB 파일을 실행 파일 디렉터리에 복사한다.
   #
+  if(NOT EMSCRIPTEN)
   add_custom_command(
     TARGET grasplink_simulator
     POST_BUILD
@@ -404,6 +467,7 @@ if(GRASPLINK_BUILD_GRAPHICS)
       ${CMAKE_SOURCE_DIR}/assets/plane.glb
       $<TARGET_FILE_DIR:grasplink_simulator>/plane.glb
   )
+  endif()
 
   if(BUILD_TESTING)
   grasplink_add_test(grasplink_gui_composition_tests GuiComposition tests/GuiCompositionTests.cpp grasplink_gui GTEST_DISCOVERY)

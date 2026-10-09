@@ -17,7 +17,7 @@ enum class MouseButton
 /**
  * @brief 키보드·마우스 입력을 받고 GPU가 그린 이미지를 화면에 표시하는 창을 소유한다.
  * @details OpenGL context는 GPU 명령을 실행하고 GPU 이미지·프로그램 상태를 연결하는 환경이다. 창을 만들 때 GLFW가 context를 만들고 현재 스레드에서 활성화한다.
- * context는 창이 존재하는 것만으로 현재 실행 중인 조건을 만족하지 않으므로 GPU 호출을 할 스레드에서 활성화되어야 한다. GLAD는 그 context에서 쓸 OpenGL 함수 주소를 읽는다.
+ * context는 창이 존재하는 것만으로 현재 실행 중인 조건을 만족하지 않으므로 GPU 호출을 할 스레드에서 활성화되어야 한다. 데스크톱에서는 GLAD가 함수 주소를 읽고, WebAssembly에서는 GLES 3 함수를 직접 사용한다.
  * 이 객체는 창과 context 수명을 관리하므로 GPU 자원을 쓰는 객체를 먼저 정리하고 마지막에 파괴해야 한다. 애플리케이션은 한 번에 창 하나만 만든다.
  */
 class Window

@@ -2,7 +2,7 @@
 
 #include <stdexcept>
 
-#include <glad/glad.h>
+#include "graphics/GlApi.h"
 #include <GLFW/glfw3.h>
 
 namespace grasplink::graphics
@@ -25,9 +25,15 @@ void Window::Init(const Properties& properties)
     if (glfwInit() == GLFW_FALSE)
         throw std::runtime_error("Failed to Init GLFW");
 
+#ifdef __EMSCRIPTEN__
+    glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_ES_API);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
+#else
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+#endif
     glfwWindowHint(GLFW_VISIBLE, properties.visible ? GLFW_TRUE : GLFW_FALSE);
 
     m_Handle = glfwCreateWindow(
@@ -44,15 +50,17 @@ void Window::Init(const Properties& properties)
     }
 
     // GPU 자원은 이 OpenGL context에서만 사용할 수 있으므로 Window가 닫히기 전에 먼저 해제해야 한다.
-    // GLAD는 현재 context의 OpenGL 함수 주소를 읽으므로 함수 적재 전에 context를 활성화한다.
+    // 데스크톱 GLAD는 현재 context에서 함수 주소를 읽으므로 함수 적재 전에 context를 활성화한다.
     glfwMakeContextCurrent(m_Handle);
 
+#ifndef __EMSCRIPTEN__
     if (!gladLoadGLLoader(reinterpret_cast<GLADloadproc>(glfwGetProcAddress)))
     {
         // 초기화 중간에 실패해도 이미 만든 창을 닫고 GLFW의 전역 상태를 함께 정리한다.
         Shutdown();
         throw std::runtime_error("Failed to Init GLAD");
     }
+#endif
 
     glfwSetWindowUserPointer(m_Handle, this);
     glfwSetFramebufferSizeCallback(m_Handle, FramebufferSizeCallback);

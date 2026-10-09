@@ -1,6 +1,6 @@
 #include "graphics/Shader.h"
 
-#include <glad/glad.h>
+#include "graphics/GlApi.h"
 #include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
@@ -126,7 +126,22 @@ void Shader::Compile(const std::unordered_map<unsigned int, std::string>& shader
     // Shader 단계 ID를 기록해 실패한 생성 과정에서 해제한다. 예외가 발생해도 링크되지 않은 Program이 남지 않게 한다.
     std::vector<GLuint> shaderIDs;
 
-    for(const auto& [type, source] : shaderSources){
+    for(const auto& [type, originalSource] : shaderSources){
+#ifdef __EMSCRIPTEN__
+        std::string source = originalSource;
+        const std::string desktopVersion = "#version 330 core";
+        const auto versionPosition = source.find(desktopVersion);
+        if (versionPosition != std::string::npos)
+            source.replace(versionPosition, desktopVersion.size(), "#version 300 es");
+        if (type == GL_FRAGMENT_SHADER)
+        {
+            const auto versionEnd = source.find('\n');
+            if (versionEnd != std::string::npos)
+                source.insert(versionEnd + 1, "precision highp float;\n");
+        }
+#else
+        const std::string& source = originalSource;
+#endif
         GLuint shader = glCreateShader(type);
         if(shader == 0){
             for(GLuint id: shaderIDs) glDeleteShader(id);

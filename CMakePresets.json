@@ -22,6 +22,35 @@
         "CMAKE_BUILD_TYPE": "Release",
         "GRASPLINK_BUILD_GRAPHICS": "ON"
       }
+    },
+    {
+      "name": "emscripten-web",
+      "displayName": "Emscripten Web Release",
+      "description": "Configure the threaded browser simulator with Emscripten",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-emscripten-web",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "GRASPLINK_BUILD_GRAPHICS": "ON",
+        "GRASPLINK_ENABLE_TRACY": "OFF",
+        "GRASPLINK_BUILD_BENCHMARKS": "OFF",
+        "BUILD_TESTING": "OFF"
+      }
+    },
+    {
+      "name": "emscripten-single-thread",
+      "displayName": "Emscripten Single Thread Release",
+      "description": "Configure a single-threaded browser build for environments without pthread support",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-emscripten-single-thread",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "GRASPLINK_BUILD_GRAPHICS": "ON",
+        "GRASPLINK_ENABLE_TRACY": "OFF",
+        "GRASPLINK_BUILD_BENCHMARKS": "OFF",
+        "GRASPLINK_WEB_PTHREADS": "OFF",
+        "BUILD_TESTING": "OFF"
+      }
     }
   ],
   "buildPresets": [
@@ -36,6 +65,18 @@
       "displayName": "Ninja Release",
       "configurePreset": "ninja-release",
       "jobs": 10
+    },
+    {
+      "name": "emscripten-web",
+      "displayName": "Build Emscripten Web Release",
+      "configurePreset": "emscripten-web",
+      "jobs": 4
+    },
+    {
+      "name": "emscripten-single-thread",
+      "displayName": "Build Emscripten Single Thread Release",
+      "configurePreset": "emscripten-single-thread",
+      "jobs": 4
     }
   ]
 }

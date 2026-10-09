@@ -1,14 +1,16 @@
 #pragma once
 
 #include <atomic>
-#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
-#include <deque>
 #include <fstream>
-#include <mutex>
 #include <string>
+#if !defined(__EMSCRIPTEN__) || defined(__EMSCRIPTEN_PTHREADS__)
+#include <condition_variable>
+#include <deque>
+#include <mutex>
 #include <thread>
+#endif
 
 namespace grasplink::diagnostics
 {
@@ -96,21 +98,29 @@ private:
     };
 
     void Enqueue(Record record) noexcept;
+#if !defined(__EMSCRIPTEN__) || defined(__EMSCRIPTEN_PTHREADS__)
     void Consume();
+#endif
     void WriteRecord(const Record& record);
     static void WriteEscapedJson(std::ostream& output, const std::string& value);
 
     LoggerOptions m_Options;
+#if !defined(__EMSCRIPTEN__) || defined(__EMSCRIPTEN_PTHREADS__)
     std::mutex m_LifecycleMutex;
     mutable std::mutex m_Mutex;
     std::condition_variable m_QueueChanged;
     std::condition_variable m_Drained;
     std::deque<Record> m_Queue;
+#endif
     std::ofstream m_Output;
+#if !defined(__EMSCRIPTEN__) || defined(__EMSCRIPTEN_PTHREADS__)
     std::thread m_Worker;
+#endif
     std::atomic<std::uint64_t> m_DroppedRecords{0};
     std::atomic<std::uint64_t> m_WriteFailures{0};
+#if !defined(__EMSCRIPTEN__) || defined(__EMSCRIPTEN_PTHREADS__)
     bool m_Accepting = true;
     bool m_Writing = false;
+#endif
 };
 } // namespace grasplink::diagnostics

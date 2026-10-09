@@ -98,6 +98,24 @@ cmake --build --preset ninja-release
 ctest --test-dir build-ninja-release --output-on-failure
 ```
 
+Emscripten WebAssembly 빌드에는 Emscripten SDK와 Ninja가 필요하다. 웹 preset은 pthreads와 WebGL 2를 활성화하며 테스트, Tracy, 벤치마크를 제외한다.
+
+```powershell
+emcmake cmake --preset emscripten-web
+cmake --build --preset emscripten-web
+```
+
+산출물은 JS, WASM, 모델 파일을 HTML에 포함한 `build-emscripten-web/index.html` 하나다. 이 파일을 직접 열어 로컬에서 실행할 수 있으며, 별도 웹 서버나 COI Service Worker를 사용하지 않는다. GitHub Pages 정적 배포와 포트폴리오 iframe은 `cgantro/Portfolio`의 배포 workflow가 이 HTML을 생성해 포함한다.
+
+브라우저 환경이 pthreads를 지원하지 않는 경우에는 별도 단일 스레드 preset을 사용할 수 있다.
+
+```powershell
+emcmake cmake --preset emscripten-single-thread
+cmake --build --preset emscripten-single-thread
+```
+
+산출물은 `build-emscripten-single-thread/index.html` 하나다. 이 빌드는 Jolt와 Logger를 단일 스레드로 실행한다. 포트폴리오 배포에는 pthreads를 사용하는 `emscripten-web` 빌드를 사용한다.
+
 Ninja는 단일 configuration generator이므로 Debug/Release는 별도 build directory와 `CMAKE_BUILD_TYPE`으로 선택한다. `--config Release`로 Debug directory를 Release로 바꾸지 않는다.
 
 화면 없이 Robotics, Physics, ECS Simulation, GLB CPU 로더 테스트를 빌드하고 실행하려면:

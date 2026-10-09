@@ -5,6 +5,7 @@
 #include "robotics/models/RobotSpecification.h"
 
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <string_view>
 
@@ -72,7 +73,7 @@ private:
         Ready, UnwindingBeforeTask, MovingAbovePickup, MovingDownToPickup,
         Closing, Lifting,
         TransitingToPlacement, PlanningMotion, MovingToPlacementOverhead,
-        AligningAbovePlacement, MovingDownToPlacement, Opening, Retreating,
+        AligningAbovePlacement, MovingDownToPlacement, SettlingAtPlacement, Opening, Retreating,
         UnwindingWrist, Recovering, Complete, Failed, RaisingAfterResume
     };
 
@@ -88,6 +89,7 @@ private:
     std::array<double, 4> boxRotationOffsetInTool_{0.0, 0.0, 0.0, 1.0};
     robotics::CartesianPose recoveryPose_{};
     robotics::Result lastResult_{};
+    std::chrono::steady_clock::time_point placementDwellStarted_{};
     Stage stage_ = Stage::Ready;
     Stage pendingStageAfterPlanning_ = Stage::Ready;
     bool orientationReady_ = false;

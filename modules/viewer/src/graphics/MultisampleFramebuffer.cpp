@@ -1,6 +1,6 @@
 #include "graphics/MultisampleFramebuffer.h"
 
-#include <glad/glad.h>
+#include "graphics/GlApi.h"
 
 #include <algorithm>
 #include <stdexcept>

@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <chrono>
 #include <string_view>
 #include <utility>
 
@@ -140,20 +141,24 @@ robotics::Result MovePoseTo(const robotics::CartesianPose& pose, robotics::IRobo
     return controller.BeginPosePlanning(pose);
 }
 
-robotics::LinearPathMoveCommand LinearCommandTo(const robotics::CartesianPose& pose)
+robotics::LinearPathMoveCommand LinearCommandTo(const robotics::CartesianPose& pose,
+    double linearVelocity = config::linearVelocityMetersPerSecond,
+    double linearAcceleration = config::linearAccelerationMetersPerSecondSquared)
 {
     robotics::LinearPathMoveCommand command;
     command.targetPoses.push_back(pose);
-    command.maxLinearVelocityMetersPerSecond = config::linearVelocityMetersPerSecond;
+    command.maxLinearVelocityMetersPerSecond = linearVelocity;
     command.maxAngularVelocityRadiansPerSecond = config::angularVelocityRadiansPerSecond;
-    command.maxLinearAccelerationMetersPerSecondSquared = config::linearAccelerationMetersPerSecondSquared;
+    command.maxLinearAccelerationMetersPerSecondSquared = linearAcceleration;
     command.maxAngularAccelerationRadiansPerSecondSquared = config::angularAccelerationRadiansPerSecondSquared;
     return command;
 }
 
-robotics::Result MoveLinearTo(const robotics::CartesianPose& pose, robotics::IRobotController& controller)
+robotics::Result MoveLinearTo(const robotics::CartesianPose& pose, robotics::IRobotController& controller,
+    double linearVelocity = config::linearVelocityMetersPerSecond,
+    double linearAcceleration = config::linearAccelerationMetersPerSecondSquared)
 {
-    const auto command = LinearCommandTo(pose);
+    const auto command = LinearCommandTo(pose, linearVelocity, linearAcceleration);
     return controller.BeginLinearPathPlanning(command);
 }
 
@@ -364,10 +369,8 @@ void PickPlaceMission::Update(const robotics::RobotState& state, robotics::IRobo
             {
                 recoveryPose_ = MakeAttachedBoxTarget(placementPoseInBase, config::approachHeightMeters,
                     placementBoxOrientationXyzw_, boxRotationOffsetInTool_, boxOffsetInTool_);
-                const auto placement = MakeAttachedBoxTarget(placementPoseInBase, 0.0,
-                    placementBoxOrientationXyzw_, boxRotationOffsetInTool_, boxOffsetInTool_);
-                SetStageFromMotionResult(controller.BeginPosePlanningWithLinearContinuation(
-                    recoveryPose_, LinearCommandTo(placement)), Stage::AligningAbovePlacement, controller);
+                SetStageFromMotionResult(MovePoseTo(recoveryPose_, controller),
+                    Stage::AligningAbovePlacement, controller);
             }
             break;
         case Stage::AligningAbovePlacement:
@@ -375,20 +378,36 @@ void PickPlaceMission::Update(const robotics::RobotState& state, robotics::IRobo
             {
                 const auto placement = MakeAttachedBoxTarget(placementPoseInBase, 0.0,
                     placementBoxOrientationXyzw_, boxRotationOffsetInTool_, boxOffsetInTool_);
-                SetStageFromMotionResult(MoveLinearTo(placement, controller), Stage::MovingDownToPlacement, controller);
+                SetStageFromMotionResult(MoveLinearTo(placement, controller),
+                    Stage::MovingDownToPlacement, controller);
             }
             break;
         case Stage::MovingDownToPlacement:
             if (idle)
+            {
+                placementDwellStarted_ = std::chrono::steady_clock::now();
+                stage_ = Stage::SettlingAtPlacement;
+            }
+            break;
+        case Stage::SettlingAtPlacement:
+            if (!taskPaused_ && idle &&
+                std::chrono::steady_clock::now() - placementDwellStarted_ >= std::chrono::milliseconds{400})
                 SetStageFromResult(CommandGripper(0, gripper), Stage::Opening);
             break;
         case Stage::Opening:
-            if (!taskPaused_ && !boxGrasped)
+        {
+            const auto gripperState = gripper.GetState();
+            const bool gripperSettled = gripperState.mode == robotics::GripperMode::Idle &&
+                gripperState.objectStatus == robotics::GripperObjectStatus::AtRequestedPosition;
+            const bool openingStoppedAtContact = gripperState.mode == robotics::GripperMode::Stopped &&
+                gripperState.objectStatus == robotics::GripperObjectStatus::ContactWhileOpening;
+            if (!taskPaused_ && !boxGrasped && (gripperSettled || openingStoppedAtContact))
             {
                 placementReleased_ = true;
                 SetStageFromMotionResult(MoveLinearTo(recoveryPose_, controller), Stage::Retreating, controller);
             }
             break;
+        }
         case Stage::Retreating:
             if (idle)
             {
@@ -495,8 +514,7 @@ void PickPlaceMission::ApplyActions(const PickPlaceMissionActions& actions,
             }
             else if (stage_ == Stage::Opening)
             {
-                placementReleased_ = true;
-                SetStageFromMotionResult(MoveLinearTo(recoveryPose_, controller), Stage::Retreating, controller);
+                placementReleased_ = false;
             }
             else
             {
@@ -534,6 +552,7 @@ PickPlaceMissionSnapshot PickPlaceMission::Snapshot() const
     case Stage::MovingToPlacementOverhead: stageName = "Moving above the goal"; break;
     case Stage::AligningAbovePlacement: stageName = "Aligning box over goal"; break;
     case Stage::MovingDownToPlacement: stageName = "Lowering box"; break;
+    case Stage::SettlingAtPlacement: stageName = "Holding at placement"; break;
     case Stage::Opening: stageName = "Opening gripper"; break;
     case Stage::Retreating: stageName = "Retracting from goal"; break;
     case Stage::UnwindingWrist: stageName = "Unwinding J6"; break;

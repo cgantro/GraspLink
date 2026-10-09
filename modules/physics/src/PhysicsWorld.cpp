@@ -4,6 +4,8 @@
 #include <Jolt/RegisterTypes.h>
 
 #include <Jolt/Core/Factory.h>
+#include <Jolt/Core/JobSystem.h>
+#include <Jolt/Core/JobSystemSingleThreaded.h>
 #include <Jolt/Core/JobSystemThreadPool.h>
 #include <Jolt/Core/TempAllocator.h>
 
@@ -33,7 +35,9 @@
 #include <cmath>
 #include <mutex>
 #include <stdexcept>
+#if !defined(__EMSCRIPTEN__) || defined(__EMSCRIPTEN_PTHREADS__)
 #include <thread>
+#endif
 #include <map>
 #include <unordered_map>
 #include <tuple>
@@ -389,7 +393,7 @@ struct PhysicsWorld::Impl
 
     std::unique_ptr<JPH::TempAllocatorImpl> tempAllocator;
 
-    std::unique_ptr<JPH::JobSystemThreadPool> jobSystem;
+    std::unique_ptr<JPH::JobSystem> jobSystem;
     const std::uint64_t worldToken = g_NextWorldToken.fetch_add(1, std::memory_order_relaxed);
 
     struct FixedBinding
@@ -421,6 +425,9 @@ struct PhysicsWorld::Impl
         tempAllocator =
             std::make_unique<JPH::TempAllocatorImpl>(TempMemorySize);
 
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+        jobSystem = std::make_unique<JPH::JobSystemSingleThreaded>(JPH::cMaxPhysicsJobs);
+#else
         const unsigned int hardwareThreads =
             std::thread::hardware_concurrency();
 
@@ -433,6 +440,7 @@ struct PhysicsWorld::Impl
             JPH::cMaxPhysicsJobs,
             JPH::cMaxPhysicsBarriers,
             workerThreads);
+#endif
 
         constexpr JPH::uint MaxBodies = 4096;
         constexpr JPH::uint NumBodyMutexes = 0;
