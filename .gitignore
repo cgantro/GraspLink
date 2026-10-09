@@ -44,12 +44,10 @@ _deps/
 *.user
 *.userosscache
 *.sln.docstates
+# Private working notes. Keep these files outside the public repository.
 /docs/diary/
-!/docs/diary/
-/docs/diary/*
-!/docs/diary/archive/
-!/docs/diary/archive/**
-!/docs/diary/interview-one-page.md
+/docs/history/
+/docs/DOCUMENTATION_AUDIT_2026-10-09.md
 
 # Operating system files
 .DS_Store
