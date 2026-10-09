@@ -18,6 +18,7 @@ namespace
 {
 constexpr double kPositionEpsilon = 1e-8;
 constexpr double kJointVelocityRampSeconds = 0.20;
+constexpr std::size_t kMaximumPoseIkSeeds = 16;
 Result Failure(ErrorCode code, std::string message)
 {
     // 잘못된 명령 입력은 예외로 던지지 않고 다른 Controller 구현과 같은 Result 오류 값으로 반환한다.
@@ -78,6 +79,36 @@ bool JointInterpolationFollowsTcpLine(
             kinematics::detail::Length(kinematics::detail::RotationError(
                 actual.rotation, expected.rotation)) >
                 planning::kDefaultPlanningPolicy.maximumAngularTcpErrorRadians)
+            return false;
+    }
+    return true;
+}
+
+bool SameLinearPathCommand(const LinearPathMoveCommand& lhs, const LinearPathMoveCommand& rhs)
+{
+    if (lhs.targetPoses.size() != rhs.targetPoses.size() ||
+        lhs.maxLinearVelocityMetersPerSecond != rhs.maxLinearVelocityMetersPerSecond ||
+        lhs.maxAngularVelocityRadiansPerSecond != rhs.maxAngularVelocityRadiansPerSecond ||
+        lhs.maxLinearAccelerationMetersPerSecondSquared != rhs.maxLinearAccelerationMetersPerSecondSquared ||
+        lhs.maxAngularAccelerationRadiansPerSecondSquared != rhs.maxAngularAccelerationRadiansPerSecondSquared)
+        return false;
+
+    for (std::size_t index = 0; index < lhs.targetPoses.size(); ++index)
+    {
+        if (lhs.targetPoses[index].positionMeters != rhs.targetPoses[index].positionMeters ||
+            lhs.targetPoses[index].orientationXyzw != rhs.targetPoses[index].orientationXyzw)
+            return false;
+    }
+    return true;
+}
+
+bool SameJointPosition(const JointVector& lhs, const JointVector& rhs)
+{
+    if (lhs.size() != rhs.size())
+        return false;
+    for (std::size_t index = 0; index < lhs.size(); ++index)
+    {
+        if (std::abs(lhs[index] - rhs[index]) > 1e-8)
             return false;
     }
     return true;
@@ -153,6 +184,9 @@ void SimRobotController::SetJointStateValidityChecker(
     posePlanningPhase_ = PosePlanningPhase::None;
     posePathPoints_.clear();
     poseAlternativeSeeds_.clear();
+    poseContinuationCommand_.reset();
+    poseContinuationPlan_.reset();
+    poseCandidateJoints_.clear();
     jointStateValidityChecker_ = std::move(checker);
 }
 
@@ -174,6 +208,9 @@ Result SimRobotController::Connect()
     posePlanningPhase_ = PosePlanningPhase::None;
     posePathPoints_.clear();
     poseAlternativeSeeds_.clear();
+    poseContinuationCommand_.reset();
+    poseContinuationPlan_.reset();
+    poseCandidateJoints_.clear();
     linearPathPlanningResult_.reset();
     pendingLinearPathCommand_ = {};
     state_ = {};
@@ -213,6 +250,9 @@ void SimRobotController::Disconnect() noexcept
     posePlanningPhase_ = PosePlanningPhase::None;
     posePathPoints_.clear();
     poseAlternativeSeeds_.clear();
+    poseContinuationCommand_.reset();
+    poseContinuationPlan_.reset();
+    poseCandidateJoints_.clear();
     linearPathPlanningResult_.reset();
     posePathSegment_ = 0;
     pendingLinearPathCommand_ = {};
@@ -222,6 +262,9 @@ void SimRobotController::Disconnect() noexcept
     state_.valid = false;
     state_.tcpPoseValid = false;
     linearPath_.clear();
+    poseContinuationCommand_.reset();
+    poseContinuationPlan_.reset();
+    poseCandidateJoints_.clear();
     std::fill(
         state_.jointVelocityRadiansPerSecond.begin(),
         state_.jointVelocityRadiansPerSecond.end(),
@@ -235,11 +278,10 @@ bool SimRobotController::IsConnected() const noexcept
 
 Result SimRobotController::MoveJoint(const JointMoveCommand& command)
 {
-    posePathPoints_.clear();
-    return MoveJointImpl(command, true);
+    return MoveJointImpl(command, JointMoveOrigin::ExternalJointCommand);
 }
 
-Result SimRobotController::MoveJointImpl(const JointMoveCommand& command, bool validatePath)
+Result SimRobotController::MoveJointImpl(const JointMoveCommand& command, JointMoveOrigin origin)
 {
     if (!connected_)
         return Failure(ErrorCode::NotConnected, "SimRobotController: not connected");
@@ -279,7 +321,7 @@ Result SimRobotController::MoveJointImpl(const JointMoveCommand& command, bool v
         nextPathStart = &brakingStart;
     }
 
-    if ((validatePath || canBrakeJointPath) && jointStateValidityChecker_)
+    if ((origin == JointMoveOrigin::ExternalJointCommand || canBrakeJointPath) && jointStateValidityChecker_)
     {
         const auto invalidity = planning::ValidateJointPath(*nextPathStart, targetPositionRadians,
             *specification_, jointStateValidityChecker_);
@@ -289,6 +331,14 @@ Result SimRobotController::MoveJointImpl(const JointMoveCommand& command, bool v
             AppendValidityDiagnostic(result, jointStateValidityDiagnosticProvider_);
             return result;
         }
+    }
+
+    if (origin != JointMoveOrigin::PlannedPoseSegment)
+    {
+        poseContinuationCommand_.reset();
+        poseContinuationPlan_.reset();
+        posePathPoints_.clear();
+        posePathSegment_ = 0;
     }
 
     if (canBrakeJointPath)
@@ -323,6 +373,7 @@ void SimRobotController::ConfigureJointMove(
     jointMovePeakProgressVelocity_ = 0.0;
     jointMoveBraking_ = false;
     hasPendingJointTarget_ = false;
+    pendingJointTargetRadians_.clear();
     linearPath_.clear();
 
     jointMoveProgressRate_ = std::numeric_limits<double>::infinity();
@@ -401,11 +452,26 @@ Result SimRobotController::MovePose(const CartesianPose& targetInBase, double ve
         }
         return planning::MapIkFailure(ikFailure);
     }
-    return MoveJointImpl({solution->jointPositionRadians, velocityScale, accelerationScale}, false);
+    return MoveJointImpl({solution->jointPositionRadians, velocityScale, accelerationScale},
+        JointMoveOrigin::PoseTargetCommand);
 }
 
 Result SimRobotController::BeginPosePlanning(
     const CartesianPose& targetInBase, double velocityScale, double accelerationScale)
+{
+    return BeginPosePlanningImpl(targetInBase, std::nullopt, velocityScale, accelerationScale);
+}
+
+Result SimRobotController::BeginPosePlanningWithLinearContinuation(
+    const CartesianPose& approach, const LinearPathMoveCommand& continuation,
+    double velocityScale, double accelerationScale)
+{
+    return BeginPosePlanningImpl(approach, continuation, velocityScale, accelerationScale);
+}
+
+Result SimRobotController::BeginPosePlanningImpl(
+    const CartesianPose& targetInBase, std::optional<LinearPathMoveCommand> continuation,
+    double velocityScale, double accelerationScale)
 {
     if (!connected_)
         return Failure(ErrorCode::NotConnected, "SimRobotController: not connected");
@@ -413,15 +479,25 @@ Result SimRobotController::BeginPosePlanning(
         return Failure(ErrorCode::Busy, "SimRobotController: motion planning is in progress");
     if (!IsScaleValid(velocityScale) || !IsScaleValid(accelerationScale))
         return Failure(ErrorCode::InvalidCommand, "SimRobotController: scale must be in (0, 1]");
+    if (continuation)
+    {
+        const Result validation = planning::ValidateLinearPathCommand(*continuation);
+        if (!validation)
+            return validation;
+    }
     if (!specification_->hasToolFrame)
         return Failure(ErrorCode::Unsupported, "SimRobotController: missing ToolFrame for TCP motion");
 
     linearPathPlanningResult_.reset();
     posePathPoints_.clear();
+    poseContinuationCommand_ = std::move(continuation);
+    poseContinuationPlan_.reset();
+    poseCandidateJoints_.clear();
     poseAlternativeSeeds_ = kinematics::detail::BuildAlternativeIkSeeds(
         state_.jointPositionRadians, *specification_);
+    const std::size_t maximumSeeds = poseContinuationCommand_ ? kMaximumPoseIkSeeds : 64;
     kinematics::detail::AppendIkRestartSeeds(poseAlternativeSeeds_,
-        state_.jointPositionRadians, *specification_, 63);
+        state_.jointPositionRadians, *specification_, maximumSeeds - 1);
     poseAlternativeSeedIndex_ = 0;
     poseIkSeedAttempts_ = 1;
     posePathSegment_ = 0;
@@ -439,10 +515,30 @@ bool SimRobotController::StartNextPoseIkSeed()
 {
     if (poseAlternativeSeedIndex_ >= poseAlternativeSeeds_.size())
         return false;
+    poseContinuationPlan_.reset();
+    poseCandidateJoints_.clear();
     poseIkSession_ = inverse_.BeginSingleSeed(poseTarget_,
         poseAlternativeSeeds_[poseAlternativeSeedIndex_++]);
     ++poseIkSeedAttempts_;
     posePlanningPhase_ = PosePlanningPhase::Ik;
+    return true;
+}
+
+bool SimRobotController::StartPoseCandidateJointPath()
+{
+    planning::JointPathPlannerOptions options;
+    options.validationPolicy = planning::kDefaultPlanningPolicy;
+    options.maximumIterations = 512;
+    options.maximumNodesPerTree = 256;
+    options.maximumShortcutAttempts = 32;
+    const Result begin = poseJointPathPlanningJob_.Begin(*specification_,
+        state_.jointPositionRadians, poseCandidateJoints_, jointStateValidityChecker_, options);
+    if (!begin)
+    {
+        posePathFailure_ = begin;
+        return false;
+    }
+    posePlanningPhase_ = PosePlanningPhase::JointPath;
     return true;
 }
 
@@ -467,17 +563,16 @@ Result SimRobotController::MoveLinearPath(const LinearPathMoveCommand& command)
     const Result validation = ValidateLinearPathRequest(command);
     if (!validation)
         return validation;
+    if (const auto cached = CommitCachedLinearContinuation(command))
+        return *cached;
 
     planning::LinearPathPlan plan;
     const auto result = planning::BuildLinearPath(
         command, *specification_, state_.jointPositionRadians,
-        inverse_.EvaluateTcp(state_.jointPositionRadians), inverse_, jointStateValidityChecker_, plan);
+        inverse_.EvaluateTcp(state_.jointPositionRadians), inverse_, jointStateValidityChecker_, plan,
+        planning::kDefaultPlanningPolicy, jointStateValidityDiagnosticProvider_);
     if (!result)
-    {
-        Result detailed = result;
-        AppendValidityDiagnostic(detailed, jointStateValidityDiagnosticProvider_);
-        return detailed;
-    }
+        return result;
     return CommitLinearPathPlan(command, std::move(plan));
 }
 
@@ -486,16 +581,21 @@ Result SimRobotController::BeginLinearPathPlanning(const LinearPathMoveCommand& 
     const Result validation = ValidateLinearPathRequest(command);
     if (!validation)
         return validation;
+    if (const auto cached = CommitCachedLinearContinuation(command))
+    {
+        linearPathPlanningResult_ = *cached;
+        return *cached;
+    }
 
     pendingLinearPathCommand_ = command;
     linearPathPlanningResult_.reset();
     const Result begin = linearPathPlanningJob_.Begin(command, *specification_,
         state_.jointPositionRadians, inverse_.EvaluateTcp(state_.jointPositionRadians),
-        inverse_, jointStateValidityChecker_, planning::kInteractivePlanningPolicy);
+        inverse_, jointStateValidityChecker_, planning::kInteractivePlanningPolicy,
+        jointStateValidityDiagnosticProvider_);
     if (!begin)
     {
         linearPathPlanningResult_ = begin;
-        AppendValidityDiagnostic(*linearPathPlanningResult_, jointStateValidityDiagnosticProvider_);
         pendingLinearPathCommand_ = {};
         linearPathPlanningJob_ = {};
         return begin;
@@ -506,7 +606,6 @@ Result SimRobotController::BeginLinearPathPlanning(const LinearPathMoveCommand& 
         const Result committed = plan ? CommitLinearPathPlan(command, std::move(*plan)) :
             Failure(ErrorCode::Fault, "SimRobotController: completed planner returned no plan");
         linearPathPlanningResult_ = committed;
-        AppendValidityDiagnostic(*linearPathPlanningResult_, jointStateValidityDiagnosticProvider_);
         pendingLinearPathCommand_ = {};
         return committed;
     }
@@ -535,19 +634,78 @@ void SimRobotController::AdvanceMotionPlanning(std::size_t workBudget)
             return;
         }
 
-        planning::JointPathPlannerOptions options;
-        options.validationPolicy = planning::kDefaultPlanningPolicy;
-        options.maximumIterations = 512;
-        options.maximumNodesPerTree = 256;
-        options.maximumShortcutAttempts = 32;
-        const Result begin = poseJointPathPlanningJob_.Begin(*specification_, state_.jointPositionRadians,
-            ikResult.jointPositionRadians, jointStateValidityChecker_, options);
-        if (!begin)
+        poseCandidateJoints_ = ikResult.jointPositionRadians;
+        if (poseContinuationCommand_)
         {
-            FinishPosePlanning(begin);
+            const auto invalidity = jointStateValidityChecker_ ?
+                jointStateValidityChecker_(poseCandidateJoints_) : planning::JointStateInvalidity::None;
+            if (invalidity != planning::JointStateInvalidity::None)
+            {
+                posePathFailure_ = planning::MapJointStateInvalidity(invalidity);
+                if (StartNextPoseIkSeed())
+                    return;
+                FinishPosePlanning(posePathFailure_);
+                return;
+            }
+
+            const Result continuationBegin = linearPathPlanningJob_.Begin(
+                *poseContinuationCommand_, *specification_, poseCandidateJoints_,
+                inverse_.EvaluateTcp(poseCandidateJoints_), inverse_, jointStateValidityChecker_,
+                planning::kInteractivePlanningPolicy, jointStateValidityDiagnosticProvider_);
+            if (!continuationBegin)
+            {
+                posePathFailure_ = continuationBegin;
+                if (StartNextPoseIkSeed())
+                    return;
+                FinishPosePlanning(posePathFailure_);
+                return;
+            }
+
+            posePlanningPhase_ = PosePlanningPhase::LinearContinuation;
             return;
         }
-        posePlanningPhase_ = PosePlanningPhase::JointPath;
+
+        if (!StartPoseCandidateJointPath())
+        {
+            if (StartNextPoseIkSeed())
+                return;
+            FinishPosePlanning(posePathFailure_);
+        }
+        return;
+    }
+
+    if (posePlanningPhase_ == PosePlanningPhase::LinearContinuation)
+    {
+        const auto planningState = linearPathPlanningJob_.Advance(workBudget);
+        if (planningState == planning::LinearPathPlanningState::Running)
+            return;
+        if (planningState != planning::LinearPathPlanningState::Completed)
+        {
+            posePathFailure_ = linearPathPlanningJob_.GetResult();
+            linearPathPlanningJob_ = {};
+            if (StartNextPoseIkSeed())
+                return;
+            FinishPosePlanning(posePathFailure_);
+            return;
+        }
+
+        poseContinuationPlan_ = linearPathPlanningJob_.TakePlan();
+        linearPathPlanningJob_ = {};
+        if (!poseContinuationPlan_)
+        {
+            posePathFailure_ = Failure(ErrorCode::Fault,
+                "SimRobotController: completed continuation planner returned no plan");
+            if (StartNextPoseIkSeed())
+                return;
+            FinishPosePlanning(posePathFailure_);
+            return;
+        }
+        if (!StartPoseCandidateJointPath())
+        {
+            if (StartNextPoseIkSeed())
+                return;
+            FinishPosePlanning(posePathFailure_);
+        }
         return;
     }
 
@@ -575,7 +733,15 @@ void SimRobotController::AdvanceMotionPlanning(std::size_t workBudget)
         poseAlternativeSeeds_.clear();
         posePathSegment_ = 0;
         posePlanningPhase_ = PosePlanningPhase::None;
-        FinishPosePlanning(StartPosePathSegment());
+        if (!poseContinuationPlan_)
+            poseContinuationCommand_.reset();
+        const Result execution = StartPosePathSegment();
+        if (!execution)
+        {
+            poseContinuationPlan_.reset();
+            poseContinuationCommand_.reset();
+        }
+        FinishPosePlanning(execution);
         return;
     }
 
@@ -593,7 +759,6 @@ void SimRobotController::AdvanceMotionPlanning(std::size_t workBudget)
     else
     {
         linearPathPlanningResult_ = linearPathPlanningJob_.GetResult();
-        AppendValidityDiagnostic(*linearPathPlanningResult_, jointStateValidityDiagnosticProvider_);
         state_.mode = RobotMode::Idle;
         state_.errorCode = linearPathPlanningResult_->code;
         pendingLinearPathCommand_ = {};
@@ -609,7 +774,6 @@ bool SimRobotController::IsMotionPlanning() const noexcept
 
 void SimRobotController::FinishPosePlanning(Result result)
 {
-    AppendValidityDiagnostic(result, jointStateValidityDiagnosticProvider_);
     posePlanningPhase_ = PosePlanningPhase::None;
     poseAlternativeSeeds_.clear();
     if (!result && poseIkSeedAttempts_ > 1)
@@ -618,7 +782,14 @@ void SimRobotController::FinishPosePlanning(Result result)
     state_.mode = *linearPathPlanningResult_ ? RobotMode::Moving : RobotMode::Idle;
     state_.errorCode = linearPathPlanningResult_->code;
     if (!*linearPathPlanningResult_)
+    {
         posePathPoints_.clear();
+        poseContinuationCommand_.reset();
+        poseContinuationPlan_.reset();
+        poseCandidateJoints_.clear();
+        hasPendingJointTarget_ = false;
+        pendingJointTargetRadians_.clear();
+    }
 }
 
 Result SimRobotController::StartPosePathSegment()
@@ -629,11 +800,11 @@ Result SimRobotController::StartPosePathSegment()
     {
         posePathPoints_.clear();
         return MoveJointImpl({state_.jointPositionRadians, pendingPoseMove_.velocityScale,
-            pendingPoseMove_.accelerationScale}, false);
+            pendingPoseMove_.accelerationScale}, JointMoveOrigin::PlannedPoseSegment);
     }
     posePathSegment_ = 1;
     return MoveJointImpl({posePathPoints_[posePathSegment_], pendingPoseMove_.velocityScale,
-        pendingPoseMove_.accelerationScale}, false);
+        pendingPoseMove_.accelerationScale}, JointMoveOrigin::PlannedPoseSegment);
 }
 
 std::optional<Result> SimRobotController::TakeMotionPlanningResult()
@@ -684,12 +855,33 @@ Result SimRobotController::CommitLinearPathPlan(
     linearProfileDurationSeconds_ = linearPlannedDurationSeconds_ / (1.0 - linearProfileRampFraction_);
     linearProfileElapsedSeconds_ = 0.0;
     targetPositionRadians_ = candidate.back().joints;
+    posePathPoints_.clear();
+    posePathSegment_ = 0;
+    poseContinuationCommand_.reset();
+    poseContinuationPlan_.reset();
+    poseCandidateJoints_.clear();
     linearPath_ = std::move(candidate);
     linearSegment_ = 1;
     linearSegmentFraction_ = 0.0;
     state_.errorCode = ErrorCode::None;
     state_.mode = RobotMode::Moving;
     return Result::Success();
+}
+
+std::optional<Result> SimRobotController::CommitCachedLinearContinuation(
+    const LinearPathMoveCommand& command)
+{
+    if (!poseContinuationPlan_ || !poseContinuationCommand_)
+        return std::nullopt;
+
+    auto plan = std::move(*poseContinuationPlan_);
+    const bool matches = SameLinearPathCommand(*poseContinuationCommand_, command) &&
+        !plan.points.empty() && SameJointPosition(state_.jointPositionRadians, plan.points.front().joints);
+    poseContinuationPlan_.reset();
+    poseContinuationCommand_.reset();
+    if (!matches)
+        return std::nullopt;
+    return CommitLinearPathPlan(command, std::move(plan));
 }
 
 void SimRobotController::RefreshTcp()
@@ -742,6 +934,10 @@ Result SimRobotController::Stop()
     hasPendingJointTarget_ = false;
     linearPath_.clear();
     posePathPoints_.clear();
+    posePathSegment_ = 0;
+    poseContinuationCommand_.reset();
+    poseContinuationPlan_.reset();
+    poseCandidateJoints_.clear();
     linearProfileElapsedSeconds_ = 0.0;
     std::fill(
         state_.jointVelocityRadiansPerSecond.begin(),
@@ -1068,9 +1264,30 @@ const models::RobotSpecification& SimRobotController::GetSpecification() const n
 
 bool SimRobotController::RestoreCollisionSafeState(const JointVector& safePositionRadians)
 {
+    return RestoreCollisionSafeState(safePositionRadians, ErrorCode::EnvironmentContact);
+}
+
+bool SimRobotController::RestoreCollisionSafeState(
+    const JointVector& safePositionRadians, ErrorCode collisionReason)
+{
     if (safePositionRadians.size() != specification_->jointCount ||
         !ValidateJointPositionLimits(*specification_, safePositionRadians))
         return false;
+    if (collisionReason != ErrorCode::EnvironmentContact && collisionReason != ErrorCode::SelfCollision &&
+        collisionReason != ErrorCode::AttachedObjectCollision)
+        return false;
+
+    linearPathPlanningJob_.Cancel();
+    if (posePlanningPhase_ != PosePlanningPhase::None)
+        inverse_.CancelSingleSeed(poseIkSession_);
+    poseJointPathPlanningJob_.Cancel();
+    posePlanningPhase_ = PosePlanningPhase::None;
+    linearPathPlanningJob_ = {};
+    pendingLinearPathCommand_ = {};
+    linearPathPlanningResult_.reset();
+    poseAlternativeSeeds_.clear();
+    posePathPoints_.clear();
+    posePathSegment_ = 0;
 
     state_.jointPositionRadians = safePositionRadians;
     std::fill(state_.jointVelocityRadiansPerSecond.begin(), state_.jointVelocityRadiansPerSecond.end(), 0.0);
@@ -1082,10 +1299,17 @@ bool SimRobotController::RestoreCollisionSafeState(const JointVector& safePositi
     jointMoveProgressRate_ = 0.0;
     jointMoveBraking_ = false;
     hasPendingJointTarget_ = false;
+    pendingJointTargetRadians_.clear();
     linearPath_.clear();
+    linearSegment_ = 1;
+    linearSegmentFraction_ = 0.0;
+    linearProfileElapsedSeconds_ = 0.0;
+    poseContinuationCommand_.reset();
+    poseContinuationPlan_.reset();
+    poseCandidateJoints_.clear();
     // unsafe tick은 직전 안전 자세로 되돌린 뒤 멈춘다. Fault로 고정하면 호출자가 위쪽 안전 자세로 물러나는 명령도 보낼 수 없다.
     state_.mode = RobotMode::Idle;
-    state_.errorCode = ErrorCode::EnvironmentContact;
+    state_.errorCode = collisionReason;
     RefreshTcp();
     return true;
 }

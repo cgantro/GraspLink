@@ -211,12 +211,19 @@ void RobotEnvironmentCollisionGuard::CaptureSafeJointPose()
 
 void RobotEnvironmentCollisionGuard::RestoreSafePoseIfOverlapping()
 {
-    if (m_RobotController.GetStateView().mode != grasplink::robotics::RobotMode::Moving ||
-        (!RobotAssemblyOverlapsEnvironment() && !RobotAssemblyHasSelfCollision()))
+    if (m_RobotController.GetStateView().mode != grasplink::robotics::RobotMode::Moving)
         return;
 
+    grasplink::robotics::ErrorCode collisionReason = grasplink::robotics::ErrorCode::EnvironmentContact;
+    if (!RobotAssemblyOverlapsEnvironment())
+    {
+        if (!RobotAssemblyHasSelfCollision())
+            return;
+        collisionReason = grasplink::robotics::ErrorCode::SelfCollision;
+    }
+
     // Jolt 접촉 callback은 Kinematic 로봇 부품과 Static 바닥의 겹침을 항상 알리지 않으므로 물리 계산 전에 직전 안전 자세를 복원한다.
-    if (!m_RobotController.RestoreCollisionSafeState(m_SafeJointPositions))
+    if (!m_RobotController.RestoreCollisionSafeState(m_SafeJointPositions, collisionReason))
         return;
 
     ApplyJointPose(m_RobotController.GetStateView());

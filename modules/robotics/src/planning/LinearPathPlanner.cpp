@@ -153,6 +153,7 @@ struct LinearPathPlanningJob::Impl
     JointVector startJoints;
     kinematics::DampedLeastSquaresIk* inverse = nullptr;
     StateValidityChecker stateValidityChecker;
+    std::function<std::string()> validityDiagnosticProvider;
     PlanningPolicy policy{};
     kinematics::IkOptions options{};
     Pose3 start{};
@@ -183,6 +184,8 @@ struct LinearPathPlanningJob::Impl
     double maximumSampleOrientationErrorRadians = 0.0;
     JointStateInvalidity invalidity = JointStateInvalidity::None;
     JointStateInvalidity rejectedRefinementInvalidity = JointStateInvalidity::None;
+    std::string invalidityDiagnostic;
+    std::string rejectedRefinementDiagnostic;
     kinematics::IkResult ikFailure;
     kinematics::IkResult workingSolution;
     double workingScore = 0.0;
@@ -200,7 +203,8 @@ struct LinearPathPlanningJob::Impl
     Result Begin(const LinearPathMoveCommand& moveCommand,
         const models::RobotSpecification& robot, const JointVector& joints,
         const CartesianPose& tcp, kinematics::DampedLeastSquaresIk& ik,
-        const StateValidityChecker& checker, const PlanningPolicy& planningPolicy)
+        const StateValidityChecker& checker, const PlanningPolicy& planningPolicy,
+        const std::function<std::string()>& diagnosticProvider)
     {
         if (ikSession != 0 && inverse != nullptr)
             inverse->CancelSingleSeed(ikSession);
@@ -211,6 +215,7 @@ struct LinearPathPlanningJob::Impl
         startJoints = joints;
         inverse = &ik;
         stateValidityChecker = checker;
+        validityDiagnosticProvider = diagnosticProvider;
         policy = planningPolicy;
         plan = {};
         planTaken = false;
@@ -303,12 +308,15 @@ struct LinearPathPlanningJob::Impl
     {
         result = std::move(failure);
         state = LinearPathPlanningState::Failed;
+        stateValidityChecker = {};
+        validityDiagnosticProvider = {};
         return result;
     }
 
     void ReleasePlanningStorage()
     {
         stateValidityChecker = {};
+        validityDiagnosticProvider = {};
         std::vector<Pose3>().swap(targets);
         std::vector<Pose3>().swap(tcpSamples);
         std::vector<std::vector<PathCandidate>>().swap(layers);
@@ -397,6 +405,8 @@ struct LinearPathPlanningJob::Impl
         maximumSampleOrientationErrorRadians = 0.0;
         invalidity = JointStateInvalidity::None;
         rejectedRefinementInvalidity = JointStateInvalidity::None;
+        invalidityDiagnostic.clear();
+        rejectedRefinementDiagnostic.clear();
         ikFailure = {};
         phase = Phase::SolveSeed;
     }
@@ -522,14 +532,17 @@ struct LinearPathPlanningJob::Impl
         phase = Phase::ValidatePath;
     }
 
-    void CompletePathValidation(JointStateInvalidity pathInvalidity)
+    void CompletePathValidation(JointStateInvalidity pathInvalidity, std::string diagnostic = {})
     {
         if (validationPurpose == ValidationPurpose::RefinementProbe)
         {
             if (pathInvalidity == JointStateInvalidity::None)
                 foundCollisionFreeRefinementEdge = true;
             else if (rejectedRefinementInvalidity == JointStateInvalidity::None)
+            {
                 rejectedRefinementInvalidity = pathInvalidity;
+                rejectedRefinementDiagnostic = std::move(diagnostic);
+            }
             ++refinementEdge;
             phase = Phase::FinishSample;
             return;
@@ -538,7 +551,10 @@ struct LinearPathPlanningJob::Impl
         if (pathInvalidity != JointStateInvalidity::None)
         {
             if (invalidity == JointStateInvalidity::None)
+            {
                 invalidity = pathInvalidity;
+                invalidityDiagnostic = std::move(diagnostic);
+            }
             parentNeedsSearch[workingParent] = true;
             if (workingContinuation)
                 parentHasContinuation[workingParent] = true;
@@ -684,7 +700,9 @@ struct LinearPathPlanningJob::Impl
                             std::to_string(maximumSamplePositionErrorMeters * 1000.0) + " mm / " +
                             std::to_string(maximumSampleOrientationErrorRadians * 1000.0) + " mrad, tolerance " +
                             std::to_string(policy.maximumLinearTcpErrorMeters * 1000.0) + " mm / " +
-                            std::to_string(policy.maximumAngularTcpErrorRadians * 1000.0) + " mrad"});
+                            std::to_string(policy.maximumAngularTcpErrorRadians * 1000.0) + " mrad" +
+                            (rejectedRefinementDiagnostic.empty() ? std::string{} :
+                                "; first rejected refinement: " + rejectedRefinementDiagnostic)});
                     return;
                 }
                 {
@@ -711,6 +729,10 @@ struct LinearPathPlanningJob::Impl
             else
                 Fail(AddPathSampleContext(MapIkFailure(ikFailure), sampleNumber, sampleCount,
                     *specification, target, &ikFailure));
+            const std::string& diagnostic = invalidityDiagnostic.empty() ?
+                rejectedRefinementDiagnostic : invalidityDiagnostic;
+            if (!diagnostic.empty())
+                result.message += " (" + diagnostic + ")";
             return;
         }
         std::sort(candidates.begin(), candidates.end(), [](const PathCandidate& left, const PathCandidate& right)
@@ -827,12 +849,15 @@ struct LinearPathPlanningJob::Impl
                 ZoneScopedN("PlannerJointPathValidity");
                 const auto pathInvalidity = stateValidityChecker ?
                     stateValidityChecker(validationSample) : JointStateInvalidity::None;
+                std::string diagnostic;
+                if (pathInvalidity != JointStateInvalidity::None && validityDiagnosticProvider)
+                    diagnostic = validityDiagnosticProvider();
                 ++plan.validityStateChecks;
                 ++validationStep;
                 ++work;
                 if (pathInvalidity != JointStateInvalidity::None)
                 {
-                    CompletePathValidation(pathInvalidity);
+                    CompletePathValidation(pathInvalidity, std::move(diagnostic));
                     if (validationPurpose == ValidationPurpose::RefinementProbe)
                         StartNextRefinementValidation();
                 }
@@ -1067,7 +1092,18 @@ Result LinearPathPlanningJob::Begin(const LinearPathMoveCommand& command,
     const CartesianPose& startTcp, kinematics::DampedLeastSquaresIk& inverse,
     const StateValidityChecker& stateValidityChecker, const PlanningPolicy& policy)
 {
-    return impl_->Begin(command, specification, startJoints, startTcp, inverse, stateValidityChecker, policy);
+    return Begin(command, specification, startJoints, startTcp, inverse,
+        stateValidityChecker, policy, {});
+}
+
+Result LinearPathPlanningJob::Begin(const LinearPathMoveCommand& command,
+    const models::RobotSpecification& specification, const JointVector& startJoints,
+    const CartesianPose& startTcp, kinematics::DampedLeastSquaresIk& inverse,
+    const StateValidityChecker& stateValidityChecker, const PlanningPolicy& policy,
+    const std::function<std::string()>& validityDiagnosticProvider)
+{
+    return impl_->Begin(command, specification, startJoints, startTcp, inverse,
+        stateValidityChecker, policy, validityDiagnosticProvider);
 }
 
 LinearPathPlanningState LinearPathPlanningJob::Advance(std::size_t workBudget)
@@ -1110,9 +1146,20 @@ Result BuildLinearPath(const LinearPathMoveCommand& command,
     const StateValidityChecker& stateValidityChecker, LinearPathPlan& plan,
     const PlanningPolicy& policy)
 {
+    return BuildLinearPath(command, specification, startJoints, startTcp, inverse,
+        stateValidityChecker, plan, policy, {});
+}
+
+Result BuildLinearPath(const LinearPathMoveCommand& command,
+    const models::RobotSpecification& specification, const JointVector& startJoints,
+    const CartesianPose& startTcp, kinematics::DampedLeastSquaresIk& inverse,
+    const StateValidityChecker& stateValidityChecker, LinearPathPlan& plan,
+    const PlanningPolicy& policy,
+    const std::function<std::string()>& validityDiagnosticProvider)
+{
     LinearPathPlanningJob job;
     const Result begin = job.Begin(command, specification, startJoints, startTcp,
-        inverse, stateValidityChecker, policy);
+        inverse, stateValidityChecker, policy, validityDiagnosticProvider);
     if (!begin)
         return begin;
     while (job.GetState() == LinearPathPlanningState::Running)

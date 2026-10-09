@@ -25,6 +25,17 @@ struct SimRobotControllerTestAccess
         return controller.ReorientForLinear(
             controller.linearPath_[controller.linearSegment_].joints, availableSeconds);
     }
+
+    static void SetPosePath(SimRobotController& controller, std::vector<JointVector> points)
+    {
+        controller.posePathPoints_ = std::move(points);
+        controller.posePathSegment_ = 1;
+    }
+
+    static std::size_t PosePathSize(const SimRobotController& controller)
+    {
+        return controller.posePathPoints_.size();
+    }
 };
 } // namespace grasplink::robotics::backends::simulation
 
@@ -503,6 +514,9 @@ void CheckEnvironmentCollisionCanBeRetried()
     const RobotState stopped = controller.GetState();
     ASSERT_TRUE((stopped.mode == RobotMode::Idle)) << "collision rollback leaves a stopped controller that accepts recovery motion";
     ASSERT_TRUE((stopped.errorCode == ErrorCode::EnvironmentContact)) << "collision rollback preserves the reason for stopping";
+    ASSERT_TRUE((controller.RestoreCollisionSafeState(safePosition, ErrorCode::SelfCollision)))
+        << "rollback also preserves self-collision as a distinct stop cause";
+    EXPECT_EQ(controller.GetState().errorCode, ErrorCode::SelfCollision);
     JointVector recovery = safePosition;
     recovery[0] += 0.05;
     ASSERT_TRUE((static_cast<bool>(controller.MoveJoint({recovery, 1.0, 1.0})))) << "the controller accepts a new retreat command after collision rollback";
@@ -1145,6 +1159,84 @@ TEST(RobotMotion, IncrementalLinearPlanningDoesNotCommitBeforePathValidation)
         << "a validated path commits without teleporting the robot";
 }
 
+void CheckRejectedJointCommandPreservesPoseWaypoints()
+{
+    SimRobotController controller(models::hanwha::kHcr12a);
+    ASSERT_TRUE(controller.Connect());
+    grasplink::robotics::backends::simulation::SimRobotControllerTestAccess::SetPosePath(
+        controller, {JointVector(6, 0.1), JointVector(6, 0.2)});
+
+    JointMoveCommand invalid;
+    invalid.targetPositionRadians = {0.0};
+    EXPECT_EQ(controller.MoveJoint(invalid).code, ErrorCode::InvalidCommand);
+    EXPECT_EQ(grasplink::robotics::backends::simulation::SimRobotControllerTestAccess::PosePathSize(controller), 2u)
+        << "a rejected command does not erase waypoints from the accepted plan";
+
+    JointMoveCommand accepted;
+    accepted.targetPositionRadians.assign(6, 0.05);
+    ASSERT_TRUE(controller.MoveJoint(accepted));
+    EXPECT_EQ(grasplink::robotics::backends::simulation::SimRobotControllerTestAccess::PosePathSize(controller), 0u)
+        << "an accepted external command replaces the old pose route";
+}
+
+void CheckCollisionRestoreCancelsPendingPosePlan()
+{
+    const auto& specification = grasplink::robotics::models::hanwha::kHcr12a;
+    SimRobotController controller(specification);
+    ASSERT_TRUE(controller.Connect());
+    DampedLeastSquaresIk inverse(specification);
+    const CartesianPose target = inverse.EvaluateTcp({0.12, -0.08, 0.06, 0.12, -0.04, 0.1});
+    ASSERT_TRUE(controller.BeginPosePlanning(target));
+    ASSERT_TRUE(controller.IsMotionPlanning());
+    controller.AdvanceMotionPlanning(1);
+    const JointVector safe = controller.GetStateView().jointPositionRadians;
+
+    ASSERT_TRUE(controller.RestoreCollisionSafeState(safe, ErrorCode::SelfCollision));
+    EXPECT_FALSE(controller.IsMotionPlanning());
+    EXPECT_EQ(controller.GetStateView().mode, RobotMode::Idle);
+    EXPECT_EQ(controller.GetStateView().errorCode, ErrorCode::SelfCollision);
+    controller.AdvanceMotionPlanning(1000);
+    EXPECT_EQ(controller.GetStateView().jointPositionRadians, safe)
+        << "a cancelled plan cannot resume after collision rollback";
+}
+
+void CheckPosePlanPreflightsAndReusesLinearContinuation()
+{
+    const auto& specification = grasplink::robotics::models::hanwha::kHcr12a;
+    SimRobotController controller(specification);
+    ASSERT_TRUE(controller.Connect());
+    DampedLeastSquaresIk inverse(specification);
+    const JointVector approachJoints{0.12, -0.08, 0.06, 0.12, -0.04, 0.1};
+    const CartesianPose approach = inverse.EvaluateTcp(approachJoints);
+    LinearPathMoveCommand descent;
+    descent.targetPoses.push_back(approach);
+    descent.targetPoses.back().positionMeters[1] -= 0.02;
+
+    ASSERT_TRUE(controller.BeginPosePlanningWithLinearContinuation(approach, descent));
+    const JointVector initial = controller.GetStateView().jointPositionRadians;
+    for (std::size_t work = 0; work < 100000 && controller.IsMotionPlanning(); ++work)
+    {
+        controller.AdvanceMotionPlanning(8);
+        EXPECT_EQ(controller.GetStateView().jointPositionRadians, initial)
+            << "planning both paths must not move before the certified approach is ready";
+    }
+    ASSERT_FALSE(controller.IsMotionPlanning());
+    const auto planned = controller.TakeMotionPlanningResult();
+    ASSERT_TRUE(planned.has_value());
+    ASSERT_TRUE(*planned) << planned->message;
+
+    for (std::size_t tick = 0; tick < 10000 && controller.GetStateView().mode == RobotMode::Moving; ++tick)
+        controller.Update(0.004);
+    ASSERT_EQ(controller.GetStateView().mode, RobotMode::Idle);
+    EXPECT_LT(PositionDistance(controller.GetStateView().tcpPose, approach), 1e-3);
+
+    const Result cachedDescent = controller.BeginLinearPathPlanning(descent);
+    ASSERT_TRUE(cachedDescent) << cachedDescent.message;
+    EXPECT_FALSE(controller.IsMotionPlanning())
+        << "the command consumes the exact MoveL plan already certified for this approach posture";
+    EXPECT_EQ(controller.GetStateView().mode, RobotMode::Moving);
+}
+
 TEST(RobotMotion, PosePlanningFindsKnownReachableEndpointAfterLimitStall)
 {
     const auto& specification = grasplink::robotics::models::hanwha::kHcr12a;
@@ -1219,6 +1311,21 @@ TEST(RobotMotion, ReplacingValidityCheckerCancelsInFlightPlan)
     controller.AdvanceMotionPlanning(64);
     EXPECT_EQ(oldCheckerCalls, callsBeforeReplacement)
         << "a cancelled job never calls the replaced validity checker";
+}
+
+TEST(RobotMotion, RejectedJointCommandPreservesPoseWaypoints)
+{
+    CheckRejectedJointCommandPreservesPoseWaypoints();
+}
+
+TEST(RobotMotion, CollisionRestoreCancelsPendingPosePlan)
+{
+    CheckCollisionRestoreCancelsPendingPosePlan();
+}
+
+TEST(RobotMotion, PosePlanPreflightsAndReusesLinearContinuation)
+{
+    CheckPosePlanPreflightsAndReusesLinearContinuation();
 }
 
 TEST(RobotMotion, ReconnectCancelsAndClearsInFlightPlan)

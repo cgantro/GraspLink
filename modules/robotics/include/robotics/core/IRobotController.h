@@ -72,6 +72,26 @@ public:
     }
 
     /**
+     * @brief TCP 접근 자세와 그 뒤의 직선 경로를 함께 검사한 뒤 접근 동작을 시작한다.
+     * @param approach Robot base 기준 접근 TCP 위치 [m]와 방향 quaternion [x,y,z,w]다.
+     * @param continuation 접근 자세에 도달한 뒤 실행할 TCP 직선 경로다.
+     * @param velocityScale 접근을 위한 관절 최대 속도에 적용할 비율이다.
+     * @param accelerationScale 접근을 위한 관절 가속도에 적용할 비율이다.
+     * @return 복합 경로 계획과 접근 동작의 시작 요청 결과다. 기능이 없으면 Unsupported를 반환한다.
+     * @details Controller는 접근 자세와 continuation 전체가 유효한 경우에만 관절 공간 접근 동작을 시작한다.
+     * 접근 동작이 끝난 뒤 호출자가 continuation을 별도로 요청하면, 구현은 사전 검사한 경로를 재사용할 수 있다.
+     */
+    virtual Result BeginPosePlanningWithLinearContinuation(const CartesianPose& approach,
+        const LinearPathMoveCommand& continuation, double velocityScale = 1.0, double accelerationScale = 1.0)
+    {
+        (void)approach;
+        (void)continuation;
+        (void)velocityScale;
+        (void)accelerationScale;
+        return {ErrorCode::Unsupported, "IRobotController: approach with linear continuation is not supported"};
+    }
+
+    /**
      * @brief TCP가 목표 위치와 방향에 이르도록 직선 경로 이동을 요청한다.
      * @param command TCP 위치 [m], quaternion [x,y,z,w], 선속도 [m/s], 각속도 [rad/s], 선가속도 [m/s²], 각가속도 [rad/s²] 상한이다.
      * @return 요청 수락 여부와 실패 분류다. 기능이 없으면 Unsupported를 반환할 수 있다.

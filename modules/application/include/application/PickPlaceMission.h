@@ -69,8 +69,8 @@ private:
     const robotics::models::RobotSpecification& specification_;
     enum class Stage
     {
-        Ready, UnwindingBeforeTask, MovingAbovePickup, AligningAbovePickup,
-        MovingDownToPickup, Closing, Lifting, MovingAbovePlacement,
+        Ready, UnwindingBeforeTask, MovingAbovePickup, MovingDownToPickup,
+        Closing, Lifting,
         TransitingToPlacement, PlanningMotion, MovingToPlacementOverhead,
         AligningAbovePlacement, MovingDownToPlacement, Opening, Retreating,
         UnwindingWrist, Recovering, Complete, Failed, RaisingAfterResume

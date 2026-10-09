@@ -282,9 +282,11 @@ struct JointPathPlanningJob::Impl
         if (phase == Phase::Endpoints)
         {
             const JointVector& endpoint = endpointIndex == 0 ? start : goal;
-            if (CheckState(endpoint) != JointStateInvalidity::None)
+            const auto invalidity = CheckState(endpoint);
+            if (invalidity != JointStateInvalidity::None)
             {
-                Fail(ErrorCode::InvalidCommand, "JointPathPlanner: start or goal state is invalid");
+                const Result failure = MapJointStateInvalidity(invalidity);
+                Fail(failure.code, "JointPathPlanner: " + failure.message);
                 return;
             }
             ++endpointIndex;
@@ -462,10 +464,14 @@ Result JointPathPlanningJob::Begin(const models::RobotSpecification& specificati
         job.Fail(ErrorCode::InvalidCommand, "JointPathPlanner: invalid robot, endpoints, or planner options");
         return job.result;
     }
-    if (ValidateJointState(specification, start, {}) != JointStateInvalidity::None ||
-        ValidateJointState(specification, goal, {}) != JointStateInvalidity::None)
+    const auto startInvalidity = ValidateJointState(specification, start, {});
+    const auto goalInvalidity = ValidateJointState(specification, goal, {});
+    const auto endpointInvalidity = startInvalidity != JointStateInvalidity::None ?
+        startInvalidity : goalInvalidity;
+    if (endpointInvalidity != JointStateInvalidity::None)
     {
-        job.Fail(ErrorCode::InvalidCommand, "JointPathPlanner: start or goal state is invalid");
+        const Result failure = MapJointStateInvalidity(endpointInvalidity);
+        job.Fail(failure.code, "JointPathPlanner: " + failure.message);
         return job.result;
     }
     return Result::Success();

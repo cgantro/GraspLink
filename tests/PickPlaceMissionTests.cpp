@@ -91,6 +91,24 @@ public:
         deferredPoseTarget = target;
         return {};
     }
+    Result BeginPosePlanningWithLinearContinuation(const CartesianPose& approach,
+        const LinearPathMoveCommand& continuation, double velocityScale, double accelerationScale) override
+    {
+        ++compositeRequests;
+        compositeApproach = approach;
+        compositeContinuation = continuation;
+        if (!compositeResult)
+            return compositeResult;
+        if (!deferCompositePlanning)
+            return MovePose(approach, velocityScale, accelerationScale);
+        planning = true;
+        compositePlanning = true;
+        deferredPoseTarget = approach;
+        deferredPoseVelocityScale = velocityScale;
+        deferredPoseAccelerationScale = accelerationScale;
+        state.mode = RobotMode::Planning;
+        return {};
+    }
     Result MoveLinear(const LinearMoveCommand& command) override
     {
         ++linearRequests;
@@ -139,7 +157,12 @@ public:
         if (!planningResultReady)
             return std::nullopt;
         planningResultReady = false;
-        return planningResult;
+        if (!compositePlanning)
+            return planningResult;
+        compositePlanning = false;
+        if (!planningResult)
+            return planningResult;
+        return MovePose(deferredPoseTarget, deferredPoseVelocityScale, deferredPoseAccelerationScale);
     }
     Result Stop() override
     {
@@ -161,16 +184,20 @@ public:
     Result jointResult{};
     Result poseResult{};
     Result rejectedPoseResult{ErrorCode::Unsupported, "pose execution unavailable"};
+    Result compositeResult{};
     Result linearResult{};
     Result pathResult{};
     Result stopResult{};
     int jointRequests = 0;
     int poseRequests = 0;
+    int compositeRequests = 0;
     int linearRequests = 0;
     int pathRequests = 0;
     int stopRequests = 0;
     bool deferPathPlanning = false;
     bool deferPosePlanning = false;
+    bool deferCompositePlanning = false;
+    bool compositePlanning = false;
     int deferredPosePlanningRequest = 0;
     int rejectedPoseRequestNumber = 0;
     bool expectPathRequest = false;
@@ -178,6 +205,10 @@ public:
     bool planningResultReady = false;
     Result planningResult{};
     CartesianPose deferredPoseTarget{};
+    CartesianPose compositeApproach{};
+    LinearPathMoveCommand compositeContinuation{};
+    double deferredPoseVelocityScale = 1.0;
+    double deferredPoseAccelerationScale = 1.0;
 
     void CompletePathPlanning(Result result = {})
     {
@@ -196,6 +227,15 @@ public:
         if (planningResult)
             state.tcpPose = deferredPoseTarget;
         state.mode = planningResult ? RobotMode::Moving : RobotMode::Idle;
+        state.errorCode = planningResult.code;
+    }
+
+    void CompleteCompositePlanning(Result result = {})
+    {
+        planning = false;
+        planningResult = std::move(result);
+        planningResultReady = true;
+        state.mode = RobotMode::Idle;
         state.errorCode = planningResult.code;
     }
 
@@ -294,7 +334,7 @@ TEST(PickPlaceMissionTests, AcceptedCommandWaitsForControllerToBecomeIdle)
     EXPECT_EQ(controller.linearRequests, 0);
 }
 
-TEST(PickPlaceMissionTests, UsesJointSpacePoseForLongApproachAndLinearMotionForPickupDescent)
+TEST(PickPlaceMissionTests, PreflightsAlignedPickupApproachAndVerticalDescent)
 {
     FakeRobotController controller(models::hanwha::kHcr12a, true);
     StubGripper gripper;
@@ -309,22 +349,25 @@ TEST(PickPlaceMissionTests, UsesJointSpacePoseForLongApproachAndLinearMotionForP
 
     EXPECT_EQ(mission.Snapshot().stageLabel, "Moving above the box");
     EXPECT_EQ(controller.poseRequests, 1);
+    EXPECT_EQ(controller.compositeRequests, 1);
     EXPECT_EQ(controller.linearRequests, 0);
     EXPECT_EQ(controller.pathRequests, 0);
+    ASSERT_EQ(controller.compositeContinuation.targetPoses.size(), 1U);
+    EXPECT_EQ(controller.compositeApproach.orientationXyzw,
+        controller.compositeContinuation.targetPoses.front().orientationXyzw);
+    EXPECT_NEAR(controller.compositeApproach.positionMeters[1] -
+        controller.compositeContinuation.targetPoses.front().positionMeters[1], 0.225, 1e-9);
 
     mission.Update(controller.state, controller, gripper, false, box, box);
-    EXPECT_EQ(mission.Snapshot().stageLabel, "Aligning over the box");
-    mission.Update(controller.state, controller, gripper, false, box, box);
-
     EXPECT_EQ(mission.Snapshot().stageLabel, "Lowering to the box");
     EXPECT_EQ(controller.poseRequests, 1);
     EXPECT_EQ(controller.linearRequests, 1);
 }
 
-TEST(PickPlaceMissionTests, JointSpacePoseRejectionFailsWithoutLinearFallback)
+TEST(PickPlaceMissionTests, CompositePreflightFailureDoesNotStartApproachOrDescent)
 {
     FakeRobotController controller(models::hanwha::kHcr12a, true);
-    controller.poseResult = {ErrorCode::Unsupported, "joint-space pose motion unavailable"};
+    controller.compositeResult = {ErrorCode::Unsupported, "approach continuation is not reachable"};
     StubGripper gripper;
     grasplink::application::PickPlaceMission mission(models::hanwha::kHcr12a);
     CartesianPose box{};
@@ -337,16 +380,16 @@ TEST(PickPlaceMissionTests, JointSpacePoseRejectionFailsWithoutLinearFallback)
 
     const auto snapshot = mission.Snapshot();
     EXPECT_EQ(snapshot.stageLabel, "Failed");
-    EXPECT_EQ(snapshot.lastMessage, "joint-space pose motion unavailable");
-    EXPECT_EQ(controller.poseRequests, 1);
+    EXPECT_EQ(snapshot.lastMessage, "approach continuation is not reachable");
+    EXPECT_EQ(controller.compositeRequests, 1);
+    EXPECT_EQ(controller.poseRequests, 0);
     EXPECT_EQ(controller.linearRequests, 0);
 }
 
-TEST(PickPlaceMissionTests, WaitsForIncrementalJointSpacePosePlanning)
+TEST(PickPlaceMissionTests, WaitsForCompositePreflightBeforeStartingPickupApproach)
 {
     FakeRobotController controller;
-    controller.deferPosePlanning = true;
-    controller.deferredPosePlanningRequest = 1;
+    controller.deferCompositePlanning = true;
     StubGripper gripper;
     grasplink::application::PickPlaceMission mission(models::hanwha::kHcr12a);
     CartesianPose box{};
@@ -359,15 +402,42 @@ TEST(PickPlaceMissionTests, WaitsForIncrementalJointSpacePosePlanning)
     mission.Update(controller.state, controller, gripper, false, box, box);
 
     ASSERT_EQ(mission.Snapshot().stageLabel, "Planning motion");
-    EXPECT_EQ(controller.poseRequests, 1);
+    EXPECT_EQ(controller.compositeRequests, 1);
+    EXPECT_EQ(controller.poseRequests, 0);
     EXPECT_EQ(controller.linearRequests, 0);
     mission.Update(controller.state, controller, gripper, false, box, box);
     EXPECT_EQ(mission.Snapshot().stageLabel, "Planning motion");
 
-    controller.CompletePosePlanning();
+    controller.CompleteCompositePlanning();
     mission.Update(controller.state, controller, gripper, false, box, box);
     EXPECT_EQ(mission.Snapshot().stageLabel, "Moving above the box");
     EXPECT_EQ(controller.poseRequests, 1);
+    EXPECT_EQ(controller.linearRequests, 0);
+}
+
+TEST(PickPlaceMissionTests, FailedCompositePlanDoesNotStartMoveJ)
+{
+    FakeRobotController controller(models::hanwha::kHcr12a, true);
+    controller.deferCompositePlanning = true;
+    StubGripper gripper;
+    grasplink::application::PickPlaceMission mission(models::hanwha::kHcr12a);
+    CartesianPose box{};
+    box.positionMeters = controller.state.tcpPose.positionMeters;
+    box.positionMeters[1] -= 0.25;
+
+    mission.Update(controller.state, controller, gripper, false, box, box);
+    mission.ApplyActions({true, false, false}, controller.state, controller, false, box);
+    mission.Update(controller.state, controller, gripper, false, box, box);
+    ASSERT_EQ(mission.Snapshot().stageLabel, "Planning motion");
+    EXPECT_EQ(controller.poseRequests, 0);
+    EXPECT_EQ(controller.linearRequests, 0);
+
+    controller.CompleteCompositePlanning({ErrorCode::JointLimitReached, "approach is blocked by a joint limit"});
+    mission.Update(controller.state, controller, gripper, false, box, box);
+
+    EXPECT_EQ(mission.Snapshot().stageLabel, "Failed");
+    EXPECT_EQ(mission.Snapshot().lastMessage, "approach is blocked by a joint limit");
+    EXPECT_EQ(controller.poseRequests, 0);
     EXPECT_EQ(controller.linearRequests, 0);
 }
 
@@ -512,6 +582,12 @@ TEST(PickPlaceMissionTests, SuccessfulCyclePublishesOneCompletionEvent)
     ASSERT_EQ(snapshot.stageLabel, "Complete") << snapshot.lastMessage;
     EXPECT_TRUE(snapshot.missionSucceeded);
     EXPECT_EQ(snapshot.completedCount, 1U);
+    EXPECT_EQ(controller.compositeRequests, 2);
+    ASSERT_EQ(controller.compositeContinuation.targetPoses.size(), 1U);
+    EXPECT_EQ(controller.compositeApproach.orientationXyzw,
+        controller.compositeContinuation.targetPoses.front().orientationXyzw);
+    EXPECT_NEAR(controller.compositeApproach.positionMeters[1] -
+        controller.compositeContinuation.targetPoses.front().positionMeters[1], 0.25, 1e-9);
     EXPECT_TRUE(mission.ConsumeSuccessEvent());
     EXPECT_FALSE(mission.ConsumeSuccessEvent());
 }
@@ -612,8 +688,9 @@ TEST(PickPlaceMissionTests, WaitsForIncrementalMoveJTransitPlanningBeforeMovingT
     controller.state.mode = RobotMode::Idle;
     mission.Update(controller.state, controller, gripper, true, box, box);
     EXPECT_EQ(controller.linearRequests, linearRequestsBeforePlanning);
-    EXPECT_EQ(controller.poseRequests, 3)
-        << "the compensated wrist-only fallback uses a second MoveJ request after transit";
+    EXPECT_EQ(controller.poseRequests, 3);
+    EXPECT_EQ(controller.compositeRequests, 2)
+        << "the final-orientation approach and attached-box descent are preflighted together";
 }
 
 TEST(PickPlaceMissionTests, RuntimeControllerFaultFailsActiveMission)

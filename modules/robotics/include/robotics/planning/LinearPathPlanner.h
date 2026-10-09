@@ -10,6 +10,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <string>
 #include <vector>
 
 namespace grasplink::robotics::planning
@@ -112,6 +113,14 @@ public:
         kinematics::DampedLeastSquaresIk& inverse,
         const StateValidityChecker& stateValidityChecker,
         const PlanningPolicy& policy = kDefaultPlanningPolicy);
+    Result Begin(const LinearPathMoveCommand& command,
+        const models::RobotSpecification& specification,
+        const JointVector& startJoints,
+        const CartesianPose& startTcp,
+        kinematics::DampedLeastSquaresIk& inverse,
+        const StateValidityChecker& stateValidityChecker,
+        const PlanningPolicy& policy,
+        const std::function<std::string()>& validityDiagnosticProvider);
     /**
      * @brief 지정한 작업 단위 수만큼 경로 계획을 진행한다.
      * @details IK 반복 1회, TCP 직선성 검사 1회, 관절 경로 표본의 상태 검사 1회를 각각 작업 단위로 센다. 매 프레임에 작은 예산을 주면 계획이 렌더 루프를 오래 막지 않는다.
@@ -172,5 +181,15 @@ Result BuildLinearPath(
     const StateValidityChecker& stateValidityChecker,
     LinearPathPlan& plan,
     const PlanningPolicy& policy = kDefaultPlanningPolicy);
+Result BuildLinearPath(
+    const LinearPathMoveCommand& command,
+    const models::RobotSpecification& specification,
+    const JointVector& startJoints,
+    const CartesianPose& startTcp,
+    kinematics::DampedLeastSquaresIk& inverse,
+    const StateValidityChecker& stateValidityChecker,
+    LinearPathPlan& plan,
+    const PlanningPolicy& policy,
+    const std::function<std::string()>& validityDiagnosticProvider);
 
 } // namespace grasplink::robotics::planning

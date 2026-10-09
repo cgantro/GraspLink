@@ -102,6 +102,9 @@ public:
      */
     Result BeginPosePlanning(const CartesianPose& targetInBase, double velocityScale = 1.0,
         double accelerationScale = 1.0) override;
+    Result BeginPosePlanningWithLinearContinuation(const CartesianPose& approach,
+        const LinearPathMoveCommand& continuation, double velocityScale = 1.0,
+        double accelerationScale = 1.0) override;
 
     /**
      * @brief TCP 목표까지 직선 이동을 요청한다.
@@ -168,26 +171,34 @@ public:
     /**
      * @brief 물리 충돌 뒤 저장한 안전 관절 자세로 즉시 돌아가고 새 명령을 받을 수 있게 멈춘다.
      * @param safePositionRadians 직전 충돌 검사까지 유지된 J1..Jn 관절각 [rad]다.
+     * @param collisionReason 복원하게 된 EnvironmentContact, SelfCollision 또는 AttachedObjectCollision 원인이다.
      * @return 입력 자세가 전부 유한하고 관절 한계 안이면 복원 성공이다. 잘못된 입력은 상태를 바꾸지 않는다.
      * @details 현재 q와 새 q 사이를 보간하지 않는다. 호출자는 새로 저장한 자세가 충돌 검사에 통과한 경우에만 이 함수를 사용한다.
      * 이는 Kinematic Body의 마지막 틱 침투를 화면 기준으로 되돌리는 복구이고 연속 속도 제한 궤적이 아니다.
-     * 상태는 Idle이 되며 errorCode에는 EnvironmentContact가 남는다. 상위 작업은 이 오류를 보고 안전한 후퇴 동작을 제출할 수 있다.
+     * 상태는 Idle이 되며 errorCode에는 전달한 충돌 원인이 남는다. 상위 작업은 이 오류를 보고 안전한 후퇴 동작을 제출할 수 있다.
      */
     bool RestoreCollisionSafeState(const JointVector& safePositionRadians);
+    bool RestoreCollisionSafeState(const JointVector& safePositionRadians, ErrorCode collisionReason);
 
 private:
     friend struct SimRobotControllerTestAccess;
 
     using LinearPathPoint = planning::LinearPathPoint;
 
-    Result MoveJointImpl(const JointMoveCommand& command, bool validatePath);
+    enum class JointMoveOrigin { ExternalJointCommand, PoseTargetCommand, PlannedPoseSegment };
+    Result MoveJointImpl(const JointMoveCommand& command, JointMoveOrigin origin);
+    Result BeginPosePlanningImpl(const CartesianPose& targetInBase,
+        std::optional<LinearPathMoveCommand> continuation,
+        double velocityScale, double accelerationScale);
     void FinishPosePlanning(Result result);
     [[nodiscard]] bool StartNextPoseIkSeed();
+    [[nodiscard]] bool StartPoseCandidateJointPath();
     Result StartPosePathSegment();
     void ConfigureJointMove(JointVector target, double velocityScale, double accelerationScale);
     void RefreshTcp();
     void UpdateLinear(double dtSeconds);
     bool ReorientForLinear(const JointVector& plannedJoints, double availableSeconds);
+    std::optional<Result> CommitCachedLinearContinuation(const LinearPathMoveCommand& command);
     Result CommitLinearPathPlan(const LinearPathMoveCommand& command, planning::LinearPathPlan plan);
     Result ValidateLinearPathRequest(const LinearPathMoveCommand& command) const;
 
@@ -231,7 +242,7 @@ private:
     planning::LinearPathPlanningJob linearPathPlanningJob_;
     LinearPathMoveCommand pendingLinearPathCommand_;
     std::optional<Result> linearPathPlanningResult_;
-    enum class PosePlanningPhase { None, Ik, JointPath };
+    enum class PosePlanningPhase { None, Ik, LinearContinuation, JointPath };
     PosePlanningPhase posePlanningPhase_ = PosePlanningPhase::None;
     kinematics::DampedLeastSquaresIk::SessionId poseIkSession_ = 0;
     CartesianPose poseTarget_{};
@@ -240,6 +251,9 @@ private:
     std::size_t poseIkSeedAttempts_ = 0;
     Result posePathFailure_{};
     JointMoveCommand pendingPoseMove_;
+    std::optional<LinearPathMoveCommand> poseContinuationCommand_;
+    std::optional<planning::LinearPathPlan> poseContinuationPlan_;
+    JointVector poseCandidateJoints_;
     planning::JointPathPlanningJob poseJointPathPlanningJob_;
     std::vector<JointVector> posePathPoints_;
     std::size_t posePathSegment_ = 0;

@@ -368,8 +368,37 @@ TEST(LinearPathPlanner, RejectsSeedBudgetSmallerThanCandidateBeam)
 
 TEST(LinearPathPlanner, InteractivePolicyKeepsTheSeedSearchBounded)
 {
-    EXPECT_EQ(kInteractivePlanningPolicy.maximumIkSeedAttemptsPerSample, 12U);
+    EXPECT_EQ(kInteractivePlanningPolicy.maximumIkSeedAttemptsPerSample, 16U);
     EXPECT_LE(kInteractivePlanningPolicy.maximumIkSeedAttemptsPerSample,
         kDefaultPlanningPolicy.maximumIkSeedAttemptsPerSample);
+}
+
+TEST(LinearPathPlanner, KeepsTheDiagnosticFromTheRejectedCandidate)
+{
+    const auto& specification = models::hanwha::kHcr12a;
+    DampedLeastSquaresIk inverse(specification);
+    const JointVector targetJoints{0.12, -0.08, 0.06, 0.12, -0.04, 0.1};
+    LinearPathMoveCommand command;
+    command.targetPoses.push_back(inverse.EvaluateTcp(targetJoints));
+    command.targetPoses.back().positionMeters[0] += 0.03;
+    std::size_t rejectedStates = 0;
+    std::string latestDiagnostic;
+    const StateValidityChecker checker = [&](const JointVector&)
+    {
+        latestDiagnostic = "rejected candidate " + std::to_string(++rejectedStates);
+        return JointStateInvalidity::SelfCollision;
+    };
+    const auto diagnosticProvider = [&]() { return latestDiagnostic; };
+    LinearPathPlan plan;
+
+    const Result result = BuildLinearPath(command, specification, JointVector(6, 0.0),
+        inverse.EvaluateTcp(JointVector(6, 0.0)), inverse, checker, plan,
+        kDefaultPlanningPolicy, diagnosticProvider);
+
+    EXPECT_EQ(result.code, ErrorCode::SelfCollision);
+    EXPECT_GT(rejectedStates, 1u);
+    EXPECT_NE(result.message.find("rejected candidate 1"), std::string::npos)
+        << "the result names the first selected rejection, not the guard's later mutable description";
+    EXPECT_EQ(result.message.find("rejected candidate " + std::to_string(rejectedStates)), std::string::npos);
 }
 } // namespace

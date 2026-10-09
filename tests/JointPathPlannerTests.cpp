@@ -166,6 +166,22 @@ TEST(JointPathPlanner, RejectsInvalidEndpointAndCancelsRunningPlan)
     EXPECT_EQ(job.GetResult().code, ErrorCode::Cancelled);
 }
 
+TEST(JointPathPlanner, PreservesCollisionReasonForInvalidStartAndGoal)
+{
+    const JointVector start{0.1, 0.5, 0.5, 0.5, 0.5, 0.5};
+    const JointVector goal{0.9, 0.5, 0.5, 0.5, 0.5, 0.5};
+    JointPathPlanningJob job;
+    const StateValidityChecker goalCollision = [&](const JointVector& joints)
+    {
+        return joints == goal ? JointStateInvalidity::SelfCollision : JointStateInvalidity::None;
+    };
+
+    ASSERT_TRUE(job.Begin(kSpecification, start, goal, goalCollision, TestOptions()));
+    ASSERT_EQ(job.Advance(2), JointPathPlanningState::Failed);
+    EXPECT_EQ(job.GetResult().code, ErrorCode::SelfCollision);
+    EXPECT_NE(job.GetResult().message.find("planned robot links overlap"), std::string::npos);
+}
+
 TEST(JointPathPlanner, FixedSeedProducesRepeatablePath)
 {
     const JointVector start{0.1, 0.5, 0.5, 0.5, 0.5, 0.5};

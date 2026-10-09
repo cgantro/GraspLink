@@ -1,7 +1,5 @@
 #include "application/PickPlaceMission.h"
 #include "application/PickPlaceConfig.h"
-#include "robotics/planning/WristAlignmentPlanner.h"
-
 #include <glm/gtc/constants.hpp>
 #include <glm/gtc/quaternion.hpp>
 
@@ -142,7 +140,7 @@ robotics::Result MovePoseTo(const robotics::CartesianPose& pose, robotics::IRobo
     return controller.BeginPosePlanning(pose);
 }
 
-robotics::Result MoveLinearTo(const robotics::CartesianPose& pose, robotics::IRobotController& controller)
+robotics::LinearPathMoveCommand LinearCommandTo(const robotics::CartesianPose& pose)
 {
     robotics::LinearPathMoveCommand command;
     command.targetPoses.push_back(pose);
@@ -150,6 +148,12 @@ robotics::Result MoveLinearTo(const robotics::CartesianPose& pose, robotics::IRo
     command.maxAngularVelocityRadiansPerSecond = config::angularVelocityRadiansPerSecond;
     command.maxLinearAccelerationMetersPerSecondSquared = config::linearAccelerationMetersPerSecondSquared;
     command.maxAngularAccelerationRadiansPerSecondSquared = config::angularAccelerationRadiansPerSecondSquared;
+    return command;
+}
+
+robotics::Result MoveLinearTo(const robotics::CartesianPose& pose, robotics::IRobotController& controller)
+{
+    const auto command = LinearCommandTo(pose);
     return controller.BeginLinearPathPlanning(command);
 }
 
@@ -162,22 +166,6 @@ robotics::Result CommandGripper(std::uint8_t position, robotics::IGripperControl
     return gripper.Command(command);
 }
 
-robotics::Result AlignWristOnly(const robotics::models::RobotSpecification& specification,
-    const robotics::RobotState& state, const std::array<double, 4>& targetOrientation, bool carryingBox,
-    const std::array<double, 3>& boxOffsetInTool, robotics::IRobotController& controller)
-{
-    const std::optional<std::array<double, 3>> attachedOffset = carryingBox
-        ? std::optional<std::array<double, 3>>{boxOffsetInTool}
-        : std::nullopt;
-    const auto plan = robotics::planning::PlanWristOnlyTarget(
-        specification, state, targetOrientation, attachedOffset);
-    if (!plan)
-    {
-        return {robotics::ErrorCode::Unsupported,
-            "RobotPanel: wrist alignment needs another axis, exceeds a J6 limit, or moves the attached box over 20 mm"};
-    }
-    return controller.MoveJoint({plan->jointPositionRadians, 1.0, 1.0});
-}
 }
 
 
@@ -301,30 +289,26 @@ void PickPlaceMission::Update(const robotics::RobotState& state, robotics::IRobo
                 }
                 else
                 {
+                    const double boxYawRadians = glm::radians(YawDegrees(graspBoxPoseInBase.orientationXyzw));
+                    const glm::dquat desiredPickupOrientation = glm::normalize(
+                        glm::angleAxis(boxYawRadians, glm::dvec3{0.0, 1.0, 0.0}) * Orientation(graspOrientationXyzw_));
+                    pickupOrientationXyzw_ = QuaternionXyzw(desiredPickupOrientation);
                     const auto approach = MakeBoxTarget(graspBoxPoseInBase, config::approachHeightMeters,
-                        graspOrientationXyzw_);
-                    SetStageFromMotionResult(MovePoseTo(approach, controller), Stage::MovingAbovePickup, controller);
+                        pickupOrientationXyzw_);
+                    const auto descent = MakeBoxTarget(graspBoxPoseInBase, config::graspClearanceMeters,
+                        pickupOrientationXyzw_);
+                    recoveryPose_ = approach;
+                    SetStageFromMotionResult(controller.BeginPosePlanningWithLinearContinuation(
+                        approach, LinearCommandTo(descent)), Stage::MovingAbovePickup, controller);
                 }
             }
             break;
         case Stage::MovingAbovePickup:
             if (idle)
             {
-                const double boxYawRadians = glm::radians(YawDegrees(graspBoxPoseInBase.orientationXyzw));
-                const glm::dquat desiredPickupOrientation = glm::normalize(
-                    glm::angleAxis(boxYawRadians, glm::dvec3{0.0, 1.0, 0.0}) * Orientation(graspOrientationXyzw_));
-                pickupOrientationXyzw_ = QuaternionXyzw(desiredPickupOrientation);
-                recoveryPose_ = MakeBoxTarget(graspBoxPoseInBase, config::approachHeightMeters,
-                    QuaternionXyzw(TcpOrientation(state)));
-                SetStageFromResult(AlignWristOnly(specification_, state, pickupOrientationXyzw_, false,
-                    boxOffsetInTool_, controller), Stage::AligningAbovePickup);
-            }
-            break;
-        case Stage::AligningAbovePickup:
-            if (idle)
-            {
-                const auto target = MakeBoxTarget(graspBoxPoseInBase, config::graspClearanceMeters, pickupOrientationXyzw_);
-                SetStageFromMotionResult(MoveLinearTo(target, controller), Stage::MovingDownToPickup, controller);
+                const auto descent = MakeBoxTarget(graspBoxPoseInBase, config::graspClearanceMeters,
+                    pickupOrientationXyzw_);
+                SetStageFromMotionResult(MoveLinearTo(descent, controller), Stage::MovingDownToPickup, controller);
             }
             break;
         case Stage::MovingDownToPickup:
@@ -378,50 +362,20 @@ void PickPlaceMission::Update(const robotics::RobotState& state, robotics::IRobo
         case Stage::MovingToPlacementOverhead:
             if (idle)
             {
-                const glm::dquat boxRotationOffset = Orientation(boxRotationOffsetInTool_);
-                SetStageFromResult(
-                    AlignWristOnly(specification_, state,
-                        QuaternionXyzw(Orientation(placementBoxOrientationXyzw_) *
-                            glm::inverse(boxRotationOffset)), true, boxOffsetInTool_, controller),
-                    Stage::AligningAbovePlacement);
-                if (stage_ == Stage::Failed)
-                {
-                    const robotics::Result wristOnlyFailure = lastResult_;
-                    recoveryPose_ = MakeAttachedBoxTarget(placementPoseInBase, config::transitBoxHeightMeters,
-                        placementBoxOrientationXyzw_, boxRotationOffsetInTool_, boxOffsetInTool_);
-                    if (SetResult(MovePoseTo(recoveryPose_, controller)))
-                    {
-                        if (controller.IsMotionPlanning())
-                        {
-                            pendingStageAfterPlanning_ = Stage::AligningAbovePlacement;
-                            stage_ = Stage::PlanningMotion;
-                        }
-                        else
-                            stage_ = Stage::AligningAbovePlacement;
-                    }
-                    else
-                    {
-                        lastResult_.message = "RobotPanel: J6-only alignment failed (" + wristOnlyFailure.message +
-                            "); compensated TCP alignment also failed: " + lastResult_.message;
-                    }
-                }
+                recoveryPose_ = MakeAttachedBoxTarget(placementPoseInBase, config::approachHeightMeters,
+                    placementBoxOrientationXyzw_, boxRotationOffsetInTool_, boxOffsetInTool_);
+                const auto placement = MakeAttachedBoxTarget(placementPoseInBase, 0.0,
+                    placementBoxOrientationXyzw_, boxRotationOffsetInTool_, boxOffsetInTool_);
+                SetStageFromMotionResult(controller.BeginPosePlanningWithLinearContinuation(
+                    recoveryPose_, LinearCommandTo(placement)), Stage::AligningAbovePlacement, controller);
             }
             break;
         case Stage::AligningAbovePlacement:
             if (idle)
             {
-                recoveryPose_ = MakeAttachedBoxTarget(placementPoseInBase, config::approachHeightMeters,
+                const auto placement = MakeAttachedBoxTarget(placementPoseInBase, 0.0,
                     placementBoxOrientationXyzw_, boxRotationOffsetInTool_, boxOffsetInTool_);
-                SetStageFromMotionResult(MoveLinearTo(recoveryPose_, controller), Stage::MovingAbovePlacement, controller);
-            }
-            break;
-        case Stage::MovingAbovePlacement:
-            if (idle)
-            {
-                SetStageFromMotionResult(
-                    MoveLinearTo(MakeAttachedBoxTarget(placementPoseInBase, 0.0, placementBoxOrientationXyzw_,
-                        boxRotationOffsetInTool_, boxOffsetInTool_), controller),
-                    Stage::MovingDownToPlacement, controller);
+                SetStageFromMotionResult(MoveLinearTo(placement, controller), Stage::MovingDownToPlacement, controller);
             }
             break;
         case Stage::MovingDownToPlacement:
@@ -571,7 +525,6 @@ PickPlaceMissionSnapshot PickPlaceMission::Snapshot() const
     case Stage::Ready: stageName = "Ready"; break;
     case Stage::UnwindingBeforeTask: stageName = "Unwinding J6 before pickup"; break;
     case Stage::MovingAbovePickup: stageName = "Moving above the box"; break;
-    case Stage::AligningAbovePickup: stageName = "Aligning over the box"; break;
     case Stage::MovingDownToPickup: stageName = "Lowering to the box"; break;
     case Stage::Closing: stageName = "Closing gripper"; break;
     case Stage::Lifting: stageName = "Lifting the box"; break;
@@ -580,7 +533,6 @@ PickPlaceMissionSnapshot PickPlaceMission::Snapshot() const
     case Stage::PlanningMotion: stageName = "Planning motion"; break;
     case Stage::MovingToPlacementOverhead: stageName = "Moving above the goal"; break;
     case Stage::AligningAbovePlacement: stageName = "Aligning box over goal"; break;
-    case Stage::MovingAbovePlacement: stageName = "Moving to placement height"; break;
     case Stage::MovingDownToPlacement: stageName = "Lowering box"; break;
     case Stage::Opening: stageName = "Opening gripper"; break;
     case Stage::Retreating: stageName = "Retracting from goal"; break;
