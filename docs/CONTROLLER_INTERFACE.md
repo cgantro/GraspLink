@@ -144,7 +144,13 @@ Controller는 관절 목표를 검증하고, 관절 속도·Simulation 가속 �
 
 `MovePose`는 현재 관절각을 seed로 DLS IK를 풀고 관절 공간 경로를 검사하는 MoveJ 명령이다. `BeginPosePlanning`은 같은 목표를 프레임별 작업으로 나누어 계산한다. 직접 관절 경로가 충돌하면 제한된 RRT-Connect를 시도하고, 결과 경로를 다시 검사한다. 이 경로는 TCP 직선을 보장하지 않는다. `BeginPosePlanningWithLinearContinuation`은 접근 자세와 그 뒤의 선형 continuation을 함께 검사하고, 둘 다 유효할 때만 접근 동작을 시작한다. 접근 동작이 끝난 뒤 호출자가 continuation을 요청해야 한다.
 
-`MoveLinear`은 목표 하나를 `MoveLinearPath`로 감싼다. MoveL은 직전 표본의 IK 해를 다음 seed로 재사용하고, 이어갈 해가 없을 때만 대체 분기를 찾는다. 경로 표본과 관절 경로의 검사에 실패하면 MoveL을 거부하며 MoveJ로 자동 대체하지 않는다. 고정 갱신에서는 사전 검증한 관절 표본을 보간한다. TCP의 직선·회전 속도와 가속도 제한은 전체 경로 프로파일에 적용한다. 표본 추종이 속도 제한을 넘는 특이 자세에서만 TCP를 거의 고정하는 재정렬 IK를 시도하며, 이 이동도 관절 경로와 TCP 오차를 검사한다. 목표는 Robot base 좌표 기준이다. 실패와 waypoint 처리 계약은 [로봇 이동과 파지](ROBOT_MOTION_AND_GRASP.md)를 참고한다.
+`MoveLinear`은 목표 하나를 `MoveLinearPath`로 감싼다. MoveL은 직전 표본의 IK 해를 다음 seed로 재사용하고, 이어갈 해가 없을 때만 대체 분기를 찾는다.
+
+경로 표본과 관절 경로의 검사에 실패하면 MoveL을 거부하며 MoveJ로 자동 대체하지 않는다. 고정 갱신에서는 사전 검증한 관절 표본을 보간한다.
+
+TCP의 직선·회전 속도와 가속도 제한은 전체 경로 프로파일에 적용한다. 표본 추종이 속도 제한을 넘는 특이 자세에서만 TCP를 거의 고정하는 재정렬 IK를 시도하며, 이 이동도 관절 경로와 TCP 오차를 검사한다.
+
+목표는 Robot base 좌표 기준이다. 실패와 waypoint 처리 계약은 [로봇 이동과 파지](ROBOT_MOTION_AND_GRASP.md)를 참고한다.
 
 관절 최대 속도는 모델 데이터에서 가져오지만 제조사가 가속도를 제공하지 않는 경우 Simulation 정책으로 제한한다. 문서의 0.20초 기본 가속 시간은 이 정책값이며 장비 사양이나 측정 결과가 아니다.
 
@@ -165,7 +171,13 @@ modules/simulation/src/robotics/GripperTransformAdapter.cpp
 
 `RobotKinematics`가 `RobotState`를 pose로 바꾸고, `RobotTransformAdapter`는 그 결과를 Flecs/GLB transform으로 표현한다. 두 adapter의 구현은 `modules/simulation`에 있다. Viewer는 FK나 제어 로직을 수행하지 않는다. 그리퍼의 기구학은 robotics 모듈이 계산하고, simulation adapter가 GLB 관절을 갱신한다. 관절 자식인 그리퍼 충돌 프록시는 계층 변환을 따라가므로 별도 pose adapter가 없다.
 
-`GripperKinematics`는 분기형 여섯 관절의 master/mimic Local 회전 변화만 계산한다. `GripperTransformAdapter`는 저장한 bind 회전에 변화량을 오른쪽으로 곱하고 원본 Local 위치·크기·장착 변환을 보존한다. 고정 tick에서는 파지 해제와 안전 자세 저장 뒤 두 Controller를 갱신하고, 팔·그리퍼 자세를 적용한다. World 변환을 갱신한 다음 collision guard가 겹침을 검사하고 필요하면 안전 관절 자세를 복원한다. 이어서 Jolt step과 접촉 피드백·파지 연결을 수행하고 World 변환을 다시 갱신한다. 세부 호출 순서는 [Physics / Flecs Integration](PHYSICS_ECS_INTEGRATION.md)을 참고한다. 기존 일곱 그리퍼 proxy는 관절 자식이므로 같은 World 변환을 따른다. GUI는 Controller에 요청을 보내고 상태 복사본과 실제 접촉·파지 상태를 표시한다.
+`GripperKinematics`는 분기형 여섯 관절의 master/mimic Local 회전 변화만 계산한다. `GripperTransformAdapter`는 저장한 bind 회전에 변화량을 오른쪽으로 곱하고 원본 Local 위치·크기·장착 변환을 보존한다.
+
+고정 tick에서는 파지 해제와 안전 자세 저장 뒤 두 Controller를 갱신하고, 팔·그리퍼 자세를 적용한다. World 변환을 갱신한 다음 collision guard가 겹침을 검사하고 필요하면 안전 관절 자세를 복원한다.
+
+이어서 Jolt step과 접촉 피드백·파지 연결을 수행하고 World 변환을 다시 갱신한다. 세부 호출 순서는 [Physics / Flecs Integration](PHYSICS_ECS_INTEGRATION.md)을 참고한다.
+
+기존 일곱 그리퍼 proxy는 관절 자식이므로 같은 World 변환을 따른다. GUI는 Controller에 요청을 보내고 상태 복사본과 실제 접촉·파지 상태를 표시한다.
 
 ## 아직 구현하지 않은 Hardware backend
 
@@ -179,4 +191,6 @@ Robotiq backend는 Modbus RTU RS-485 register packing/parsing을 내부에 숨�
 
 ## 더 읽기와 코드 기준
 
-이 문서는 공통 Controller 계약과 현재 Simulation backend의 차이를 요약한다. 이동·waypoint 의미는 [로봇 이동과 파지](ROBOT_MOTION_AND_GRASP.md), TCP 호출 예제는 [IK·MoveL 튜토리얼](IK_MOVEL_TUTORIAL.md), 고정 tick과 physics 연결 순서는 [Physics / Flecs Integration](PHYSICS_ECS_INTEGRATION.md)에 있다. 공통 계약은 `modules/robotics/include/robotics/core/IRobotController.h` 및 `IGripperController.h`, Simulation 동작은 `modules/robotics/src/backends/simulation/SimRobotController.cpp`와 `SimGripperController.cpp`가 코드 기준이다.
+이 문서는 공통 Controller 계약과 현재 시뮬레이션 backend의 차이를 요약한다. 이동과 waypoint 의미는 [로봇 이동과 파지](ROBOT_MOTION_AND_GRASP.md), TCP 호출 예제는 [IK·MoveL 튜토리얼](IK_MOVEL_TUTORIAL.md), 고정 tick과 물리 연결 순서는 [Physics와 Flecs 연결](PHYSICS_ECS_INTEGRATION.md)을 참고한다.
+
+공통 계약의 기준 코드는 `modules/robotics/include/robotics/core/IRobotController.h`와 `IGripperController.h`다. 시뮬레이션 동작은 `modules/robotics/src/backends/simulation/SimRobotController.cpp`와 `SimGripperController.cpp`에서 확인할 수 있다.
