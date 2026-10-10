@@ -36,18 +36,17 @@ jobs:
         run: emcc -v
 
       - name: Configure web build
-        run: emcmake cmake --preset emscripten-web
+        run: emcmake cmake --preset emscripten-single-thread
 
       - name: Build web simulator
-        run: cmake --build --preset emscripten-web
+        run: cmake --build --preset emscripten-single-thread
 
       - name: Check and prepare Pages files
         run: |
-          test -s build-emscripten-web/index.html
-          test -s build-emscripten-web/coi-serviceworker.min.js
+          test -s build-emscripten-single-thread/index.html
+          ! grep -q 'SharedArrayBuffer\|loadWasmModuleToWorker' build-emscripten-single-thread/index.html
           mkdir -p _site
-          cp build-emscripten-web/index.html _site/index.html
-          cp build-emscripten-web/coi-serviceworker.min.js _site/coi-serviceworker.min.js
+          cp build-emscripten-single-thread/index.html _site/index.html
           touch _site/.nojekyll
 
       - name: Configure GitHub Pages

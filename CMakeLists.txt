@@ -15,6 +15,10 @@ if(EMSCRIPTEN)
   set(GRASPLINK_ENABLE_TRACY OFF CACHE BOOL "Disable Tracy for the browser build" FORCE)
   set(GRASPLINK_BUILD_BENCHMARKS OFF CACHE BOOL "Disable native benchmarks for the browser build" FORCE)
   option(GRASPLINK_WEB_PTHREADS "Enable pthreads in the Emscripten build" ON)
+  set(GRASPLINK_WEB_SHELL "${CMAKE_SOURCE_DIR}/apps/simulator/web_shell.html")
+  if(NOT GRASPLINK_WEB_PTHREADS)
+    set(GRASPLINK_WEB_SHELL "${CMAKE_SOURCE_DIR}/apps/simulator/web_shell_single_thread.html")
+  endif()
   if(GRASPLINK_WEB_PTHREADS)
     add_compile_options(-pthread)
   endif()
@@ -402,13 +406,17 @@ if(GRASPLINK_BUILD_GRAPHICS)
       SUFFIX .html
     )
     target_link_options(grasplink_simulator PRIVATE
-      "--shell-file=${CMAKE_SOURCE_DIR}/apps/simulator/web_shell.html"
+      "--shell-file=${GRASPLINK_WEB_SHELL}"
     )
     set_property(TARGET grasplink_simulator APPEND PROPERTY LINK_DEPENDS
-      "${CMAKE_SOURCE_DIR}/apps/simulator/web_shell.html"
-      "${CMAKE_SOURCE_DIR}/third_party/coi-serviceworker.min.js"
+      "${GRASPLINK_WEB_SHELL}"
       "${CMAKE_SOURCE_DIR}/cmake/EmbedEmscriptenPackage.py"
     )
+    if(GRASPLINK_WEB_PTHREADS)
+      set_property(TARGET grasplink_simulator APPEND PROPERTY LINK_DEPENDS
+        "${CMAKE_SOURCE_DIR}/third_party/coi-serviceworker.min.js"
+      )
+    endif()
   target_link_options(grasplink_simulator PRIVATE
       "--preload-file=${CMAKE_SOURCE_DIR}/assets/shaders@/shaders"
       "--preload-file=${CMAKE_SOURCE_DIR}/assets/HCR12A_2F-85.glb@/HCR12A_2F-85.glb"
@@ -420,11 +428,16 @@ if(GRASPLINK_BUILD_GRAPHICS)
         "${CMAKE_SOURCE_DIR}/cmake/EmbedEmscriptenPackage.py"
         "$<TARGET_FILE:grasplink_simulator>"
         "$<TARGET_FILE_DIR:grasplink_simulator>/index.data"
-      COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CMAKE_SOURCE_DIR}/third_party/coi-serviceworker.min.js"
-        "$<TARGET_FILE_DIR:grasplink_simulator>/coi-serviceworker.min.js"
       VERBATIM
     )
+    if(GRASPLINK_WEB_PTHREADS)
+      add_custom_command(TARGET grasplink_simulator POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+          "${CMAKE_SOURCE_DIR}/third_party/coi-serviceworker.min.js"
+          "$<TARGET_FILE_DIR:grasplink_simulator>/coi-serviceworker.min.js"
+        VERBATIM
+      )
+    endif()
   endif()
 
   target_include_directories(grasplink_simulator PRIVATE

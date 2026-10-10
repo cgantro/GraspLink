@@ -40,7 +40,7 @@
     {
       "name": "emscripten-single-thread",
       "displayName": "Emscripten Single Thread Release",
-      "description": "Configure a single-threaded browser build for environments without pthread support",
+      "description": "Configure the embedded browser simulator without a shared-memory requirement",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build-emscripten-single-thread",
       "cacheVariables": {
